@@ -18,7 +18,8 @@ export type ShapeKind =
   | "polygon"
   | "icosahedron"
   | "mesh"
-  | "reference";
+  | "reference"
+  | "loft";
 
 export type ShapeAsset = {
   id: string;
@@ -141,6 +142,8 @@ export type SketchOperation = "extrude" | "revolve";
 
 export type GearType = "spur" | "helical" | "bevel";
 
+export type LoftProfileShape = "Oval" | "Rectangle" | "Triangle" | "Pentagon" | "Hexagon";
+
 export type SketchRevolveSettings = {
   startAngle: number;
   sweepAngle: number;
@@ -259,6 +262,14 @@ export type WorkplaneShape = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  loftBottomShape?: LoftProfileShape;
+  loftTopShape?: LoftProfileShape;
+  loftTopWidth?: number;
+  loftTopDepth?: number;
+  loftBottomRotation?: number;
+  loftTopRotation?: number;
+  loftSegments?: number;
+  loftLayers?: number;
   text?: string;
   font?: string;
   importedMesh?: {

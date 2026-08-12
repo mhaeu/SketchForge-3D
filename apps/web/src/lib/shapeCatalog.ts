@@ -17,6 +17,7 @@ import {
 } from "@/lib/gearGeometry";
 import { THREAD_ASSET_PRESETS, createThreadShapeFields, isThreadAssetId } from "@/lib/threadShape";
 import type { ShapeAsset, ShapeCustomization, ShapeKind, WorkplaneShape } from "@/types/sketchforge";
+import { DEFAULT_LOFT_BOTTOM_SHAPE, DEFAULT_LOFT_LAYERS, DEFAULT_LOFT_SEGMENTS, DEFAULT_LOFT_TOP_SHAPE } from "@/lib/loftGeometry";
 
 export type ToolbarShapeAsset = ShapeAsset & { menuIcon: string };
 
@@ -33,6 +34,7 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "torus", name: "Torus", src: "assets/sketchforge/shape-icons-gray/torus.png", menuIcon: "assets/sketchforge/shape-icons-gray/torus.png", kind: "torus", color: "#0098c7" },
   { id: "tube", name: "Tube", src: "assets/sketchforge/shape-icons-gray/tube.png", menuIcon: "assets/sketchforge/shape-icons-gray/tube.png", kind: "tube", color: "#ce7013" },
   { id: "gear", name: "Gear", src: "assets/sketchforge/gear-types/spur.png", menuIcon: "assets/sketchforge/gear-types/spur.png", kind: "gear", color: "#6f7f8d" },
+  { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
 
   // Threads reuse the mesh path; geometry comes from lib/threadGenerator.ts
   { id: "thread-external", name: "Thread", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "mesh", color: "#c07a2a" },
@@ -42,11 +44,11 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
 export function shapeAssetDefaultDimensions(kind: ShapeKind) {
   const roundProfile = kind === "sphere" || kind === "torus" || kind === "ring" || kind === "halfSphere";
   const flatProfile = kind === "torus" || kind === "ring" || kind === "text" || kind === "gear";
-  const size = kind === "gear" ? 30 : roundProfile ? 22 : 20;
+  const size = kind === "gear" ? 30 : kind === "loft" ? 24 : roundProfile ? 22 : 20;
   return {
     width: kind === "text" ? 86 : size,
     depth: kind === "text" ? 28 : size,
-    height: kind === "gear" ? 6 : kind === "text" ? 10 : kind === "roundRoof" ? 10 : kind === "halfSphere" ? 11 : flatProfile ? 5 : 20,
+    height: kind === "gear" ? 6 : kind === "loft" ? 28 : kind === "text" ? 10 : kind === "roundRoof" ? 10 : kind === "halfSphere" ? 11 : flatProfile ? 5 : 20,
   };
 }
 
@@ -115,6 +117,14 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    loftBottomShape: shape.loftBottomShape,
+    loftTopShape: shape.loftTopShape,
+    loftTopWidth: shape.loftTopWidth,
+    loftTopDepth: shape.loftTopDepth,
+    loftBottomRotation: shape.loftBottomRotation,
+    loftTopRotation: shape.loftTopRotation,
+    loftSegments: shape.loftSegments,
+    loftLayers: shape.loftLayers,
     text: shape.text,
     font: shape.font,
     importedMesh: shape.importedMesh,
@@ -204,6 +214,14 @@ export function makeShapeFromAsset(
     gearType: asset.kind === "gear" ? normalizeGearType(customization.gearType ?? DEFAULT_GEAR_TYPE) : undefined,
     helixAngle: asset.kind === "gear" ? normalizeGearHelixAngle(customization.helixAngle ?? DEFAULT_GEAR_HELIX_ANGLE) : undefined,
     helixQuality: asset.kind === "gear" ? normalizeGearHelixQuality(customization.helixQuality ?? DEFAULT_GEAR_HELIX_QUALITY) : undefined,
+    loftBottomShape: asset.kind === "loft" ? DEFAULT_LOFT_BOTTOM_SHAPE : undefined,
+    loftTopShape: asset.kind === "loft" ? DEFAULT_LOFT_TOP_SHAPE : undefined,
+    loftTopWidth: asset.kind === "loft" ? size : undefined,
+    loftTopDepth: asset.kind === "loft" ? size : undefined,
+    loftBottomRotation: asset.kind === "loft" ? 0 : undefined,
+    loftTopRotation: asset.kind === "loft" ? 0 : undefined,
+    loftSegments: asset.kind === "loft" ? DEFAULT_LOFT_SEGMENTS : undefined,
+    loftLayers: asset.kind === "loft" ? DEFAULT_LOFT_LAYERS : undefined,
     locked: false,
     hidden: false,
   };
