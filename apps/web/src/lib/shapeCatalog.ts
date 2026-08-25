@@ -15,6 +15,7 @@ import {
   normalizeGearToothWidth,
   normalizeGearType,
 } from "@/lib/gearGeometry";
+import { THREAD_ASSET_PRESETS, createThreadShapeFields, isThreadAssetId } from "@/lib/threadShape";
 import type { ShapeAsset, ShapeCustomization, ShapeKind, WorkplaneShape } from "@/types/sketchforge";
 
 export type ToolbarShapeAsset = ShapeAsset & { menuIcon: string };
@@ -32,6 +33,10 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "torus", name: "Torus", src: "assets/sketchforge/shape-icons-gray/torus.png", menuIcon: "assets/sketchforge/shape-icons-gray/torus.png", kind: "torus", color: "#0098c7" },
   { id: "tube", name: "Tube", src: "assets/sketchforge/shape-icons-gray/tube.png", menuIcon: "assets/sketchforge/shape-icons-gray/tube.png", kind: "tube", color: "#ce7013" },
   { id: "gear", name: "Gear", src: "assets/sketchforge/gear-types/spur.png", menuIcon: "assets/sketchforge/gear-types/spur.png", kind: "gear", color: "#6f7f8d" },
+
+  // Threads reuse the mesh path; geometry comes from lib/threadGenerator.ts
+  { id: "thread-external", name: "Thread", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "mesh", color: "#c07a2a" },
+  { id: "thread-internal", name: "Tapped hole", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "mesh", color: "#8c8c8c", hole: true },
 ];
 
 export function shapeAssetDefaultDimensions(kind: ShapeKind) {
@@ -113,6 +118,7 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     text: shape.text,
     font: shape.font,
     importedMesh: shape.importedMesh,
+    threadParams: shape.threadParams,
     imagePlate: shape.imagePlate,
     sketchProfile: shape.sketchProfile,
     sketchOperation: shape.sketchOperation,
@@ -132,6 +138,30 @@ export function makeShapeFromAsset(
   point?: { x: number; z: number; elevation?: number },
   customization: ShapeCustomization = {},
 ): WorkplaneShape {
+  // Thread: geometry is generated parametrically instead of derived from a
+  // primitive. Without this branch a kind:"mesh" shape without importedMesh
+  // would result - the viewport then falls back to a placeholder box. Threads
+  // are not affected by customization, so this is checked before the
+  // customization-aware defaults below.
+  if (isThreadAssetId(asset.id)) {
+    const preset = THREAD_ASSET_PRESETS[asset.id];
+    return {
+      id: createLocalId(asset.id),
+      name: asset.name,
+      color: asset.color,
+      hole: asset.hole ?? preset.kind === "internal",
+      x: point?.x ?? 0,
+      z: point?.z ?? 0,
+      elevation: point?.elevation ?? 0,
+      rotation: 0,
+      rotationX: 0,
+      rotationZ: 0,
+      locked: false,
+      hidden: false,
+      ...createThreadShapeFields(preset),
+    };
+  }
+
   const defaults = shapeAssetDefaultDimensions(asset.kind);
   const width = customization.width ?? defaults.width;
   const depth = customization.depth ?? defaults.depth;

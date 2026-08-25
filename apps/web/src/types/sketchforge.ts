@@ -17,7 +17,8 @@ export type ShapeKind =
   | "wedge"
   | "polygon"
   | "icosahedron"
-  | "mesh";
+  | "mesh"
+  | "reference";
 
 export type ShapeAsset = {
   id: string;
@@ -148,10 +149,14 @@ export type SketchRevolveSettings = {
 };
 
 export type EdgeTreatmentFeature = {
-  kind: "fillet" | "chamfer";
+  kind: "fillet" | "chamfer" | "variableFillet";
   amount: number;
   edgeCount: number;
   chamferAngle?: number;
+  /** variableFillet only: radius at the edge end. `amount` applies at the start. */
+  endAmount?: number;
+  /** variableFillet only: swaps the start and end radius. */
+  flipTaper?: boolean;
 };
 
 export type EdgeTreatmentHistoryEntry = {
@@ -195,6 +200,23 @@ export type CadPrimitiveFrame = {
   depth: number;
   height: number;
   frame: CadBrepFrame;
+};
+
+export type ThreadShapeParams = {
+  /** Nominal diameter in mm (8 = M8). */
+  diameter: number;
+  /** Pitch in mm. */
+  pitch: number;
+  /** Thread length in mm. */
+  length: number;
+  /** "external" = bolt, "internal" = cutter body for a tapped hole. */
+  kind: "external" | "internal";
+  /** Manufacturing clearance in mm. */
+  clearance: number;
+  /** Circumferential segments per turn. */
+  segments: number;
+  /** Lead-in/out in turns. */
+  taperTurns: number;
 };
 
 export type WorkplaneShape = {
@@ -267,6 +289,14 @@ export type WorkplaneShape = {
   sketchProfile?: SketchProfile;
   sketchOperation?: SketchOperation;
   sketchRevolve?: SketchRevolveSettings;
+  // Parametric thread. Set when the mesh was produced in lib/threadGenerator.ts;
+  // allows rebuilding later instead of merely scaling.
+  threadParams?: ThreadShapeParams;
+  // Reference-point cross dimensions in millimeters. Only used for
+  // kind: "reference"; let the on-screen cross and marker be resized without
+  // touching the width/height/depth used by real geometry.
+  crossArm?: number;
+  markerRadius?: number;
   edgeTreatments?: EdgeTreatmentFeature[];
   edgeTreatmentHistory?: EdgeTreatmentHistoryEntry[];
   cadDisplayEdges?: CadDisplayEdge[];

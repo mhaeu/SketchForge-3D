@@ -1,4 +1,5 @@
 import { createLocalId } from "@/lib/localIds";
+import { createThreadShapeFields } from "@/lib/threadShape";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 export function normalizeDegrees(value: number) {
@@ -214,6 +215,18 @@ export function canonicalizeShape(shape: WorkplaneShape): WorkplaneShape {
     mirrorY: shape.mirrorY || undefined,
     mirrorZ: shape.mirrorZ || undefined,
   };
+  // Threads must not be stretched like an arbitrary mesh: scaling would grow
+  // the pitch along with them and the thread would no longer match the
+  // standard. When the height changes (transform handle, scaling), the geometry
+  // is rebuilt with the new length instead.
+  if (next.threadParams && Math.abs(next.threadParams.length - next.height) > 1e-6) {
+    try {
+      Object.assign(next, createThreadShapeFields({ ...next.threadParams, length: next.height }));
+    } catch {
+      // Invalid combination: keep the previous state rather than producing
+      // broken geometry.
+    }
+  }
   if (shape.groupedShapes) {
     next.groupedShapes = shape.groupedShapes.map(canonicalizeShape);
   }
@@ -294,6 +307,9 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.groupedBaseDepth === b.groupedBaseDepth &&
     a.groupedBaseHeight === b.groupedBaseHeight &&
     a.groupOperation === b.groupOperation &&
+    a.crossArm === b.crossArm &&
+    a.markerRadius === b.markerRadius &&
+    a.threadParams === b.threadParams &&
     a.locked === b.locked &&
     a.hidden === b.hidden
   );
