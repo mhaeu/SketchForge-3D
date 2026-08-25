@@ -22,10 +22,12 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
-import { resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth } from "@/lib/workplaneShapes";
+import { fallbackSolidColor, resizedShapeSize, shapeDepth, shapeWidth } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
-import type { GearType, GridSize, MeasurementAccuracy, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
+import { createThreadShapeFields, findDesignation } from "@/lib/threadShape";
+import type { GearType, GridSize, MeasurementAccuracy, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 const GRID_SIZES: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 mm", "2.0 mm", "5.0 mm", "Brick"];
 const MIN_SHAPE_SIZE = 0.01;
@@ -66,6 +68,30 @@ const GEAR_TYPE_OPTIONS: Array<{ value: GearType; label: string }> = [
   { value: "bevel", label: "Bevel gear" },
 ];
 
+/** Placeholder in the standard menu when diameter/pitch are set manually. */
+const CUSTOM_THREAD_OPTION = "— custom —";
+
+/**
+ * Options for the standard menu. The groups from threadGenerator.ts are
+ * concatenated into a flat list, because this project's select field expects
+ * one.
+ */
+const THREAD_DESIGNATION_OPTIONS: string[] = [
+  CUSTOM_THREAD_OPTION,
+  ...THREAD_GROUPS.flatMap((group) => group.items),
+];
+
+/**
+ * Builds the updateShape patch from thread parameters.
+ *
+ * Important: a thread must not be scaled like a mesh - that would grow the
+ * pitch along with it and the thread would no longer match the standard. So
+ * the geometry is fully rebuilt here.
+ */
+function threadShapeUpdate(params: ThreadShapeParams): Partial<WorkplaneShape> {
+  return createThreadShapeFields(params);
+}
+
 type RangePropertyConfig = {
   type?: "range";
   label: string;
@@ -105,7 +131,10 @@ function formatPropertyNumber(value: number, accuracy: MeasurementAccuracy, step
 }
 
 function propertyUsesLengthUnit(label: string) {
-  return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness", "Tooth Size", "Tooth Width", "Center Hole", "Top Length", "Top Width", "Bottom Length", "Bottom Width"].includes(label);
+  return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness",
+    "Tooth Size", "Tooth Width", "Center Hole",
+    "Diameter", "Pitch", "Thread Length", "Clearance",
+    "X", "Y", "Z"].includes(label);
 }
 
 function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate, textWidthMax = 260): ShapePropertyConfig[] {
@@ -150,9 +179,48 @@ function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeI
   };
   const setBaseRadius = (value: number) => {
     const diameter = value * 2;
-    onUpdate({ baseRadius: value, width: diameter, size: resizedShapeSize(diameter, baseDepth) }, { resizeAxis: "width" });
+    onUpdate({ baseRadius: value, width: diameter, size: resizedShapeSize(diameter, depth) }, { resizeAxis: "width" });
   };
   const setHeight = (height: number) => onUpdate({ height }, { resizeAxis: "height" });
+
+  if (shape.threadParams) {
+    const t = shape.threadParams;
+    const rebuild = (changes: Partial<typeof t>) => {
+      const next = { ...t, ...changes };
+      try {
+        onUpdate(threadShapeUpdate(next));
+      } catch (error) {
+        // Invalid combination (e.g. pitch >= diameter). Keep the previous
+        // state instead of producing broken geometry.
+        console.warn("Thread could not be rebuilt:", (error as Error).message);
+      }
+    };
+    return [
+      {
+        type: "select",
+        label: "Standard",
+        value: findDesignation(t.diameter, t.pitch) ?? CUSTOM_THREAD_OPTION,
+        options: THREAD_DESIGNATION_OPTIONS,
+        onChange: (designation) => {
+          const spec = THREAD_TABLES[designation];
+          if (spec) rebuild({ diameter: spec.diameter, pitch: spec.pitch });
+        },
+      },
+      {
+        type: "select",
+        label: "Type",
+        value: t.kind === "internal" ? "Internal thread (tapped hole)" : "External thread (bolt)",
+        options: ["External thread (bolt)", "Internal thread (tapped hole)"],
+        onChange: (mode) => rebuild({ kind: mode.startsWith("Internal") ? "internal" : "external" }),
+      },
+      { label: "Diameter", value: t.diameter, min: 0.1, max: 80, onChange: (diameter) => rebuild({ diameter }) },
+      { label: "Pitch", value: t.pitch, min: 0.05, max: 8, step: 0.05, onChange: (pitch) => rebuild({ pitch }) },
+      { label: "Thread Length", value: t.length, min: MIN_SHAPE_SIZE, max: 160, onChange: (length) => rebuild({ length }) },
+      { label: "Clearance", value: t.clearance, min: 0, max: 1.5, step: 0.05, onChange: (clearance) => rebuild({ clearance }) },
+      { label: "Segments", value: t.segments, min: 16, max: 256, step: 8, onChange: (segments) => rebuild({ segments: Math.round(segments) }) },
+      { label: "Lead-in", value: t.taperTurns, min: 0, max: 5, step: 0.5, onChange: (taperTurns) => rebuild({ taperTurns }) },
+    ];
+  }
 
   if (shape.sketchOperation === "revolve" || shape.sketchRevolve) {
     const settings = normalizeSketchRevolveSettings(shape.sketchRevolve);
@@ -205,7 +273,7 @@ function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeI
   if (shape.kind === "cone") {
     return [
       { label: "Top Radius", value: shape.topRadius ?? 0, min: 0, max: 40, onChange: (topRadius) => onUpdate({ topRadius }) },
-      { label: "Base Radius", value: shape.baseRadius ?? baseWidth / 2, min: MIN_SHAPE_SIZE, max: 80, onChange: setBaseRadius },
+      { label: "Base Radius", value: shape.baseRadius ?? width / 2, min: MIN_SHAPE_SIZE, max: 80, onChange: setBaseRadius },
       { label: "Length", value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { label: "Width", value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setConeWidth },
       { label: "Height", value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
@@ -389,7 +457,7 @@ export function ShapeInspector({
   onSeparateParts?: () => void;
   onInteractionActiveChange?: (active: boolean) => void;
 }) {
-  const solidColor = shape.color;
+  const solidColor = shape.hole ? fallbackSolidColor(shape) : shape.color;
   const locked = Boolean(shape.locked);
   const properties = getShapeProperties(shape, onUpdate, workspace);
   const gearType = shape.kind === "gear" ? normalizeGearType(shape.gearType) : null;
@@ -435,31 +503,28 @@ export function ShapeInspector({
     },
   ];
   const isSketchRevolve = shape.sketchOperation === "revolve" || Boolean(shape.sketchRevolve);
+  // Absolute position of the shape on the workplane.
+  //   X = shape.x   (center, left/right)
+  //   Z = shape.z   (center, front/back)
+  //   Y = elevation (underside height above the workplane; matches the
+  //                  Y-starts-at-0 convention used across the app)
+  // Slider range follows the workspace size, but the number field accepts any
+  // value including negative and beyond the platform (allowsAboveSliderMax).
+  const positionBound = Math.max(200, (workspace.width ?? 200), (workspace.depth ?? 200));
+  const positionProperties: ShapePropertyConfig[] = [
+    { label: "X", value: shape.x ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (x) => onUpdate({ x }) },
+    { label: "Y", value: shape.elevation ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (elevation) => onUpdate({ elevation }) },
+    { label: "Z", value: shape.z ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (z) => onUpdate({ z }) },
+  ];
   const inspectorRef = useRef<HTMLElement>(null);
   const [propertiesOpen, setPropertiesOpen] = useState(true);
-  const [taperOpen, setTaperOpen] = useState(false);
+  const [positionOpen, setPositionOpen] = useState(true);
   const [gearTeethOpen, setGearTeethOpen] = useState(true);
   const [gearHelixOpen, setGearHelixOpen] = useState(true);
   const [colorOpen, setColorOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
-  const customColorInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => onInteractionActiveChange?.(false), [onInteractionActiveChange]);
-  useEffect(() => {
-    const input = customColorInputRef.current;
-    if (!colorOpen || !input) {
-      return;
-    }
-
-    // React's color-input onChange follows the native input event and fires for
-    // every movement in the picker. Commit only the native change event, which
-    // fires after the user finishes choosing, so dragging stays responsive.
-    const commitCustomColor = () => {
-      onUpdate({ color: input.value, hole: false });
-    };
-    input.addEventListener("change", commitCustomColor);
-    return () => input.removeEventListener("change", commitCustomColor);
-  }, [colorOpen, onUpdate]);
   useLayoutEffect(() => {
     inspectorRef.current?.scrollTo({ top: 0, left: 0 });
   }, [isSketchRevolve, shape.id]);
@@ -506,7 +571,7 @@ export function ShapeInspector({
         <button
           className={shape.hole ? "active hole-choice" : "hole-choice"}
           onClick={() => {
-            onUpdate({ hole: true });
+            onUpdate({ hole: true, color: "#b8c2cc" });
             setColorOpen(false);
           }}
           disabled={locked}
@@ -541,13 +606,15 @@ export function ShapeInspector({
             ))}
             <label className={locked ? "custom-color disabled" : "custom-color"} title="Custom color">
               <input
-                key={`${shape.id}-${solidColor}`}
-                ref={customColorInputRef}
                 type="color"
-                defaultValue={solidColor}
+                value={solidColor}
                 disabled={locked}
                 onFocus={() => onInteractionActiveChange?.(true)}
                 onBlur={() => onInteractionActiveChange?.(false)}
+                onChange={(event) => {
+                  onUpdate({ color: event.target.value, hole: false });
+                  setColorOpen(false);
+                }}
               />
               <span>Custom</span>
             </label>
@@ -592,25 +659,24 @@ export function ShapeInspector({
           </div>
         ) : null}
       </div>
-      {shape.kind !== "gear" ? (
-        <div className={`property-card ${taperOpen ? "" : "collapsed"}`}>
-          <button
-            className="property-card-header"
-            type="button"
-            aria-expanded={taperOpen}
-            aria-controls={`taper-${shape.id}`}
-            onClick={() => setTaperOpen((open) => !open)}
-          >
-            <span>Taper</span>
-            <ChevronUp className={taperOpen ? "" : "collapsed"} size={25} strokeWidth={2.8} />
-          </button>
-          {taperOpen ? (
-            <div className="property-list" id={`taper-${shape.id}`}>
-              <ShapePropertyRows properties={taperProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+
+      <div className={`property-card ${positionOpen ? "" : "collapsed"}`}>
+        <button
+          className="property-card-header"
+          type="button"
+          aria-expanded={positionOpen}
+          aria-controls={`position-${shape.id}`}
+          onClick={() => setPositionOpen((open) => !open)}
+        >
+          <span>Position</span>
+          <ChevronUp className={positionOpen ? "" : "collapsed"} size={25} strokeWidth={2.8} />
+        </button>
+        {positionOpen ? (
+          <div className="property-list" id={`position-${shape.id}`}>
+            <ShapePropertyRows properties={positionProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+          </div>
+        ) : null}
+      </div>
       {shape.kind === "gear" ? (
         <div className={`property-card ${gearTeethOpen ? "" : "collapsed"}`}>
           <button
@@ -729,7 +795,14 @@ function RangeProperty({
   onChange,
   onInteractionActiveChange,
 }: RangePropertyConfig & { workspace: WorkplaneWorkspaceSettings; disabled?: boolean; onInteractionActiveChange?: (active: boolean) => void }) {
-  const allowsAboveSliderMax = label === "Length" || label === "Width" || label === "Height" || label.endsWith(" Length") || label.endsWith(" Width");
+  // Number field without an upper bound: the slider covers the usual range,
+  // typed values may exceed it. Explicitly wanted for threads - M64 or a
+  // 300 mm length should be enterable.
+  const allowsAboveSliderMax =
+    label === "Length" || label === "Width" || label === "Height" ||
+    label === "Diameter" || label === "Pitch" || label === "Thread Length" ||
+    label === "Clearance" || label === "Segments" ||
+    label === "X" || label === "Y" || label === "Z";
   const isLength = propertyUsesLengthUnit(label);
   const accuracy = workspace.accuracy;
   const actualValue = Math.max(min, Number.isFinite(value) ? value : min);
@@ -742,6 +815,11 @@ function RangeProperty({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(formatPropertyNumber(controlValue, accuracy, controlStep));
   const unit = isLength ? lengthDisplayUnit(workspace).label : null;
+  useEffect(() => {
+    if (!editing) {
+      setDraft(formatPropertyNumber(controlValue, accuracy, controlStep));
+    }
+  }, [accuracy, controlStep, controlValue, editing]);
   const toModelValue = (nextValue: number) => isLength ? displayToMillimeters(nextValue, workspace) : nextValue;
   const commitDraft = () => {
     const next = parseMeasurementInput(draft);
