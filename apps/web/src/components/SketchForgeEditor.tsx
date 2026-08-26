@@ -7113,9 +7113,16 @@ export function SketchForgeEditor({
       setNotice("Select a shape first");
       return;
     }
-    setClipboard(selectedShapes);
-    writeSharedClipboard(selectedShapes);
-    setNotice(`Copied ${selectedShapes.length} shape${selectedShapes.length === 1 ? "" : "s"}`);
+    // The reference point is a permanent scene helper - never copy it, so it
+    // cannot be pasted back as a second reference point.
+    const copyableShapes = selectedShapes.filter((shape) => !isReferencePoint(shape));
+    if (copyableShapes.length === 0) {
+      setNotice("The reference point cannot be copied");
+      return;
+    }
+    setClipboard(copyableShapes);
+    writeSharedClipboard(copyableShapes);
+    setNotice(`Copied ${copyableShapes.length} shape${copyableShapes.length === 1 ? "" : "s"}`);
   }, [hasSelection, selectedShapes]);
 
   const pasteShape = useCallback(async () => {
@@ -7134,7 +7141,9 @@ export function SketchForgeEditor({
     if (serializeShapesForSync(sourceClipboard) !== serializeShapesForSync(clipboard)) {
       setClipboard(sourceClipboard);
     }
-    const pasted = sourceClipboard.map((shape) => {
+    const pasted = sourceClipboard
+      .filter((shape) => !isReferencePoint(shape))
+      .map((shape) => {
       const pastedShape = cloneWorkplaneShapeTreeWithFreshIds(shape, "paste");
       return {
         ...pastedShape,
