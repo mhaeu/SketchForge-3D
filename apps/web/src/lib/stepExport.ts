@@ -1,5 +1,6 @@
 import type { WorkplaneShape } from "@/types/sketchforge";
 import { shapeDepth, shapeWidth } from "@/lib/workplaneShapes";
+import { withoutReferencePoints } from "@/lib/referencePoint";
 import { loadBrepWithOcct, type Brep, type BrepSolid } from "@/lib/brepKernel";
 
 export type SkippedShape = {
@@ -196,6 +197,8 @@ export function aabbsOverlap(a: Aabb, b: Aabb): boolean {
 }
 
 export async function exportShapesToStep(shapes: WorkplaneShape[]): Promise<StepExportResult> {
+  // The reference point is a scene helper, never geometry - keep it out of STEP.
+  shapes = withoutReferencePoints(shapes);
   const brep = await loadBrepWithOcct();
 
   const skipped: SkippedShape[] = [];

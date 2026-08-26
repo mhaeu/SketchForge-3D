@@ -501,6 +501,13 @@ export function SketchWorkspace({
   const [hover, setHover] = useState<{ x: number; z: number } | null>(null);
   const [refinePreview, setRefinePreview] = useState<{ segmentId: string; placement: SketchSegmentPlacement } | null>(null);
   const [pointerAction, setPointerAction] = useState<PointerAction | null>(null);
+  // Length editing: when a straight-line segment is selected, its dimension pill
+  // becomes clickable and opens an HTML input overlaid on the canvas (not a
+  // foreignObject - those don't reliably take focus across browsers). Straight
+  // lines only; the start point stays fixed and the end point moves along the
+  // current direction to the typed length.
+  const [editingLengthSegmentId, setEditingLengthSegmentId] = useState<string | null>(null);
+  const [lengthDraft, setLengthDraft] = useState("");
   const [svgSize, setSvgSize] = useState({ width: 0, height: 0 });
   const svgRef = useRef<SVGSVGElement | null>(null);
   const width = workspace.width / zoom;
@@ -575,6 +582,28 @@ export function SketchWorkspace({
   }, [pointerAction, profile.images]);
   const pointById = useMemo(() => new Map(displayProfile.points.map((point) => [point.id, point])), [displayProfile.points]);
   const paths = useMemo(() => orderedPaths(displayProfile), [displayProfile]);
+
+  // Applies a typed length to a straight-line segment: keep the start point,
+  // move the end point along the current direction so the segment becomes
+  // exactly `lengthMm` long. Dependent segments sharing the end point move with
+  // it (the accepted simplification of the non-solver variant). Sketch coords
+  // are raw mm, matching the pill display, so the parsed value is used directly.
+  const commitSegmentLength = (segmentId: string, rawInput: string) => {
+    const segment = profile.segments.find((s) => s.id === segmentId);
+    if (!segment || (segment.kind && segment.kind !== "line")) return;
+    const start = profile.points.find((p) => p.id === segment.startId);
+    const end = profile.points.find((p) => p.id === segment.endId);
+    if (!start || !end) return;
+    const lengthMm = parseMeasurementInput(rawInput);
+    if (!Number.isFinite(lengthMm) || lengthMm <= 0) return;
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const currentLength = Math.hypot(dx, dz);
+    if (currentLength < 1e-6) return; // zero-length line has no direction
+    const scale = lengthMm / currentLength;
+    onMovePoint(end.id, { x: start.x + dx * scale, z: start.z + dz * scale });
+  };
+
   const activePoint = activePointId ? pointById.get(activePointId) ?? null : null;
   const selectedPoint = selected?.kind === "point" ? pointById.get(selected.id) ?? null : null;
   const selectedImage = selected?.kind === "image" ? displayImages.find((image) => image.id === selected.id) ?? null : null;
@@ -924,6 +953,21 @@ export function SketchWorkspace({
                   const point = pointFromEvent(event);
                   event.preventDefault();
                   event.stopPropagation();
+                  // Alt+click a straight line to type its length. This is checked
+                  // before anything else because a normal click on a closed
+                  // profile immediately starts a move-drag with setPointerCapture,
+                  // after which no second click can reach this segment. Deciding on
+                  // the first click via a modifier key is the only reliable way in.
+                  if (event.button === 0 && event.altKey && tool === "select" && (!segment.kind || segment.kind === "line")) {
+                    const dimension = segmentDimension(segment, pointById);
+                    if (dimension) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setLengthDraft(formatDimension(dimension.length, workspace.accuracy));
+                      setEditingLengthSegmentId(segment.id);
+                      return;
+                    }
+                  }
                   if (event.button === 1) beginPan(event);
                   else if (tool === "erase") onDeleteSegment(segment.id);
                   else if (event.button === 0 && tool === "refine" && point) {
@@ -957,8 +1001,23 @@ export function SketchWorkspace({
               if (!dimension) return null;
               const label = formatDimension(dimension.length, workspace.accuracy);
               const pill = dimensionPillSize(label, screenUnit, 18);
+              const isStraight = !segment.kind || segment.kind === "line";
+              const isSelected = selected?.kind === "segment" && selected.id === segment.id;
+              const editable = isStraight && isSelected;
               return (
-                <g key={`dimension-${segment.id}`} transform={`translate(${dimension.midpoint.x} ${dimension.midpoint.z - labelOffset})`}>
+                <g
+                  key={`dimension-${segment.id}`}
+                  className={editable ? "editable" : undefined}
+                  transform={`translate(${dimension.midpoint.x} ${dimension.midpoint.z - labelOffset})`}
+                  pointerEvents={editable ? "auto" : "none"}
+                  style={editable ? { cursor: "text" } : undefined}
+                  onPointerDown={editable ? (event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    setLengthDraft(formatDimension(dimension.length, workspace.accuracy));
+                    setEditingLengthSegmentId(segment.id);
+                  } : undefined}
+                >
                   <rect x={-pill.width / 2} y={-pill.height / 2} width={pill.width} height={pill.height} rx={pill.radius} />
                   <text y={5 * screenUnit} fontSize={13 * screenUnit}>{label}</text>
                 </g>
@@ -1193,6 +1252,41 @@ export function SketchWorkspace({
       <div className="grid-settings">
         <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
       </div>
+      {(() => {
+        // Length input as a real HTML element positioned over the canvas (fixed
+        // coordinates from getScreenCTM), so it reliably takes keyboard focus -
+        // unlike an SVG foreignObject input.
+        if (!editingLengthSegmentId) return null;
+        const segment = displayProfile.segments.find((s) => s.id === editingLengthSegmentId);
+        const svg = svgRef.current;
+        if (!segment || !svg) return null;
+        const dimension = segmentDimension(segment, pointById);
+        const matrix = svg.getScreenCTM();
+        if (!dimension || !matrix) return null;
+        const svgPoint = svg.createSVGPoint();
+        svgPoint.x = dimension.midpoint.x;
+        svgPoint.y = dimension.midpoint.z - labelOffset;
+        const screen = svgPoint.matrixTransform(matrix);
+        const commit = () => {
+          commitSegmentLength(editingLengthSegmentId, lengthDraft);
+          setEditingLengthSegmentId(null);
+        };
+        return (
+          <input
+            autoFocus
+            className="sketch-length-input"
+            value={lengthDraft}
+            style={{ position: "fixed", left: screen.x, top: screen.y, transform: "translate(-50%, -50%)", zIndex: 40 }}
+            onChange={(event) => setLengthDraft(event.target.value)}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") commit();
+              else if (event.key === "Escape") setEditingLengthSegmentId(null);
+            }}
+            onBlur={commit}
+          />
+        );
+      })()}
     </main>
   );
 }

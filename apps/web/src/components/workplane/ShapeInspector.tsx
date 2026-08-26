@@ -22,7 +22,7 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
-import { fallbackSolidColor, resizedShapeSize, shapeDepth, shapeWidth } from "@/lib/workplaneShapes";
+import { resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
@@ -68,30 +68,6 @@ const GEAR_TYPE_OPTIONS: Array<{ value: GearType; label: string }> = [
   { value: "bevel", label: "Bevel gear" },
 ];
 
-/** Placeholder in the standard menu when diameter/pitch are set manually. */
-const CUSTOM_THREAD_OPTION = "— custom —";
-
-/**
- * Options for the standard menu. The groups from threadGenerator.ts are
- * concatenated into a flat list, because this project's select field expects
- * one.
- */
-const THREAD_DESIGNATION_OPTIONS: string[] = [
-  CUSTOM_THREAD_OPTION,
-  ...THREAD_GROUPS.flatMap((group) => group.items),
-];
-
-/**
- * Builds the updateShape patch from thread parameters.
- *
- * Important: a thread must not be scaled like a mesh - that would grow the
- * pitch along with it and the thread would no longer match the standard. So
- * the geometry is fully rebuilt here.
- */
-function threadShapeUpdate(params: ThreadShapeParams): Partial<WorkplaneShape> {
-  return createThreadShapeFields(params);
-}
-
 type RangePropertyConfig = {
   type?: "range";
   label: string;
@@ -125,19 +101,52 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+const CUSTOM_THREAD_OPTION = "— custom —";
+
+/**
+ * Options for the standard menu. The groups from threadGenerator.ts are
+ * concatenated into a flat list, because this project's select field expects
+ * one.
+ */
+const THREAD_DESIGNATION_OPTIONS: string[] = [
+  CUSTOM_THREAD_OPTION,
+  ...THREAD_GROUPS.flatMap((group) => group.items),
+];
+
+/**
+ * Builds the updateShape patch from thread parameters. A thread must not be
+ * scaled like a mesh - that would grow the pitch along with it - so the
+ * geometry is fully rebuilt here.
+ */
+function threadShapeUpdate(params: ThreadShapeParams): Partial<WorkplaneShape> {
+  return createThreadShapeFields(params);
+}
+
+function formatReferenceDelta(valueMm: number, workspace: WorkplaneWorkspaceSettings) {
+  // Show the offset in the workspace's length unit, with a sign so direction is
+  // readable. Distance uses the same formatter but is always non-negative.
+  const display = millimetersToDisplay(valueMm, workspace);
+  const unit = lengthDisplayUnit(workspace).label;
+  const text = formatMeasurementNumber(display, workspace.accuracy);
+  const signed = valueMm > 0 ? `+${text}` : text;
+  return `${signed} ${unit}`;
+}
+
 function formatPropertyNumber(value: number, accuracy: MeasurementAccuracy, step: number) {
   if (step >= 1) return String(Math.round(value));
   return formatMeasurementNumber(value, accuracy, step);
 }
 
 function propertyUsesLengthUnit(label: string) {
-  return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness",
-    "Tooth Size", "Tooth Width", "Center Hole",
-    "Diameter", "Pitch", "Thread Length", "Clearance",
-    "X", "Y", "Z"].includes(label);
+  return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness", "Tooth Size", "Tooth Width", "Center Hole", "Top Length", "Top Width", "Bottom Length", "Bottom Width", "Diameter", "Pitch", "Thread Length", "Clearance", "X", "Y", "Z", "Cross size", "Marker size"].includes(label);
 }
 
 function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate, textWidthMax = 260): ShapePropertyConfig[] {
+  // The reference point has a fixed on-screen size; it only exposes position,
+  // so it gets no size/shape properties at all.
+  if (shape.kind === "reference") {
+    return [];
+  }
   const baseWidth = shapeWidth(shape);
   const baseDepth = shapeDepth(shape);
   const footprint = shapeOverallFootprintDimensions(shape);
@@ -179,7 +188,7 @@ function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeI
   };
   const setBaseRadius = (value: number) => {
     const diameter = value * 2;
-    onUpdate({ baseRadius: value, width: diameter, size: resizedShapeSize(diameter, depth) }, { resizeAxis: "width" });
+    onUpdate({ baseRadius: value, width: diameter, size: resizedShapeSize(diameter, baseDepth) }, { resizeAxis: "width" });
   };
   const setHeight = (height: number) => onUpdate({ height }, { resizeAxis: "height" });
 
@@ -273,7 +282,7 @@ function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeI
   if (shape.kind === "cone") {
     return [
       { label: "Top Radius", value: shape.topRadius ?? 0, min: 0, max: 40, onChange: (topRadius) => onUpdate({ topRadius }) },
-      { label: "Base Radius", value: shape.baseRadius ?? width / 2, min: MIN_SHAPE_SIZE, max: 80, onChange: setBaseRadius },
+      { label: "Base Radius", value: shape.baseRadius ?? baseWidth / 2, min: MIN_SHAPE_SIZE, max: 80, onChange: setBaseRadius },
       { label: "Length", value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { label: "Width", value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setConeWidth },
       { label: "Height", value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
@@ -434,6 +443,7 @@ function getShapeProperties(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdat
 
 export function ShapeInspector({
   shape,
+  referencePoint,
   snap,
   snapOpen,
   workspace,
@@ -446,6 +456,7 @@ export function ShapeInspector({
   onInteractionActiveChange,
 }: {
   shape: WorkplaneShape;
+  referencePoint: { x: number; y: number; z: number };
   snap: GridSize;
   snapOpen: boolean;
   workspace: WorkplaneWorkspaceSettings;
@@ -457,7 +468,7 @@ export function ShapeInspector({
   onSeparateParts?: () => void;
   onInteractionActiveChange?: (active: boolean) => void;
 }) {
-  const solidColor = shape.hole ? fallbackSolidColor(shape) : shape.color;
+  const solidColor = shape.color;
   const locked = Boolean(shape.locked);
   const properties = getShapeProperties(shape, onUpdate, workspace);
   const gearType = shape.kind === "gear" ? normalizeGearType(shape.gearType) : null;
@@ -503,28 +514,63 @@ export function ShapeInspector({
     },
   ];
   const isSketchRevolve = shape.sketchOperation === "revolve" || Boolean(shape.sketchRevolve);
-  // Absolute position of the shape on the workplane.
-  //   X = shape.x   (center, left/right)
-  //   Z = shape.z   (center, front/back)
-  //   Y = elevation (underside height above the workplane; matches the
-  //                  Y-starts-at-0 convention used across the app)
-  // Slider range follows the workspace size, but the number field accepts any
-  // value including negative and beyond the platform (allowsAboveSliderMax).
+  // Absolute position on the workplane: X = shape.x, Z = shape.z (centers),
+  // Y = elevation (underside height). Slider range follows the workspace size;
+  // the number field accepts any value (allowsAboveSliderMax), incl. negative.
   const positionBound = Math.max(200, (workspace.width ?? 200), (workspace.depth ?? 200));
   const positionProperties: ShapePropertyConfig[] = [
     { label: "X", value: shape.x ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (x) => onUpdate({ x }) },
     { label: "Y", value: shape.elevation ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (elevation) => onUpdate({ elevation }) },
     { label: "Z", value: shape.z ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (z) => onUpdate({ z }) },
   ];
+  // Cross/marker size for the reference point only. Dedicated fields so they
+  // never interfere with the width/height/depth used by real geometry.
+  const crossProperties: ShapePropertyConfig[] = shape.kind === "reference"
+    ? [
+        { label: "Cross size", value: shape.crossArm ?? 20, min: 1, max: 100, step: 0.5, onChange: (crossArm) => onUpdate({ crossArm }) },
+        { label: "Marker size", value: shape.markerRadius ?? 1, min: 0.1, max: 20, step: 0.1, onChange: (markerRadius) => onUpdate({ markerRadius }) },
+      ]
+    : [];
+  // Offset to the reference point, shown below the absolute position for every
+  // shape except the reference point itself.
+  const isReference = shape.kind === "reference";
+  const deltaToReference = isReference
+    ? null
+    : {
+        dx: (shape.x ?? 0) - referencePoint.x,
+        dy: (shape.elevation ?? 0) - referencePoint.y,
+        dz: (shape.z ?? 0) - referencePoint.z,
+      };
+  const deltaDistance = deltaToReference
+    ? Math.hypot(deltaToReference.dx, deltaToReference.dy, deltaToReference.dz)
+    : 0;
   const inspectorRef = useRef<HTMLElement>(null);
   const [propertiesOpen, setPropertiesOpen] = useState(true);
   const [positionOpen, setPositionOpen] = useState(true);
+  const [crossOpen, setCrossOpen] = useState(true);
+  const [taperOpen, setTaperOpen] = useState(false);
   const [gearTeethOpen, setGearTeethOpen] = useState(true);
   const [gearHelixOpen, setGearHelixOpen] = useState(true);
   const [colorOpen, setColorOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
+  const customColorInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => onInteractionActiveChange?.(false), [onInteractionActiveChange]);
+  useEffect(() => {
+    const input = customColorInputRef.current;
+    if (!colorOpen || !input) {
+      return;
+    }
+
+    // React's color-input onChange follows the native input event and fires for
+    // every movement in the picker. Commit only the native change event, which
+    // fires after the user finishes choosing, so dragging stays responsive.
+    const commitCustomColor = () => {
+      onUpdate({ color: input.value, hole: false });
+    };
+    input.addEventListener("change", commitCustomColor);
+    return () => input.removeEventListener("change", commitCustomColor);
+  }, [colorOpen, onUpdate]);
   useLayoutEffect(() => {
     inspectorRef.current?.scrollTo({ top: 0, left: 0 });
   }, [isSketchRevolve, shape.id]);
@@ -571,7 +617,7 @@ export function ShapeInspector({
         <button
           className={shape.hole ? "active hole-choice" : "hole-choice"}
           onClick={() => {
-            onUpdate({ hole: true, color: "#b8c2cc" });
+            onUpdate({ hole: true });
             setColorOpen(false);
           }}
           disabled={locked}
@@ -606,15 +652,13 @@ export function ShapeInspector({
             ))}
             <label className={locked ? "custom-color disabled" : "custom-color"} title="Custom color">
               <input
+                key={`${shape.id}-${solidColor}`}
+                ref={customColorInputRef}
                 type="color"
-                value={solidColor}
+                defaultValue={solidColor}
                 disabled={locked}
                 onFocus={() => onInteractionActiveChange?.(true)}
                 onBlur={() => onInteractionActiveChange?.(false)}
-                onChange={(event) => {
-                  onUpdate({ color: event.target.value, hole: false });
-                  setColorOpen(false);
-                }}
               />
               <span>Custom</span>
             </label>
@@ -635,6 +679,7 @@ export function ShapeInspector({
         </button>
       ) : null}
 
+      {primaryProperties.length > 0 || gearType ? (
       <div className={`property-card ${propertiesOpen ? "" : "collapsed"}`}>
         <button
           className="property-card-header"
@@ -659,6 +704,7 @@ export function ShapeInspector({
           </div>
         ) : null}
       </div>
+      ) : null}
 
       <div className={`property-card ${positionOpen ? "" : "collapsed"}`}>
         <button
@@ -674,9 +720,65 @@ export function ShapeInspector({
         {positionOpen ? (
           <div className="property-list" id={`position-${shape.id}`}>
             <ShapePropertyRows properties={positionProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            {deltaToReference ? (
+              <div className="reference-delta" role="group" aria-label="Offset to reference point">
+                <div className="reference-delta-header">Δ to reference</div>
+                <div className="reference-delta-row">
+                  <span>ΔX</span><span>{formatReferenceDelta(deltaToReference.dx, workspace)}</span>
+                </div>
+                <div className="reference-delta-row">
+                  <span>ΔY</span><span>{formatReferenceDelta(deltaToReference.dy, workspace)}</span>
+                </div>
+                <div className="reference-delta-row">
+                  <span>ΔZ</span><span>{formatReferenceDelta(deltaToReference.dz, workspace)}</span>
+                </div>
+                <div className="reference-delta-row reference-delta-distance">
+                  <span>Distance</span><span>{formatReferenceDelta(deltaDistance, workspace)}</span>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
+
+      {crossProperties.length > 0 ? (
+        <div className={`property-card ${crossOpen ? "" : "collapsed"}`}>
+          <button
+            className="property-card-header"
+            type="button"
+            aria-expanded={crossOpen}
+            aria-controls={`cross-${shape.id}`}
+            onClick={() => setCrossOpen((open) => !open)}
+          >
+            <span>Marker</span>
+            <ChevronUp className={crossOpen ? "" : "collapsed"} size={25} strokeWidth={2.8} />
+          </button>
+          {crossOpen ? (
+            <div className="property-list" id={`cross-${shape.id}`}>
+              <ShapePropertyRows properties={crossProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {shape.kind !== "gear" ? (
+        <div className={`property-card ${taperOpen ? "" : "collapsed"}`}>
+          <button
+            className="property-card-header"
+            type="button"
+            aria-expanded={taperOpen}
+            aria-controls={`taper-${shape.id}`}
+            onClick={() => setTaperOpen((open) => !open)}
+          >
+            <span>Taper</span>
+            <ChevronUp className={taperOpen ? "" : "collapsed"} size={25} strokeWidth={2.8} />
+          </button>
+          {taperOpen ? (
+            <div className="property-list" id={`taper-${shape.id}`}>
+              <ShapePropertyRows properties={taperProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {shape.kind === "gear" ? (
         <div className={`property-card ${gearTeethOpen ? "" : "collapsed"}`}>
           <button
@@ -795,14 +897,7 @@ function RangeProperty({
   onChange,
   onInteractionActiveChange,
 }: RangePropertyConfig & { workspace: WorkplaneWorkspaceSettings; disabled?: boolean; onInteractionActiveChange?: (active: boolean) => void }) {
-  // Number field without an upper bound: the slider covers the usual range,
-  // typed values may exceed it. Explicitly wanted for threads - M64 or a
-  // 300 mm length should be enterable.
-  const allowsAboveSliderMax =
-    label === "Length" || label === "Width" || label === "Height" ||
-    label === "Diameter" || label === "Pitch" || label === "Thread Length" ||
-    label === "Clearance" || label === "Segments" ||
-    label === "X" || label === "Y" || label === "Z";
+  const allowsAboveSliderMax = label === "Length" || label === "Width" || label === "Height" || label.endsWith(" Length") || label.endsWith(" Width") || label === "Diameter" || label === "Pitch" || label === "Thread Length" || label === "Clearance" || label === "Segments" || label === "X" || label === "Y" || label === "Z";
   const isLength = propertyUsesLengthUnit(label);
   const accuracy = workspace.accuracy;
   const actualValue = Math.max(min, Number.isFinite(value) ? value : min);
@@ -815,11 +910,6 @@ function RangeProperty({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(formatPropertyNumber(controlValue, accuracy, controlStep));
   const unit = isLength ? lengthDisplayUnit(workspace).label : null;
-  useEffect(() => {
-    if (!editing) {
-      setDraft(formatPropertyNumber(controlValue, accuracy, controlStep));
-    }
-  }, [accuracy, controlStep, controlValue, editing]);
   const toModelValue = (nextValue: number) => isLength ? displayToMillimeters(nextValue, workspace) : nextValue;
   const commitDraft = () => {
     const next = parseMeasurementInput(draft);

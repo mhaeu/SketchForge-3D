@@ -74,6 +74,7 @@ import {
   type TransformOverlayState,
 } from "@/components/workplane/TransformOverlay";
 import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, MeasurementAccuracy, ShapeAsset, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import { REFERENCE_POINT_ARM_MM, REFERENCE_POINT_MARKER_MM, referencePointPosition } from "@/lib/referencePoint";
 import type { CadModifierEdge } from "@/lib/cadModifierTypes";
 
 const WORKPLANE_WIDTH = 200;
@@ -5188,6 +5189,7 @@ export function WorkplaneViewport({
       {selectedShape && !modifierActive && !rulerMode && !rulerDeleteMode && !rulerMoveMode ? (
         <ShapeInspector
           shape={selectedShape}
+          referencePoint={referencePointPosition(shapes)}
           snap={snap}
           snapOpen={snapOpen}
           workspace={workspace}
@@ -7349,6 +7351,41 @@ function createShapeObject(
     THREE.MathUtils.degToRad(shape.rotationZ ?? 0),
   );
   group.scale.set(mirrorSign(shape.mirrorX), mirrorSign(shape.mirrorY), mirrorSign(shape.mirrorZ));
+
+  if (shape.kind === "reference") {
+    // Reference point: a fixed-size axis cross plus a center sphere, drawn on
+    // top of everything so it stays visible in front of geometry. Not a
+    // printable mesh - excluded from every export and boolean path elsewhere.
+    // The group origin sits at the object center (elevation + height/2), so the
+    // cross is built around local y = -height/2 to land exactly on the point.
+    const arm = shape.crossArm ?? REFERENCE_POINT_ARM_MM;
+    const markerRadius = shape.markerRadius ?? REFERENCE_POINT_MARKER_MM;
+    const centerY = -shape.height / 2;
+    const axisMat = (hex: number) =>
+      new THREE.LineBasicMaterial({ color: hex, depthTest: false, transparent: true });
+    const line = (from: THREE.Vector3, to: THREE.Vector3, hex: number) => {
+      const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const seg = new THREE.Line(geo, axisMat(hex));
+      seg.renderOrder = 999;
+      return seg;
+    };
+    const c = new THREE.Vector3(0, centerY, 0);
+    group.add(line(new THREE.Vector3(-arm, centerY, 0), new THREE.Vector3(arm, centerY, 0), 0xe5484d)); // X red
+    group.add(line(new THREE.Vector3(0, centerY - arm, 0), new THREE.Vector3(0, centerY + arm, 0), 0x30a46c)); // Y green
+    group.add(line(new THREE.Vector3(0, centerY, -arm), new THREE.Vector3(0, centerY, arm), 0x0091ff)); // Z blue
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(Math.max(0.05, markerRadius), 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xf5c542, depthTest: false, transparent: true }),
+    );
+    sphere.position.copy(c);
+    sphere.renderOrder = 1000;
+    group.add(sphere);
+    group.traverse((child) => {
+      child.userData.shapeId = shape.id;
+    });
+    setObjectRenderLayer(group, RENDER_LAYER_SHAPES);
+    return group;
+  }
 
   if (shape.groupedShapes?.length && !shape.importedMesh) {
     const content = new THREE.Group();

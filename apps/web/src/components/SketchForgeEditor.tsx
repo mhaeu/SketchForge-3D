@@ -99,6 +99,7 @@ import { addLineIntersectionPoints, splitSketchSegment } from "@/lib/sketchPoint
 import { buildSketchRevolveMesh, DEFAULT_SKETCH_REVOLVE_SETTINGS, normalizeSketchRevolveSettings, type SketchRevolveMesh } from "@/lib/sketchRevolve";
 import { exportSkfProject, SKF_MEDIA_TYPE } from "@/lib/skfProject";
 import { makeShapeFromAsset, sceneShape, toolbarShapeAssets, type ToolbarShapeAsset } from "@/lib/shapeCatalog";
+import { ensureReferencePoint, isReferencePoint, referencePointPosition, REFERENCE_POINT_ID } from "@/lib/referencePoint";
 import { importExtensionSupported } from "@/lib/importExtensions";
 import { importedShapeFromStl } from "@/lib/stlImport";
 import { exportMeshesToStl } from "@/lib/stlExport";
@@ -3861,8 +3862,8 @@ function cuboidsToMesh(name: string, cuboids: Cuboid[], centerX: number, centerZ
 }
 
 function booleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
-  const holes = selection.filter((shape) => shape.hole);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
   if (solids.length === 0 || holes.length === 0) {
     return null;
   }
@@ -4339,8 +4340,8 @@ async function manifoldBooleanMeshShape(selection: WorkplaneShape[], options: { 
   // GROUPING SAFETY NOTE FOR FUTURE AGENTS:
   // Imported STL + hole grouping stays on exact boolean first. Rotated cutters
   // are validated against their real oriented volume, not their broad AABB.
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
-  const holes = selection.filter((shape) => shape.hole);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
   if (solids.length === 0 || holes.length === 0 || (options.requireImported !== false && !selection.some((shape) => Boolean(shape.importedMesh)))) {
     return null;
   }
@@ -4404,7 +4405,7 @@ async function manifoldBooleanMeshShape(selection: WorkplaneShape[], options: { 
 }
 
 async function manifoldUnionMeshShape(selection: WorkplaneShape[]): Promise<WorkplaneShape | null> {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
   if (solids.length < 2 || !selection.some((shape) => Boolean(shape.importedMesh))) {
     return null;
   }
@@ -4446,8 +4447,8 @@ function asIntersectionGroup(group: WorkplaneShape): WorkplaneShape {
 }
 
 async function manifoldIntersectionMeshShape(selection: WorkplaneShape[]): Promise<IntersectionAttempt> {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
-  const holes = selection.filter((shape) => shape.hole && !shape.locked);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const holes = selection.filter((shape) => shape.hole && !shape.locked && !isReferencePoint(shape));
   if (solids.length === 0 || holes.length === 0) {
     return { status: "unsupported" };
   }
@@ -4489,8 +4490,8 @@ async function manifoldIntersectionMeshShape(selection: WorkplaneShape[]): Promi
 }
 
 function bvhIntersectionMeshShape(selection: WorkplaneShape[], operation: CSGOperation, idPrefix: string): IntersectionAttempt {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
-  const holes = selection.filter((shape) => shape.hole && !shape.locked);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const holes = selection.filter((shape) => shape.hole && !shape.locked && !isReferencePoint(shape));
   if (solids.length === 0 || holes.length === 0) {
     return { status: "unsupported" };
   }
@@ -4610,8 +4611,8 @@ function clearsImportedCutVolume(geometry: THREE.BufferGeometry, sourceInteriorT
 }
 
 function importedBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
-  const holes = selection.filter((shape) => shape.hole);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
   if (solids.length === 0 || holes.length === 0 || !selection.some((shape) => Boolean(shape.importedMesh))) {
     return null;
   }
@@ -4732,8 +4733,8 @@ function boxedBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | nu
 }
 
 function aabbBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
-  const holes = selection.filter((shape) => shape.hole);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
   if (solids.length === 0 || holes.length === 0) {
     return null;
   }
@@ -4787,7 +4788,7 @@ function aabbBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | nul
 }
 
 function hollowClipMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
   const holes = selection
     .filter((shape) => shape.hole)
     .map(paddedCutterShape)
@@ -4913,7 +4914,7 @@ function hollowClipMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null
 }
 
 function cutFullyConsumesSolids(selection: WorkplaneShape[]) {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked);
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
   const holes = selection.filter((shape) => shape.hole).map(paddedCutterShape);
   if (solids.length === 0 || holes.length === 0) {
     return false;
@@ -5457,7 +5458,7 @@ export function SketchForgeEditor({
 } = {}) {
   const initialSceneRef = useRef<WorkplaneShape[] | null>(null);
   if (initialSceneRef.current === null) {
-    initialSceneRef.current = initialShapes.map(canonicalizeShape);
+    initialSceneRef.current = ensureReferencePoint(initialShapes.map(canonicalizeShape));
   }
   const initialHistoryStateRef = useRef<EditorHistoryState | null>(null);
   if (initialHistoryStateRef.current === null) {
@@ -6891,7 +6892,7 @@ export function SketchForgeEditor({
       setPlacementElevation(nextPlacementElevation);
       setPlacementWorkplane(normalizePlacementWorkplane(initialPlacementWorkplane, nextPlacementElevation));
     }
-    const incoming = initialShapes.map(canonicalizeShape);
+    const incoming = ensureReferencePoint(initialShapes.map(canonicalizeShape));
     const incomingSerialized = projectShapesFingerprint(incoming);
     // The parent echoes shapes after a local save; rehydrating that echo can reset active transform state.
     if (!projectChanged && lastProjectShapesEchoRef.current !== null && incomingSerialized === lastProjectShapesEchoRef.current) {
@@ -7072,10 +7073,18 @@ export function SketchForgeEditor({
       return;
     }
     const selected = new Set(selectedIds);
+    // The reference point is a permanent scene helper - never delete it, even
+    // if it is part of the current selection.
+    const deletable = shapes.filter((shape) => selected.has(shape.id) && !isReferencePoint(shape));
+    if (deletable.length === 0) {
+      setNotice("The reference point cannot be deleted");
+      return;
+    }
+    const deletableIds = new Set(deletable.map((shape) => shape.id));
     commitShapes(
-      shapes.filter((shape) => !selected.has(shape.id)),
+      shapes.filter((shape) => !deletableIds.has(shape.id)),
       [],
-      `Deleted ${selected.size} selected shape${selected.size === 1 ? "" : "s"}`,
+      `Deleted ${deletableIds.size} selected shape${deletableIds.size === 1 ? "" : "s"}`,
     );
   }, [commitShapes, hasSelection, selectedIds, shapes]);
 
@@ -7084,7 +7093,15 @@ export function SketchForgeEditor({
       setNotice("Select a shape first");
       return;
     }
-    const duplicates = selectedShapes.map((shape) => cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"));
+    // Upstream fix (62502b7): duplicates are placed at the same position as the
+    // original, not offset. The reference point must never be duplicated at all.
+    const duplicates = selectedShapes
+      .filter((shape) => !isReferencePoint(shape))
+      .map((shape) => cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"));
+    if (duplicates.length === 0) {
+      setNotice("The reference point cannot be duplicated");
+      return;
+    }
     commitShapes([...shapes, ...duplicates], duplicates.map((shape) => shape.id), `Duplicated ${duplicates.length} shape${duplicates.length === 1 ? "" : "s"}`);
   }, [commitShapes, hasSelection, selectedShapes, shapes]);
 
@@ -8547,7 +8564,7 @@ export function SketchForgeEditor({
 
   const exportDesign = useCallback((format: DirectExportFormat, exportName: string) => {
     const sourceShapes = hasSelection ? selectedShapes : shapes;
-    const exportable = sourceShapes.filter((shape) => !shape.hole);
+    const exportable = sourceShapes.filter((shape) => !shape.hole && !isReferencePoint(shape));
     if (exportable.length === 0) {
       setNotice(hasSelection ? "Select at least one solid shape before exporting" : "Add a solid shape before exporting");
       return;
