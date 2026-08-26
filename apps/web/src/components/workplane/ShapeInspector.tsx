@@ -760,7 +760,7 @@ export function ShapeInspector({
           ) : null}
         </div>
       ) : null}
-      {shape.kind !== "gear" ? (
+      {shape.kind !== "gear" && shape.kind !== "reference" ? (
         <div className={`property-card ${taperOpen ? "" : "collapsed"}`}>
           <button
             className="property-card-header"

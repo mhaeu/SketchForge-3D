@@ -967,6 +967,17 @@ function shapeMaterialSignature(shape: WorkplaneShape): string {
 }
 
 function shapeGeometrySignature(shape: WorkplaneShape): string {
+  if (shape.kind === "reference") {
+    // The reference cross has no mesh geometry; its visible size is driven by
+    // crossArm/markerRadius. Include them so changing the size rebuilds the
+    // cross immediately instead of only when some other field changes.
+    return JSON.stringify({
+      kind: "reference",
+      crossArm: shape.crossArm ?? null,
+      markerRadius: shape.markerRadius ?? null,
+      height: shape.height,
+    });
+  }
   const taper = shape.kind === "gear" || !shapeHasTaper(shape)
     ? null
     : { ...shapeTaperDimensions(shape), baseWidth: shapeWidth(shape), baseDepth: shapeDepth(shape) };
