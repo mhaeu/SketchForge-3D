@@ -1,4 +1,10 @@
-export type CadModifierKind = "chamfer" | "fillet";
+/**
+ * "variableFillet" ist eine Verrundung, deren Radius sich entlang der Kante
+ * aendert: `amount` am Kantenanfang, `endAmount` am Kantenende. Der Kernel
+ * unterstuetzt das bereits - `fillet()` nimmt statt einer Zahl auch ein Tupel
+ * [r1, r2] entgegen.
+ */
+export type CadModifierKind = "chamfer" | "fillet" | "variableFillet";
 
 export type CadModifierEdge = {
   id: number;
@@ -54,6 +60,17 @@ export type CadModifierWorkerRequest =
       amount: number;
       quality: CadModifierQuality;
       chamferAngle: number;
+      /**
+       * Endradius fuer "variableFillet". Bei den anderen Arten ohne Wirkung.
+       */
+      endAmount: number;
+      /**
+       * Vertauscht Start- und Endradius. Noetig, weil die Laufrichtung einer
+       * Kante aus der OCCT-Parametrisierung stammt und in der Oberflaeche
+       * nicht sichtbar ist - zeigt die Verjuengung falsch herum, kippt dieser
+       * Schalter sie.
+       */
+      flipTaper: boolean;
     }
   | { type: "dispose"; requestId: number };
 

@@ -85,3 +85,28 @@ export function cadModifierTimeoutMessage(phase: CadModifierRequestPhase) {
 export function cadModifierWorkerFailureMessage() {
   return "The CAD worker could not start. Update to Firefox 121+, Chrome/Brave 114+, or Safari 17.2+, then try again.";
 }
+
+
+/**
+ * Start- und Endradius für den variablen Fillet. flipTaper vertauscht sie, weil
+ * die Laufrichtung einer Kante aus der OCCT-Parametrisierung stammt und in der
+ * Oberfläche nicht sichtbar ist.
+ *
+ * In cadModifierRuntime, weil Worker (Anwendung) und UI (Vorschau/Anzeige) es
+ * teilen und es hier isoliert testbar ist.
+ */
+export function variableFilletRadii(params: { amount: number; endAmount: number; flipTaper: boolean }) {
+  return params.flipTaper
+    ? { startRadius: params.endAmount, endRadius: params.amount }
+    : { startRadius: params.amount, endRadius: params.endAmount };
+}
+
+/**
+ * Der variable Fillet arbeitet auf genau einer Kante: OCCTs filletVariable
+ * liefert einen neuen Koerper, wodurch die Verweise weiterer Kanten ungueltig
+ * wuerden. Diese Pruefung teilen Worker und UI, damit Ablehnung und
+ * Button-Sperre dieselbe Regel benutzen.
+ */
+export function variableFilletRejectsMultiEdge(selectedCount: number) {
+  return selectedCount > 1;
+}

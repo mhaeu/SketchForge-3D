@@ -36,6 +36,7 @@ import {
   ToolbarImportIcon,
   ToolbarIntersectionIcon,
   ToolbarFilletIcon,
+  ToolbarVariableFilletIcon,
   ToolbarMirrorIcon,
   ToolbarPasteIcon,
   ToolbarRedoIcon,
@@ -151,6 +152,8 @@ type EdgeModifierSession = {
   amount: number;
   sharpAngle: number;
   chamferAngle: number;
+  endAmount: number;
+  flipTaper: boolean;
   quality: CadModifierQuality;
   tangentChain: boolean;
   preserveEdgeSize: boolean;
@@ -7404,6 +7407,8 @@ export function SketchForgeEditor({
       amount,
       sharpAngle: 25,
       chamferAngle: 45,
+      endAmount: Math.max(0, amount / 2),
+      flipTaper: false,
       quality: "standard",
       tangentChain: defaultCadModifierTangentChain(appliedEdgeTreatmentCount),
       preserveEdgeSize: selectedShape.edgeResizeMode === "preserve",
@@ -7490,10 +7495,16 @@ export function SketchForgeEditor({
     invalidateCadModifierSession();
     const sourceFingerprint = projectShapesFingerprint([shape]);
     const sourceProjectId = projectInfoRef.current.projectId;
-    const kind: CadModifierKind = params.kind === "fillet" ? "fillet" : "chamfer";
+    const kind: CadModifierKind = params.kind === "fillet"
+      ? "fillet"
+      : params.kind === "variableFillet"
+        ? "variableFillet"
+        : "chamfer";
     const sharpAngle = Math.max(1, Math.min(CAD_MODIFIER_MAX_SHARP_ANGLE, mcpNumber(params.sharpAngle, 25)));
     const amount = Math.max(MIN_EDGE_MODIFIER_AMOUNT, mcpNumber(params.amount, 1));
     const chamferAngle = Math.max(5, Math.min(85, mcpNumber(params.chamferAngle, 45)));
+    const endAmount = Math.max(0, mcpNumber(params.endAmount, amount / 2));
+    const flipTaper = params.flipTaper === true;
     const quality: CadModifierQuality = params.quality === "draft" || params.quality === "fine" ? params.quality : "standard";
     const preserveEdgeSize = typeof params.preserveEdgeSize === "boolean" ? params.preserveEdgeSize : shape.edgeResizeMode === "preserve";
     const { response, sourceParts } = await prepareCadModifierForMcp(shape, sharpAngle);
@@ -7514,6 +7525,8 @@ export function SketchForgeEditor({
       amount,
       quality,
       chamferAngle,
+      endAmount,
+      flipTaper,
     }, [], 30000);
     if (previewResponse.type !== "preview") {
       throw new Error("The CAD worker did not return an edge preview");
@@ -7532,6 +7545,7 @@ export function SketchForgeEditor({
       amount,
       edgeCount: selectedEdgeIds.length,
       ...(kind === "chamfer" ? { chamferAngle } : {}),
+      ...(kind === "variableFillet" ? { endAmount, flipTaper } : {}),
     } satisfies NonNullable<WorkplaneShape["edgeTreatments"]>[number];
     const session: EdgeModifierSession = {
       kind,
@@ -7540,6 +7554,8 @@ export function SketchForgeEditor({
       amount,
       sharpAngle,
       chamferAngle,
+      endAmount,
+      flipTaper,
       quality,
       tangentChain: false,
       preserveEdgeSize,
@@ -7599,6 +7615,7 @@ export function SketchForgeEditor({
       amount: edgeModifier.amount,
       edgeCount: edgeModifier.selectedEdgeIds.length,
       ...(edgeModifier.kind === "chamfer" ? { chamferAngle: edgeModifier.chamferAngle } : {}),
+      ...(edgeModifier.kind === "variableFillet" ? { endAmount: edgeModifier.endAmount, flipTaper: edgeModifier.flipTaper } : {}),
     } satisfies NonNullable<WorkplaneShape["edgeTreatments"]>[number];
     const createdAt = Date.now();
     const previewShape = canonicalizeShape({
@@ -7658,6 +7675,8 @@ export function SketchForgeEditor({
         amount: edgeModifier.amount,
         quality: edgeModifier.quality,
         chamferAngle: edgeModifier.chamferAngle,
+        endAmount: edgeModifier.endAmount,
+        flipTaper: edgeModifier.flipTaper,
       });
       if (requestId === null) {
         const message = cadModifierWorkerFailureMessage();
@@ -9185,6 +9204,7 @@ export function SketchForgeEditor({
         onGroup={groupSelected}
         onIntersect={intersectSelected}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
+        onVariableFillet={() => edgeModifier?.kind === "variableFillet" ? cancelEdgeModifier() : startEdgeModifier("variableFillet")}
         onMirror={toggleMirrorMode}
         onPaste={pasteShape}
         onRedo={redo}
@@ -9300,6 +9320,8 @@ export function SketchForgeEditor({
           amount={edgeModifier.amount}
           maxAmount={edgeModifierMaxAmount}
           chamferAngle={edgeModifier.chamferAngle}
+          endAmount={edgeModifier.endAmount}
+          flipTaper={edgeModifier.flipTaper}
           quality={edgeModifier.quality}
           sharpAngle={edgeModifier.sharpAngle}
           workspace={workspaceSettings}
@@ -9317,6 +9339,8 @@ export function SketchForgeEditor({
           error={edgeModifier.error}
           onAmountChange={(value) => setEdgeModifier((current) => current?.prepared ? { ...current, amount: Math.max(MIN_EDGE_MODIFIER_AMOUNT, Math.min(edgeModifierMaxAmount, value)), preview: null, busy: true, error: null } : current)}
           onChamferAngleChange={(value) => setEdgeModifier((current) => current?.prepared ? { ...current, chamferAngle: Math.max(5, Math.min(85, value)), preview: null, busy: true, error: null } : current)}
+          onEndAmountChange={(value) => setEdgeModifier((current) => current?.prepared ? { ...current, endAmount: Math.max(0, value), preview: null, busy: true, error: null } : current)}
+          onFlipTaperChange={(value) => setEdgeModifier((current) => current?.prepared ? { ...current, flipTaper: value, preview: null, busy: true, error: null } : current)}
           onQualityChange={(quality) => setEdgeModifier((current) => current?.prepared ? { ...current, quality, preview: null, busy: true, error: null } : current)}
           onSharpAngleChange={(sharpAngle) => setEdgeModifier((current) => {
             if (!current?.prepared) return current;
@@ -9490,6 +9514,7 @@ function SecondaryToolbar({
   onGroup,
   onIntersect,
   onFillet,
+  onVariableFillet,
   onMirror,
   onPaste,
   onRedo,
@@ -9545,6 +9570,7 @@ function SecondaryToolbar({
   onGroup: () => void;
   onIntersect: () => void;
   onFillet: () => void;
+  onVariableFillet: () => void;
   onMirror: () => void;
   onPaste: () => void;
   onRedo: () => void;
@@ -9719,6 +9745,8 @@ function SecondaryToolbar({
     { label: "Snap to grid", icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: "Chamfer", icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
     { label: "Fillet", icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },
+    // Variable fillet deaktiviert: occt-wasm filletVariable loest weiterhin einen WASM-Speicherfehler aus (auch im neuen Kernel-Build). Zum Reaktivieren die naechste Zeile einkommentieren.
+    // { label: "Variable fillet", icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
   ];
   const arrangeTools = [
     { label: "Drop to workplane", icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },

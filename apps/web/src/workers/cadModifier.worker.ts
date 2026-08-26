@@ -2,7 +2,7 @@
 
 import { OcctKernel, type ShapeHandle } from "occt-wasm";
 import type { CadModifierComponentMesh, CadModifierDisplayEdge, CadModifierEdge, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
-import { CAD_MODIFIER_RUNTIME_BASE, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierWasmMemoryFault } from "@/lib/cadModifierRuntime";
+import { CAD_MODIFIER_RUNTIME_BASE, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
 
 const HASH_UPPER_BOUND = 2_147_483_647;
 const CAD_EDGE_WIREFRAME_DEFLECTION = 0.035;
@@ -279,6 +279,38 @@ function isModifierDisplayCadEdge(edge: CollectedCadEdgeGeometry, treatmentAreaL
   return isDisplayCadEdge(edge) && !touchesTreatmentDetailFace(edge, treatmentAreaLimit);
 }
 
+/**
+ * Verrundung mit veraenderlichem Radius.
+ *
+ * OCCT bietet dafuer `filletVariable(solid, edge, r1, r2)` - und zwar bewusst
+ * fuer *eine* Kante. Der Grund ist nicht Bequemlichkeit: Das Ergebnis ist ein
+ * neuer Koerper, womit alle vorher eingesammelten Kantenverweise ungueltig
+ * werden. Ein zweiter Aufruf mit einer Kante des Ausgangskoerpers waere
+ * bestenfalls ein Fehler, schlimmstenfalls stiller Unsinn. Genau deshalb nimmt
+ * der konstante `fillet` ein Array: dort traegt BRepFilletAPI alle Kanten ein
+ * und baut einmal.
+ *
+ * Statt hier eine Mehrfachauswahl vorzutaeuschen, lehnen wir sie klar ab.
+ *
+ * r1 gilt am Anfang der Kante, r2 am Ende. Welches Ende der Anfang ist, ergibt
+ * sich aus der OCCT-Parametrisierung und ist in der Oberflaeche nicht sichtbar
+ * - dafuer gibt es den flipTaper-Schalter.
+ */
+function applyVariableFillet(
+  cad: OcctKernel,
+  solid: ShapeHandle,
+  edges: ShapeHandle[],
+  request: { amount: number; endAmount: number; flipTaper: boolean },
+) {
+  if (edges.length > 1) {
+    throw new Error(
+      "A variable fillet works on one edge at a time. Select a single edge, or use the constant-radius fillet for several edges.",
+    );
+  }
+  const { startRadius, endRadius } = variableFilletRadii(request);
+  return cad.filletVariable(solid, edges[0], startRadius, endRadius);
+}
+
 function releaseHandles(cad: OcctKernel, handles: ShapeHandle[]) {
   handles.forEach((handle) => {
     try {
@@ -449,9 +481,11 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
           ? activeCad.copy(solid)
           : request.kind === "fillet"
             ? activeCad.fillet(solid, componentEdges, request.amount)
-            : Math.abs(request.chamferAngle - 45) < 0.001
-              ? activeCad.chamfer(solid, componentEdges, request.amount)
-              : activeCad.chamferDistAngle(solid, componentEdges, request.amount, request.chamferAngle);
+            : request.kind === "variableFillet"
+              ? applyVariableFillet(activeCad, solid, componentEdges, request)
+              : Math.abs(request.chamferAngle - 45) < 0.001
+                ? activeCad.chamfer(solid, componentEdges, request.amount)
+                : activeCad.chamferDistAngle(solid, componentEdges, request.amount, request.chamferAngle);
         componentResults.push(component);
       }
       result = componentResults.length === 1 ? componentResults[0] : activeCad.makeCompound(componentResults);
@@ -505,7 +539,7 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
       return;
     }
     const message = request.type === "preview" && (rawMessage.includes("WebAssembly.Exception") || rawMessage.includes("fillet:") || rawMessage.includes("chamfer:"))
-      ? `The selected edges cannot be ${request.kind === "fillet" ? "filleted" : "chamfered"} together at this size. Reduce the size or select fewer connected edges.`
+      ? `The selected edges cannot be ${request.kind === "chamfer" ? "chamfered" : "filleted"} together at this size. Reduce the size or select fewer connected edges.`
       : rawMessage || "The CAD kernel could not complete this edge treatment";
     if (request.type === "prepare" && cad) releaseSession(cad);
     post({ type: "error", requestId: request.requestId, message });

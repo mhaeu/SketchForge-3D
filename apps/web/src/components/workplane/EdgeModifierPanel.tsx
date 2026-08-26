@@ -4,7 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { Check, LoaderCircle, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import type { CadModifierKind, CadModifierQuality } from "@/lib/cadModifierTypes";
-import { CAD_MODIFIER_MAX_SHARP_ANGLE, edgeModifierSelectionStatus } from "@/lib/cadModifierRuntime";
+import { CAD_MODIFIER_MAX_SHARP_ANGLE, edgeModifierSelectionStatus, variableFilletRejectsMultiEdge } from "@/lib/cadModifierRuntime";
 import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 const MIN_EDGE_MODIFIER_AMOUNT = 0.001;
@@ -135,6 +135,8 @@ export function EdgeModifierPanel({
   amount,
   maxAmount,
   chamferAngle,
+  endAmount,
+  flipTaper,
   quality,
   sharpAngle,
   workspace,
@@ -152,6 +154,8 @@ export function EdgeModifierPanel({
   error,
   onAmountChange,
   onChamferAngleChange,
+  onEndAmountChange,
+  onFlipTaperChange,
   onQualityChange,
   onSharpAngleChange,
   onTangentChainChange,
@@ -166,6 +170,8 @@ export function EdgeModifierPanel({
   amount: number;
   maxAmount: number;
   chamferAngle: number;
+  endAmount: number;
+  flipTaper: boolean;
   quality: CadModifierQuality;
   sharpAngle: number;
   workspace: WorkplaneWorkspaceSettings;
@@ -183,6 +189,8 @@ export function EdgeModifierPanel({
   error: string | null;
   onAmountChange: (value: number) => void;
   onChamferAngleChange: (value: number) => void;
+  onEndAmountChange: (value: number) => void;
+  onFlipTaperChange: (value: boolean) => void;
   onQualityChange: (value: CadModifierQuality) => void;
   onSharpAngleChange: (value: number) => void;
   onTangentChainChange: (value: boolean) => void;
@@ -194,7 +202,11 @@ export function EdgeModifierPanel({
   onCancel: () => void;
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
-  const title = kind === "fillet" ? "Fillet edges" : "Chamfer edges";
+  const title = kind === "fillet"
+    ? "Fillet edges"
+    : kind === "variableFillet"
+      ? "Variable fillet edges"
+      : "Chamfer edges";
   const amountMin = Math.min(MIN_EDGE_MODIFIER_AMOUNT, Math.max(Number.EPSILON, maxAmount));
   const amountMax = Math.max(amountMin, maxAmount);
   return (
@@ -254,7 +266,7 @@ export function EdgeModifierPanel({
       ) : null}
 
       <EdgeModifierSlider
-        label={kind === "fillet" ? "Radius" : "Distance"}
+        label={kind === "fillet" ? "Radius" : kind === "variableFillet" ? "Start radius" : "Distance"}
         value={amount}
         min={amountMin}
         max={amountMax}
@@ -266,6 +278,26 @@ export function EdgeModifierPanel({
       />
 
       {kind === "chamfer" ? <EdgeModifierSlider label="Angle" value={chamferAngle} min={5} max={85} step={1} unit="deg" workspace={workspace} disabled={!prepared || busy} onChange={onChamferAngleChange} /> : null}
+
+      {kind === "variableFillet" ? (
+        <>
+          <EdgeModifierSlider
+            label="End radius"
+            value={endAmount}
+            min={0}
+            max={amountMax}
+            step={EDGE_MODIFIER_AMOUNT_STEP}
+            workspace={workspace}
+            length
+            disabled={!prepared || busy}
+            onChange={onEndAmountChange}
+          />
+          <label className="edge-modifier-check">
+            <input type="checkbox" checked={flipTaper} disabled={!prepared || busy} onChange={(event) => onFlipTaperChange(event.currentTarget.checked)} />
+            <span>Flip taper direction</span>
+          </label>
+        </>
+      ) : null}
 
       <EdgeModifierSlider label="Sharp-edge threshold" value={sharpAngle} min={1} max={CAD_MODIFIER_MAX_SHARP_ANGLE} step={1} unit="deg" workspace={workspace} disabled={!prepared || busy} onChange={onSharpAngleChange} />
 
@@ -288,10 +320,16 @@ export function EdgeModifierPanel({
         </select>
       </label>
 
+      {kind === "variableFillet" && variableFilletRejectsMultiEdge(selectedCount) ? (
+        <div className="edge-modifier-error" role="alert">
+          A variable fillet works on one edge at a time. Deselect the extra edges, or switch to the constant-radius fillet.
+        </div>
+      ) : null}
+
       {error ? <div className="edge-modifier-error" role="alert">{error}</div> : null}
       <div className="edge-modifier-footer">
         <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
-        <button type="button" className="primary" disabled={!prepared || busy || selectedCount === 0 || Boolean(error)} onClick={onApply}>
+        <button type="button" className="primary" disabled={!prepared || busy || selectedCount === 0 || Boolean(error) || (kind === "variableFillet" && variableFilletRejectsMultiEdge(selectedCount))} onClick={onApply}>
           {busy ? <LoaderCircle className="edge-modifier-spinner" size={17} /> : <Check size={17} />}
           Apply
         </button>

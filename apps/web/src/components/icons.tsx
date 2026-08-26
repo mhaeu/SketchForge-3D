@@ -156,6 +156,20 @@ export function ToolbarFilletIcon() {
   return <ToolbarCommandImage file="toolbar-fillet.png" className="toolbar-user-art-icon" />;
 }
 
+export function ToolbarVariableFilletIcon(props: IconProps) {
+  // Ecke, deren Verrundung von unten (gross) nach oben (klein) auslaeuft -
+  // die Kernaussage des variablen Radius in einem Bild.
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M12 8v26h26" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.35" />
+      <path d="M12 8c0 3 .6 5.4 1.8 7.2" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
+      <path d="M38 34c-8 0-14-2-18-6.5S13.4 16 13.8 15.2" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
+      <path d="M13 12h6M13 12l2-2M13 12l2 2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+      <path d="M31 34v-9M31 34l-2-2M31 34l2-2M31 25l-2 2M31 25l2 2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+    </svg>
+  );
+}
+
 export function ToolbarPreserveEdgeIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
