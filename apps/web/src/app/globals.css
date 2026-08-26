@@ -8678,3 +8678,73 @@ html[data-theme="dark"] .nameplate-fillet-coachmark {
     animation: none;
   }
 }
+
+
+/* Reference-point offset readout in the Position card */
+.reference-delta {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(49, 70, 93, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reference-delta-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7c90;
+  margin-bottom: 2px;
+}
+
+.reference-delta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 15px;
+  color: #31465d;
+  font-variant-numeric: tabular-nums;
+}
+
+.reference-delta-row > span:first-child {
+  color: #6b7c90;
+}
+
+.reference-delta-distance {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(49, 70, 93, 0.18);
+  font-weight: 600;
+}
+
+/* Editable dimension pill: highlight the selected straight segment's length */
+.sketch-segment-dimensions g.editable rect {
+  fill: rgba(255, 249, 232, 0.98);
+  stroke: #f5c542;
+  stroke-width: 1.5;
+}
+
+.sketch-segment-dimensions g.editable text {
+  fill: #7a5a00;
+  font-weight: 600;
+}
+
+/* Length input overlaid on the sketch canvas */
+.sketch-length-input {
+  width: 76px;
+  height: 30px;
+  border: 1.5px solid #f5c542;
+  border-radius: 7px;
+  background: #fffdf6;
+  color: #16283a;
+  font-weight: 600;
+  font-size: 15px;
+  text-align: center;
+  outline: none;
+  box-shadow: 0 2px 10px rgba(20, 40, 58, 0.18);
+}
+
+.sketch-length-input:focus {
+  border-color: #e0a800;
+  box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.4), 0 2px 10px rgba(20, 40, 58, 0.18);
+}
