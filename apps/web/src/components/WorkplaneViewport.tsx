@@ -2246,7 +2246,14 @@ function resizeShapeAlongFrameNormal(
   nextFrameHeight: number,
   resizingFromBottom: boolean,
 ): Partial<WorkplaneShape> {
-  const importedPatch = resizeImportedShapeAlongFrameNormal(shape, frame, nextFrameHeight, resizingFromBottom);
+  // Threads must not be resized by stretching their mesh positions: that pulls
+  // the turns apart. Skip the imported-mesh path so the normal height resize
+  // below runs, which only sets the height and lets canonicalizeShape rebuild
+  // the thread at the correct length - exactly like typing the length in the
+  // inspector field.
+  const importedPatch = shape.threadParams
+    ? null
+    : resizeImportedShapeAlongFrameNormal(shape, frame, nextFrameHeight, resizingFromBottom);
   if (importedPatch) {
     return importedPatch;
   }
@@ -6041,7 +6048,11 @@ function syncShapeObjectDimensions(object: THREE.Group, shape: WorkplaneShape) {
   const width = shapeWidth(shape);
   const depth = shapeDepth(shape);
   let scale: THREE.Vector3 | null = null;
-  if (shape.importedMesh && !preservesEdgeTreatmentSize(shape)) {
+  // Threads must not be live-scaled: their mesh is generated at the correct
+  // length (createShapeObject rebuilds it via canonicalizeShape), so stretching
+  // the existing object by height/baseHeight would pull the turns apart. Leaving
+  // scale null skips this object here and lets the rebuild show the correct mesh.
+  if (!shape.threadParams && shape.importedMesh && !preservesEdgeTreatmentSize(shape)) {
     scale = new THREE.Vector3(
       width / Math.max(0.001, shape.importedMesh.baseWidth),
       shape.height / Math.max(0.001, shape.importedMesh.baseHeight),
