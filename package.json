@@ -15,7 +15,7 @@
     "predev": "npm run copy:occt",
     "dev": "next dev apps/web",
     "prebuild": "npm run copy:occt",
-    "build": "next build apps/web",
+    "build": "next build apps/web --webpack",
     "export": "set STATIC_EXPORT=true&& next build apps/web && node scripts/verify-static-worker-assets.mjs",
     "verify:static-worker-assets": "node scripts/verify-static-worker-assets.mjs",
     "start": "next start apps/web",

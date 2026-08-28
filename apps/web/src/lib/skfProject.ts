@@ -4,6 +4,7 @@ import { normalizePlacementWorkplane, placementWorkplaneIsBase, type PlacementWo
 import { importedShapeFromObj } from "@/lib/objImport";
 import { normalizeProjectAsset, sha256Hex } from "@/lib/projectAssets";
 import { canonicalizeShape } from "@/lib/workplaneShapes";
+import { withoutReferencePoints } from "@/lib/referencePoint";
 import { importedShapeFromStl } from "@/lib/stlImport";
 import { importedShapeFromSvg } from "@/lib/svgImport";
 import { normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
@@ -689,8 +690,11 @@ function unzipAsync(bytes: Uint8Array) {
 export async function exportSkfProject(input: SkfProjectExportInput) {
   const hydrated = hydrateEditorHistoryState(input.shapes, input.history, input.historyIndex);
   if (hydrated.entries.length > SKF_LIMITS.states) throw new Error("Project has too many undo states for the .skf format");
+  // The reference point is a local scene helper (like an origin marker), not
+  // real geometry - exclude it from shared/exported projects the same way the
+  // STEP exporter does. ensureReferencePoint recreates it on load.
   const exportEntries = hydrated.entries.map((entry) =>
-    editorHistoryEntry(repairDuplicateGroupedObjectIds(entry.shapes), entry.selectedIds));
+    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds));
   const builder = new SkfArchiveBuilder();
   const stateShapes = exportEntries.map((entry) => entry.shapes);
   await builder.addSources(input.assets, referencedSourceAssetIds(stateShapes));
