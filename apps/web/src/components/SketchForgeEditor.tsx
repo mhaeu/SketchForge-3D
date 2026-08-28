@@ -2386,7 +2386,9 @@ function cadModifierPrimitiveForShape(shape: WorkplaneShape): CadModifierPrimiti
 function bakeShapeTransformIntoMesh(shape: WorkplaneShape): WorkplaneShape {
   // Text and groups must retain their editable source data across transforms.
   // Baking a group would discard groupedShapes and make Ungroup unavailable.
-  if (shapeTransformShouldRemainEditable(shape) || !shapeHasTransformToBake(shape)) {
+  // The reference point is a permanent scene helper and must never be baked
+  // into a mesh either.
+  if (shape.kind === "reference" || shapeTransformShouldRemainEditable(shape) || !shapeHasTransformToBake(shape)) {
     return shape;
   }
 

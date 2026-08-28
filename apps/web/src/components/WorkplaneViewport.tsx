@@ -74,7 +74,7 @@ import {
   type TransformOverlayState,
 } from "@/components/workplane/TransformOverlay";
 import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, MeasurementAccuracy, ShapeAsset, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
-import { REFERENCE_POINT_ARM_MM, REFERENCE_POINT_MARKER_MM, referencePointPosition } from "@/lib/referencePoint";
+import { REFERENCE_POINT_ARM_MM, REFERENCE_POINT_MARKER_MM, referencePointPosition, isReferencePoint } from "@/lib/referencePoint";
 import type { CadModifierEdge } from "@/lib/cadModifierTypes";
 
 const WORKPLANE_WIDTH = 200;
@@ -3434,6 +3434,7 @@ export function WorkplaneViewport({
       return [];
     }
     return shapesRef.current
+      .filter((shape) => !isReferencePoint(shape))
       .filter((shape) => !shape.hidden)
       .filter((shape) => !shape.imagePlate)
       .filter((shape) => {
@@ -6449,6 +6450,20 @@ function syncTransformOverlay(
       setOverlay(null);
     }
     return;
+  }
+
+  // Reference point never gets transform handles: it is pinned to the origin
+  // and configured via the inspector's Position/Marker cards instead. Viewport
+  // handles only invited accidental drags/rotations that turned it into a box.
+  if (selectedIds.length === 1) {
+    const onlyShape = shapes.find((entry) => entry.id === selectedIds[0]);
+    if (onlyShape && isReferencePoint(onlyShape)) {
+      if (overlayRef.current) {
+        overlayRef.current = null;
+        setOverlay(null);
+      }
+      return;
+    }
   }
 
   const rect = state.renderer.domElement.getBoundingClientRect();
