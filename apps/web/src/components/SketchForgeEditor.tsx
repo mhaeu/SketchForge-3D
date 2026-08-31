@@ -2456,6 +2456,11 @@ function bakeShapeTransformIntoMesh(shape: WorkplaneShape): WorkplaneShape {
     taperBottomDepth: undefined,
     taperTopScale: undefined,
     taperBottomScale: undefined,
+    // The baked mesh has the rotation permanently baked into its vertex
+    // positions and is no longer an axis-aligned parametric thread. Clearing
+    // threadParams stops canonicalizeShape from regenerating an unrotated
+    // thread from the (now stale) parameters, which was undoing the bake.
+    threadParams: undefined,
     importedMesh: {
       positions,
       baseWidth: rawWidth,
