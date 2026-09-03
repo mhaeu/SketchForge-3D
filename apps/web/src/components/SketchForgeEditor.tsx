@@ -4190,10 +4190,19 @@ function primitiveManifoldForShape(runtime: ManifoldToplevel, shape: WorkplaneSh
           ? (shape.topRadius ?? 0) / shape.baseRadius
           : 0
         : 1;
+    // TEST: width/depth swapped for Manifold cylinder primitive - testing the
+    // hypothesis that Manifold's own circle vertex generation uses the
+    // opposite X/Y convention from what this code assumed, which would
+    // explain both the visible 90-degree rotation and the wrong width/depth
+    // assignment seen on low-sided, non-round (width != depth) cylinders
+    // baked via a boolean operation (e.g. grouped with a thread).
+    // Additional Y-axis correction on top of the X-axis remap: fixes the
+    // remaining 90-degree rotation left over after swapping width/depth.
+    // If this goes the wrong way, flip the sign (Math.PI / 2 <-> -Math.PI / 2).
     return transformedPrimitiveManifold(
       runtime,
       runtime.Manifold.cylinder(1, 1, topRadiusScale, sides, true),
-      primitiveTransformMatrix(shape, new THREE.Vector3(width / 2, depth / 2, height), new THREE.Euler(-Math.PI / 2, 0, 0, "XYZ")),
+      primitiveTransformMatrix(shape, new THREE.Vector3(depth / 2, width / 2, height), new THREE.Euler(-Math.PI / 2, 0, 0, "XYZ")),
       created,
     );
   }
