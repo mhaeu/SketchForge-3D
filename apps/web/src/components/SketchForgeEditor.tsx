@@ -4145,13 +4145,18 @@ function shapeRotationQuaternion(shape: WorkplaneShape) {
   );
 }
 
-function primitiveTransformMatrix(shape: WorkplaneShape, scale: THREE.Vector3, alignRotation?: THREE.Euler) {
+function primitiveTransformMatrix(shape: WorkplaneShape, scale: THREE.Vector3, alignMatrix?: THREE.Matrix4) {
   const center = new THREE.Vector3(shape.x, (shape.elevation ?? 0) + shape.height / 2, shape.z);
   const matrix = new THREE.Matrix4().compose(center, shapeRotationQuaternion(shape), new THREE.Vector3(1, 1, 1));
-  if (alignRotation) {
-    matrix.multiply(new THREE.Matrix4().makeRotationFromEuler(alignRotation));
-  }
+  // alignMatrix permutes the primitive's raw local axes onto the target
+  // axes and must apply to the primitive first; scale (expressed in those
+  // target axes) applies on top of that. Scaling before aligning only
+  // fixes the primitive's bounding box, not the actual vertex angles of a
+  // low-sided (non-round) cross-section - see primitiveManifoldForShape.
   matrix.multiply(new THREE.Matrix4().makeScale(scale.x, scale.y, scale.z));
+  if (alignMatrix) {
+    matrix.multiply(alignMatrix);
+  }
   return matrix;
 }
 
@@ -4190,19 +4195,25 @@ function primitiveManifoldForShape(runtime: ManifoldToplevel, shape: WorkplaneSh
           ? (shape.topRadius ?? 0) / shape.baseRadius
           : 0
         : 1;
-    // TEST: width/depth swapped for Manifold cylinder primitive - testing the
-    // hypothesis that Manifold's own circle vertex generation uses the
-    // opposite X/Y convention from what this code assumed, which would
-    // explain both the visible 90-degree rotation and the wrong width/depth
-    // assignment seen on low-sided, non-round (width != depth) cylinders
-    // baked via a boolean operation (e.g. grouped with a thread).
-    // Additional Y-axis correction on top of the X-axis remap: fixes the
-    // remaining 90-degree rotation left over after swapping width/depth.
-    // If this goes the wrong way, flip the sign (Math.PI / 2 <-> -Math.PI / 2).
+    // Manifold's cylinder has its circular cross-section in the local XY
+    // plane (vertex at angle 0 on local +X) and its height along local Z.
+    // The rendered ground truth (geometryMeshForShape's
+    // THREE.CylinderGeometry) instead puts its angle-0 vertex on +Z and its
+    // height along +Y (Three's own x = sin(theta), z = cos(theta)
+    // convention). Reaching that from Manifold's raw axes takes two 90 deg
+    // turns - around X (move height from Z to Y) and then around the
+    // resulting Y (phase-shift the cross-section by a quarter turn to swap
+    // sin/cos) - composed as fixed-axis matrices, not stacked into one
+    // intrinsic Euler (that mixes the two into a single Y+Z rotation
+    // instead, see conversation history). Both must run before the
+    // width/depth/height scale below (see primitiveTransformMatrix).
+    const cylinderAlignMatrix = new THREE.Matrix4()
+      .makeRotationY(-Math.PI / 2)
+      .multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
     return transformedPrimitiveManifold(
       runtime,
       runtime.Manifold.cylinder(1, 1, topRadiusScale, sides, true),
-      primitiveTransformMatrix(shape, new THREE.Vector3(depth / 2, width / 2, height), new THREE.Euler(-Math.PI / 2, 0, 0, "XYZ")),
+      primitiveTransformMatrix(shape, new THREE.Vector3(width / 2, height, depth / 2), cylinderAlignMatrix),
       created,
     );
   }
