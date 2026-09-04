@@ -5,7 +5,13 @@ import type { CadModifierComponentMesh, CadModifierDisplayEdge, CadModifierEdge,
 import { CAD_MODIFIER_RUNTIME_BASE, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
 
 const HASH_UPPER_BOUND = 2_147_483_647;
-const CAD_EDGE_WIREFRAME_DEFLECTION = 0.035;
+// occt-wasm 4.3.2 fixed `wireframe(shape, deflection)` routing its second
+// argument into the curvature slot instead of the deflection slot, so the
+// same number now means something different: at the previous 0.035 a
+// cylinder's edges came back with 1092 points, in 4.4.0 only 216. Calibrated
+// against that old density (0.002 -> 858, 0.001 -> 1206) to keep curved-edge
+// highlights as smooth as before. Straight edges are unaffected either way.
+const CAD_EDGE_WIREFRAME_DEFLECTION = 0.0015;
 const CAD_DISPLAY_EDGE_MIN_ANGLE = 0.75;
 const CURVED_SURFACE_TYPES = new Set(["cylinder", "cone", "sphere", "torus", "bspline", "bezier", "offset", "revolution", "extrusion"]);
 let kernelModuleLoader: Promise<{ default: (options?: { locateFile?: (path: string) => string }) => Promise<unknown> }> | null = null;
@@ -67,13 +73,17 @@ function kernel() {
 
 /**
  * `filletVariable` with unequal radii corrupts far more than its own result:
- * verified standalone (see conversation history) that a single such call
- * permanently breaks `toBREP`, `fillet`, `chamfer`, `healSolid` and
+ * a single such call permanently breaks `toBREP`, `fromBREP` and
  * `exportStep` for every *other* shape in that same OCCT session too, even
  * ones created before the call. `tessellate`, `getSubShapes`, `wireframe`,
  * `isValid`, `getBoundingBox`/`getVolume` and boolean ops stay reliable
  * afterward, including across many repeated variable-fillet calls on the
  * same corrupted instance.
+ *
+ * Measured against occt-wasm 4.4.0. On 3.x the blast radius also covered
+ * `fillet`, `chamfer` and `healSolid`; dropping `-flto` from the kernel
+ * build (4.3.4) fixed those but left the BREP serialisation path broken,
+ * so this isolation is still required.
  *
  * So `filletVariable` runs in its own throwaway WASM instance (a fresh
  * `instantiateKernel()`, sharing only the cached JS-glue import, never the
@@ -505,8 +515,20 @@ function copyCadMesh(mesh: { positions: Float32Array; normals: Float32Array; ind
   };
 }
 
+/**
+ * A failed STL import, in either of the two shapes occt-wasm reports it.
+ * Up to 3.x the native exception could not be decoded and arrived as
+ * `importStl: [object WebAssembly.Exception]`; 4.x decodes it, so the same
+ * failure now reads `importStl: failed to read STL data`. Matching only the
+ * old spelling would silently drop the guidance below (Separate Parts /
+ * ungroup / simplify) and leave the user with the raw kernel text.
+ *
+ * The accompanying session reset is no longer strictly required - verified
+ * that in 4.4.0 a failed importStl leaves the kernel healthy - but it is
+ * cheap, and other malformed-mesh failures can still fault the kernel.
+ */
 function isImportStlWasmFault(message: string) {
-  return /importStl:.*WebAssembly\.Exception/i.test(message);
+  return /importStl:.*(WebAssembly\.Exception|failed to read)/i.test(message);
 }
 
 function isMissingValidatorFault(message: string) {
