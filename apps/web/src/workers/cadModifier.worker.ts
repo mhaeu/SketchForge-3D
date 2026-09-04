@@ -1,18 +1,38 @@
 /// <reference lib="webworker" />
 
 import { OcctKernel, type ShapeHandle } from "occt-wasm";
-import type { CadModifierComponentMesh, CadModifierDisplayEdge, CadModifierEdge, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
+import type { CadModifierComponentMesh, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import { CAD_MODIFIER_RUNTIME_BASE, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
 
 const HASH_UPPER_BOUND = 2_147_483_647;
 const CAD_EDGE_WIREFRAME_DEFLECTION = 0.035;
 const CAD_DISPLAY_EDGE_MIN_ANGLE = 0.75;
 const CURVED_SURFACE_TYPES = new Set(["cylinder", "cone", "sphere", "torus", "bspline", "bezier", "offset", "revolution", "extrusion"]);
+let kernelModuleLoader: Promise<{ default: (options?: { locateFile?: (path: string) => string }) => Promise<unknown> }> | null = null;
 let kernelPromise: Promise<OcctKernel> | null = null;
 let baseShape: ShapeHandle | null = null;
 let baseSolids: ShapeHandle[] = [];
 let edgeHandles: ShapeHandle[] = [];
 let edgeOwners: number[] = [];
+// Position of each edgeHandles[id] within its owner solid's OWN edge list
+// (cad.getSubShapes(baseSolids[owner], "edge")) - not necessarily the same
+// as `id` itself, e.g. when baseShape is a compound wrapping the solid
+// rather than the solid directly. Used to re-locate an edge inside the
+// isolated variable-fillet kernel below, which only ever sees a BREP
+// snapshot of the single owner solid, not the full prepared baseShape.
+let edgeOwnerLocalIndexes: number[] = [];
+// Single-solid BREP snapshot for the isolated variable-fillet kernel below -
+// only ever populated when the prepared shape is a single solid.
+let baseSolidBrep: string | null = null;
+let variableFilletKernel: OcctKernel | null = null;
+// The solid+edges imported into variableFilletKernel from baseSolidBrep,
+// cached alongside it - see isolatedVariableFilletSolid(). `fromBREP` turns
+// out to be just as one-shot-only as `toBREP` on a kernel that has run an
+// unequal-radius filletVariable (verified standalone), so the import must
+// happen exactly once per isolated kernel instance, before its first
+// filletVariable call, and never again.
+let variableFilletSolid: ShapeHandle | null = null;
+let variableFilletEdges: ShapeHandle[] = [];
 
 type CollectedCadEdgeGeometry = Omit<CadModifierEdge, "display" | "selectable"> & {
   curveType: string;
@@ -25,15 +45,78 @@ function post(message: CadModifierWorkerResponse, transfer: Transferable[] = [])
   self.postMessage(message, { transfer });
 }
 
-function kernel() {
+function loadKernelModule() {
   const moduleUrl = `${CAD_MODIFIER_RUNTIME_BASE}/occt-wasm.js`;
-  kernelPromise ??= import(/* webpackIgnore: true */ moduleUrl).then((imported: { default: (options?: { locateFile?: (path: string) => string }) => Promise<unknown> }) => imported.default({
+  kernelModuleLoader ??= import(/* webpackIgnore: true */ moduleUrl);
+  return kernelModuleLoader;
+}
+
+async function instantiateKernel(): Promise<OcctKernel> {
+  const imported = await loadKernelModule();
+  const module = await imported.default({
     locateFile: (path) => path.endsWith(".wasm") ? `${CAD_MODIFIER_RUNTIME_BASE}/occt-wasm.wasm` : path,
-  })).then((module) => {
-    const KernelConstructor = OcctKernel as unknown as new (rawModule: unknown) => OcctKernel;
-    return new KernelConstructor(module);
   });
+  const KernelConstructor = OcctKernel as unknown as new (rawModule: unknown) => OcctKernel;
+  return new KernelConstructor(module);
+}
+
+function kernel() {
+  kernelPromise ??= instantiateKernel();
   return kernelPromise;
+}
+
+/**
+ * `filletVariable` with unequal radii corrupts far more than its own result:
+ * verified standalone (see conversation history) that a single such call
+ * permanently breaks `toBREP`, `fillet`, `chamfer`, `healSolid` and
+ * `exportStep` for every *other* shape in that same OCCT session too, even
+ * ones created before the call. `tessellate`, `getSubShapes`, `wireframe`,
+ * `isValid`, `getBoundingBox`/`getVolume` and boolean ops stay reliable
+ * afterward, including across many repeated variable-fillet calls on the
+ * same corrupted instance.
+ *
+ * So `filletVariable` runs in its own throwaway WASM instance (a fresh
+ * `instantiateKernel()`, sharing only the cached JS-glue import, never the
+ * main `kernel()` used for everything else) built from a BREP snapshot of
+ * the prepared solid, and only ever asked for `filletVariable`/`tessellate`/
+ * `isValid`/edge queries on it - never `toBREP`. The main session kernel is
+ * never touched by the broken call and stays fully usable.
+ */
+async function isolatedVariableFilletKernel(): Promise<OcctKernel> {
+  variableFilletKernel ??= await instantiateKernel();
+  return variableFilletKernel;
+}
+
+/**
+ * Returns the isolated kernel plus its (cached, imported-exactly-once) solid
+ * and edge list. `baseSolidBrep` is imported into the isolated kernel the
+ * first time this runs after a (re)creation; every later call - however many
+ * filletVariable ticks have run in between - reuses the same solid/edges
+ * instead of calling `fromBREP` again.
+ */
+async function isolatedVariableFilletSolid(): Promise<{ cad: OcctKernel; solid: ShapeHandle; edges: ShapeHandle[] }> {
+  if (baseSolidBrep === null) {
+    throw new Error("A variable fillet only works on a single solid. Ungroup or separate this object first.");
+  }
+  const cad = await isolatedVariableFilletKernel();
+  if (variableFilletSolid === null) {
+    variableFilletSolid = cad.fromBREP(baseSolidBrep);
+    variableFilletEdges = cad.getSubShapes(variableFilletSolid, "edge");
+  }
+  return { cad, solid: variableFilletSolid, edges: variableFilletEdges };
+}
+
+function disposeVariableFilletKernel() {
+  if (variableFilletKernel) {
+    try {
+      variableFilletKernel[Symbol.dispose]();
+    } catch {
+      // Already torn down; nothing to release.
+    }
+  }
+  variableFilletKernel = null;
+  variableFilletSolid = null;
+  variableFilletEdges = [];
 }
 
 function releaseSession(cad: OcctKernel) {
@@ -46,6 +129,9 @@ function releaseSession(cad: OcctKernel) {
   baseSolids = [];
   edgeHandles = [];
   edgeOwners = [];
+  edgeOwnerLocalIndexes = [];
+  baseSolidBrep = null;
+  disposeVariableFilletKernel();
 }
 
 function cadShapeIsValid(cad: OcctKernel, shape: ShapeHandle) {
@@ -295,20 +381,27 @@ function isModifierDisplayCadEdge(edge: CollectedCadEdgeGeometry, treatmentAreaL
  * r1 gilt am Anfang der Kante, r2 am Ende. Welches Ende der Anfang ist, ergibt
  * sich aus der OCCT-Parametrisierung und ist in der Oberflaeche nicht sichtbar
  * - dafuer gibt es den flipTaper-Schalter.
+ *
+ * Runs in the isolated kernel from `isolatedVariableFilletSolid()` instead of
+ * the shared session kernel - see that function and `isolatedVariableFilletKernel()`
+ * for why. Re-locates the requested edge by its recorded position in the
+ * owner solid's own edge list (`edgeOwnerLocalIndexes`), since handles from
+ * the main kernel are meaningless in a different WASM instance.
  */
-function applyVariableFillet(
-  cad: OcctKernel,
-  solid: ShapeHandle,
-  edges: ShapeHandle[],
+async function applyVariableFilletIsolated(
+  edgeId: number,
   request: { amount: number; endAmount: number; flipTaper: boolean },
-) {
-  if (edges.length > 1) {
-    throw new Error(
-      "A variable fillet works on one edge at a time. Select a single edge, or use the constant-radius fillet for several edges.",
-    );
+): Promise<{ cad: OcctKernel; result: ShapeHandle }> {
+  const localIndex = edgeOwnerLocalIndexes[edgeId];
+  if (localIndex === undefined) {
+    throw new Error("The selected edge could not be mapped to the solid; restart the edge tool");
   }
+  const { cad: isolatedCad, solid, edges } = await isolatedVariableFilletSolid();
+  const edge = edges[localIndex];
+  if (!edge) throw new Error("The selected edge could not be re-located for the variable fillet");
   const { startRadius, endRadius } = variableFilletRadii(request);
-  return cad.filletVariable(solid, edges[0], startRadius, endRadius);
+  const result = isolatedCad.filletVariable(solid, edge, startRadius, endRadius);
+  return { cad: isolatedCad, result };
 }
 
 function releaseHandles(cad: OcctKernel, handles: ShapeHandle[]) {
@@ -440,25 +533,29 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
       if (baseSolids.length === 0) throw new Error("The selected group contains no closed solid components");
       const ownerEdgeHandles = baseSolids.map((solid) => activeCad.getSubShapes(solid, "edge"));
       try {
-        const ownerCandidates = new Map<number, Array<{ owner: number; edge: ShapeHandle }>>();
+        const ownerCandidates = new Map<number, Array<{ owner: number; localIndex: number; edge: ShapeHandle }>>();
         ownerEdgeHandles.forEach((componentEdges, owner) => {
-          componentEdges.forEach((edge) => {
+          componentEdges.forEach((edge, localIndex) => {
             const hash = activeCad.hashCode(edge, HASH_UPPER_BOUND);
             const candidates = ownerCandidates.get(hash) ?? [];
-            candidates.push({ owner, edge });
+            candidates.push({ owner, localIndex, edge });
             ownerCandidates.set(hash, candidates);
           });
         });
-        edgeOwners = edgeHandles.map((edge) => {
+        edgeOwners = [];
+        edgeOwnerLocalIndexes = [];
+        edgeHandles.forEach((edge) => {
           const hash = activeCad.hashCode(edge, HASH_UPPER_BOUND);
           const candidates = ownerCandidates.get(hash) ?? [];
           const exact = candidates.find((candidate) => activeCad.isSame(edge, candidate.edge));
           if (!exact) throw new Error("A CAD edge could not be mapped to its solid component; restart the edge tool");
-          return exact.owner;
+          edgeOwners.push(exact.owner);
+          edgeOwnerLocalIndexes.push(exact.localIndex);
         });
       } finally {
         ownerEdgeHandles.forEach((componentEdges) => releaseHandles(activeCad, componentEdges));
       }
+      baseSolidBrep = baseSolids.length === 1 ? activeCad.toBREP(baseSolids[0]) : null;
       post({
         type: "ready",
         requestId: request.requestId,
@@ -471,6 +568,42 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
     if (baseShape === null) throw new Error("Prepare an object before previewing the modifier");
     const selected = request.edgeIds.map((id) => ({ edge: edgeHandles[id], owner: edgeOwners[id] })).filter((entry): entry is { edge: ShapeHandle; owner: number } => entry.edge !== undefined);
     if (selected.length === 0) throw new Error("Select at least one highlighted edge");
+    if (request.kind === "variableFillet") {
+      if (selected.length > 1) {
+        throw new Error(
+          "A variable fillet works on one edge at a time. Select a single edge, or use the constant-radius fillet for several edges.",
+        );
+      }
+      const { cad: isolatedCad, result: isolatedResult } = await applyVariableFilletIsolated(request.edgeIds[0], request);
+      try {
+        if (!cadShapeIsValid(isolatedCad, isolatedResult)) throw new Error("The chosen size creates invalid or overlapping edge geometry");
+        const options = tessellationOptions(request.quality, request.amount);
+        const mesh = copyCadMesh(isolatedCad.tessellate(isolatedResult, options));
+        const displayEdges = collectEdges(isolatedCad, isolatedResult, 0).displayEdges;
+        // toBREP is never called on the isolated kernel: it is exactly the
+        // filletVariable-with-unequal-radii call this kernel exists to
+        // contain, so its BREP writer is expected to be broken too - see
+        // isolatedVariableFilletKernel(). Downstream code already treats a
+        // missing cadBrep as "fall back to the mesh reconstruction".
+        const brep = "";
+        const components: CadModifierComponentMesh[] = [{
+          owner: selected[0].owner,
+          positions: mesh.positions,
+          normals: mesh.normals,
+          indices: mesh.indices,
+          triangleCount: mesh.triangleCount,
+          brep,
+          displayEdges,
+        }];
+        post(
+          { type: "preview", requestId: request.requestId, positions: mesh.positions, normals: mesh.normals, indices: mesh.indices, triangleCount: mesh.triangleCount, brep, displayEdges, components },
+          [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer],
+        );
+      } finally {
+        isolatedCad.release(isolatedResult);
+      }
+      return;
+    }
     const componentResults: ShapeHandle[] = [];
     let result: ShapeHandle | null = null;
     try {
@@ -481,11 +614,9 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
           ? activeCad.copy(solid)
           : request.kind === "fillet"
             ? activeCad.fillet(solid, componentEdges, request.amount)
-            : request.kind === "variableFillet"
-              ? applyVariableFillet(activeCad, solid, componentEdges, request)
-              : Math.abs(request.chamferAngle - 45) < 0.001
-                ? activeCad.chamfer(solid, componentEdges, request.amount)
-                : activeCad.chamferDistAngle(solid, componentEdges, request.amount, request.chamferAngle);
+            : Math.abs(request.chamferAngle - 45) < 0.001
+              ? activeCad.chamfer(solid, componentEdges, request.amount)
+              : activeCad.chamferDistAngle(solid, componentEdges, request.amount, request.chamferAngle);
         componentResults.push(component);
       }
       result = componentResults.length === 1 ? componentResults[0] : activeCad.makeCompound(componentResults);

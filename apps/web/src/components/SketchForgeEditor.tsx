@@ -7725,7 +7725,7 @@ export function SketchForgeEditor({
       setEdgeModifier((current) => current ? { ...current, busy: true, error: null } : current);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [armCadModifierWatchdog, edgeModifier?.amount, edgeModifier?.chamferAngle, edgeModifier?.kind, edgeModifier?.prepared, edgeModifier?.quality, edgeModifier?.selectedEdgeIds, postCadModifierRequest]);
+  }, [armCadModifierWatchdog, edgeModifier?.amount, edgeModifier?.chamferAngle, edgeModifier?.endAmount, edgeModifier?.flipTaper, edgeModifier?.kind, edgeModifier?.prepared, edgeModifier?.quality, edgeModifier?.selectedEdgeIds, postCadModifierRequest]);
 
   const snapSelected = useCallback(() => {
     if (!hasSelection) {
@@ -9781,8 +9781,7 @@ function SecondaryToolbar({
     { label: "Snap to grid", icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: "Chamfer", icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
     { label: "Fillet", icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },
-    // Variable fillet deaktiviert: occt-wasm filletVariable loest weiterhin einen WASM-Speicherfehler aus (auch im neuen Kernel-Build). Zum Reaktivieren die naechste Zeile einkommentieren.
-    // { label: "Variable fillet", icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
+    { label: "Variable fillet", icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
   ];
   const arrangeTools = [
     { label: "Drop to workplane", icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
