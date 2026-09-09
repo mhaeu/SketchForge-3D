@@ -47,7 +47,7 @@ import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -1869,6 +1869,31 @@ function carriesLinkedGirth(shape: WorkplaneShape, driverAxis: ResizeAxis, axis:
   return axis === driverAxis || !shape.threadParams;
 }
 
+/**
+ * A loft's far end lives in its own fields on the same two axes as the near
+ * end, so a *linked* resize has to scale it by the same factor - otherwise
+ * dragging a handle reshapes the loft instead of resizing it. Unlinked drags
+ * keep the primitive's own behaviour, where the gizmo sizes the bottom only.
+ */
+function loftTopCarryPatch(
+  shape: WorkplaneShape,
+  linkedAxes: LinkedResizeAxes,
+  nextWidth?: number,
+  nextDepth?: number,
+): Partial<WorkplaneShape> {
+  if (shape.kind !== "loft") return {};
+  const patch: Partial<WorkplaneShape> = {};
+  if (nextWidth !== undefined && resizeAxisIsLinked("width", linkedAxes)) {
+    const width = shapeWidth(shape);
+    patch.loftTopWidth = Math.max(MIN_SHAPE_SIZE, (shape.loftTopWidth ?? width) * (nextWidth / Math.max(MIN_SHAPE_SIZE, width)));
+  }
+  if (nextDepth !== undefined && resizeAxisIsLinked("depth", linkedAxes)) {
+    const depth = shapeDepth(shape);
+    patch.loftTopDepth = Math.max(MIN_SHAPE_SIZE, (shape.loftTopDepth ?? depth) * (nextDepth / Math.max(MIN_SHAPE_SIZE, depth)));
+  }
+  return patch;
+}
+
 function resizedShapePatchFromFrame(shape: WorkplaneShape, center: THREE.Vector3, width: number, depth: number, height?: number): Partial<WorkplaneShape> {
   const patch: Partial<WorkplaneShape> = {
     x: cleanNearZero(center.x, 0.0005),
@@ -2176,9 +2201,13 @@ function resizeShapeFromFrameHandle(
       z: cleanNearZero(nextCenter.z, 0.0005),
       elevation: cleanNearZero(nextCenter.y - shape.height / 2, 0.0005),
       ...(nextHeight === undefined ? {} : { height: nextHeight }),
+      ...loftTopCarryPatch(shape, linkedAxes, nextWidth, nextDepth),
     };
   }
-  return resizedShapePatchFromFrame(shape, nextCenter, nextWidth, nextDepth, nextHeight);
+  return {
+    ...resizedShapePatchFromFrame(shape, nextCenter, nextWidth, nextDepth, nextHeight),
+    ...loftTopCarryPatch(shape, linkedAxes, nextWidth, nextDepth),
+  };
 }
 
 function axisScaleMatrix(axis: THREE.Vector3, scale: number, anchor: number) {
@@ -2370,6 +2399,7 @@ function resizeShapeAlongFrameNormal(
     patch.size = resizedShapeSize(patch.width ?? current.width, patch.depth ?? current.depth);
   }
   patch.elevation = cleanNearZero(nextCenter.y - (patch.height ?? shape.height) / 2, 0.0005);
+  Object.assign(patch, loftTopCarryPatch(shape, linkedAxes, patch.width, patch.depth));
   return patch;
 }
 
@@ -2468,6 +2498,7 @@ function resizeSelectionFromHandle(
       : scaledHorizontalShapePatch(item.startShape, actualScaleX, actualScaleZ);
     const patch = {
       ...girthPatch,
+      ...loftTopCarryPatch(item.startShape, linkedAxes, girthPatch.width, girthPatch.depth),
       ...(scaleY === 1 ? {} : { height }),
       x: nextItemCenter.x,
       z: nextItemCenter.z,

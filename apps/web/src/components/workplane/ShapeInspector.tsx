@@ -199,9 +199,21 @@ function getShapePropertiesWithAppLimits(
   };
   // Linked axes are carried along by reusing each axis's own patch builder, so
   // taper fields stay consistent instead of being recomputed a second way.
-  const axisPatch = (axis: ResizeAxis, value: number): Partial<WorkplaneShape> => (
-    axis === "width" ? widthPatch(value) : axis === "depth" ? depthPatch(value) : { height: value }
-  );
+  const axisPatch = (axis: ResizeAxis, value: number): Partial<WorkplaneShape> => {
+    if (axis === "height") return { height: value };
+    const patch = axis === "width" ? widthPatch(value) : depthPatch(value);
+    if (shape.kind !== "loft") return patch;
+    // A loft's far end sits on the same two axes as its near end, but in its
+    // own fields. Scaling only the near end would reshape the loft instead of
+    // resizing it, so the same factor goes to the top as well.
+    const current = axis === "width" ? width : depth;
+    const factor = value / Math.max(MIN_SHAPE_SIZE, current);
+    const topCurrent = (axis === "width" ? shape.loftTopWidth : shape.loftTopDepth) ?? current;
+    return {
+      ...patch,
+      [axis === "width" ? "loftTopWidth" : "loftTopDepth"]: Math.max(MIN_SHAPE_SIZE, topCurrent * factor),
+    };
+  };
   const setAxis = (axis: ResizeAxis, value: number, extra?: (patch: Partial<WorkplaneShape>) => Partial<WorkplaneShape>) => {
     const next = linkedResizeValues(
       { width, depth, height: shape.height },
@@ -449,14 +461,28 @@ function getShapePropertiesWithAppLimits(
     // Top is an independent end (like cone's Top Radius) -- its size never touches the shape's
     // own width/depth. Bottom's size *is* the shape's generic width/depth, so the on-canvas
     // resize gizmo (which always drags width/depth/height) keeps working for it unmodified.
+    //
+    // With that axis linked, editing the top drives the whole group: the factor
+    // comes from the top's own before/after, and setAxis then carries the near
+    // end and any other linked axis by the same amount (axisPatch takes the far
+    // end along, so the typed value lands where the user put it).
+    const setLoftTop = (axis: "width" | "depth", value: number) => {
+      const current = axis === "width" ? topWidth : topDepth;
+      if (!resizeAxisIsLinked(axis, linkedAxes)) {
+        onUpdate({ [axis === "width" ? "loftTopWidth" : "loftTopDepth"]: value }, { resizeAxis: axis });
+        return;
+      }
+      const factor = value / Math.max(MIN_SHAPE_SIZE, current);
+      setAxis(axis, (axis === "width" ? width : depth) * factor);
+    };
     const properties: ShapePropertyConfig[] = [
       { type: "select", label: "Top Shape", value: settings.topShape, options: LOFT_PROFILE_SHAPES, onChange: (value) => onUpdate({ loftTopShape: value as LoftProfileShape }) },
     ];
     if (!isPolygonLoftShape(settings.topShape)) {
-      properties.push({ label: "Top Length", value: topDepth, min: MIN_SHAPE_SIZE, max: 160, onChange: (value) => onUpdate({ loftTopDepth: value }) });
+      properties.push({ label: "Top Length", value: topDepth, min: MIN_SHAPE_SIZE, max: 160, onChange: (value) => setLoftTop("depth", value) });
     }
     properties.push(
-      { label: "Top Width", value: topWidth, min: MIN_SHAPE_SIZE, max: 160, onChange: (value) => onUpdate({ loftTopWidth: value }) },
+      { label: "Top Width", value: topWidth, min: MIN_SHAPE_SIZE, max: 160, onChange: (value) => setLoftTop("width", value) },
       { label: "Top Rotation", value: settings.topRotation, min: 0, max: 359, step: 1, onChange: (value) => onUpdate({ loftTopRotation: value }) },
       { type: "select", label: "Bottom Shape", value: settings.bottomShape, options: LOFT_PROFILE_SHAPES, onChange: (value) => onUpdate({ loftBottomShape: value as LoftProfileShape }) },
     );
@@ -550,7 +576,19 @@ export function ShapeInspector({
   const solidColor = shape.color;
   const locked = Boolean(shape.locked);
   // "Length" is this UI's name for the depth axis.
-  const axisForLabel: Record<string, ResizeAxis> = { Width: "width", Length: "depth", Height: "height" };
+  // A loft names its two ends explicitly, but both sit on the same two axes -
+  // one width axis, one depth axis - so both rows show and toggle the same
+  // link. Only this list gets toggles; the taper rows share these labels but
+  // are built separately and are not link-aware.
+  const axisForLabel: Record<string, ResizeAxis> = {
+    Width: "width",
+    Length: "depth",
+    Height: "height",
+    "Top Width": "width",
+    "Bottom Width": "width",
+    "Top Length": "depth",
+    "Bottom Length": "depth",
+  };
   const withLinkToggles = (list: ShapePropertyConfig[]) => list.map((property) => {
     const axis = property.type === "text" || property.type === "select" ? undefined : axisForLabel[property.label];
     if (!axis || !onLinkedAxesChange) return property;
