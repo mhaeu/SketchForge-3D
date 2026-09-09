@@ -153,6 +153,49 @@ describe("loft geometry", () => {
     }
   });
 
+  it("rigidly spins a corner-less top end instead of reshaping it (regression for a community-reported bug)", () => {
+    // Reported against this exact file: a Rectangle bottom + Oval top loft, at low segment
+    // counts, changed the *shape* of the top ring as topRotation varied instead of spinning it
+    // as a rigid body -- because the top has no corners of its own to match against (so every
+    // ring point takes fallbackSmallAngle's zero-match branch), and that branch used to copy the
+    // bottom's raw corner angle verbatim, uncorrected for the two ends' relative rotation.
+    const width = 20, depth = 10, height = 10, segments = 8;
+    const base = createLoftGeometry({ width, depth, height, bottomShape: "Rectangle", topShape: "Oval", bottomRotation: 0, topRotation: 0, segments, layers: 1 });
+    const spun = createLoftGeometry({ width, depth, height, bottomShape: "Rectangle", topShape: "Oval", bottomRotation: 0, topRotation: 45, segments, layers: 1 });
+
+    const topRingPoints = (geometry: ReturnType<typeof createLoftGeometry>) => {
+      const position = geometry.getAttribute("position");
+      const seen = new Map<string, [number, number]>();
+      for (let i = 0; i < position.count; i += 1) {
+        const y = position.getY(i);
+        if (Math.abs(y - height) > 1e-3) continue;
+        const x = position.getX(i);
+        const z = position.getZ(i);
+        seen.set(`${x.toFixed(3)},${z.toFixed(3)}`, [x, z]);
+      }
+      return [...seen.values()];
+    };
+
+    const rot = (x: number, z: number, deg: number) => {
+      const r = (deg * Math.PI) / 180;
+      return [x * Math.cos(r) - z * Math.sin(r), x * Math.sin(r) + z * Math.cos(r)] as [number, number];
+    };
+
+    const basePoints = topRingPoints(base);
+    const spunPoints = topRingPoints(spun);
+    expect(spunPoints.length).toBe(basePoints.length);
+
+    // Every point on the rigidly-spun ring must be within epsilon of some point on the unrotated
+    // ring rotated by 45 degrees -- i.e. the ring is a rotated copy of itself, not a reshaped one.
+    for (const [x, z] of spunPoints) {
+      const matchesSome = basePoints.some(([bx, bz]) => {
+        const [rx, rz] = rot(bx, bz, 45);
+        return Math.abs(rx - x) < 1e-2 && Math.abs(rz - z) < 1e-2;
+      });
+      expect(matchesSome).toBe(true);
+    }
+  });
+
   it("stays a closed, correctly-wound manifold across every shape pair and a spread of relative rotations (smoke test)", () => {
     const rotationPairs: Array<[number, number]> = [[0, 0], [25, 0], [0, 25], [40, -65], [170, 10]];
     for (const bottomShape of PROFILE_SHAPES) {
