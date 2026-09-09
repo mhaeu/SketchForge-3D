@@ -5290,11 +5290,54 @@ button {
 }
 
 .range-property-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
   overflow: hidden;
   color: #586a7d;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Axis link toggle on the Length/Width/Height rows. Dimmed when off, tinted
+   when this axis is linked, and only fully lit once a partner axis makes the
+   link actually do something. */
+.axis-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: rgba(88, 106, 125, 0.08);
+  color: #7a8a99;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.axis-link:hover:not(:disabled) {
+  background: rgba(0, 116, 189, 0.12);
+  color: #0074bd;
+}
+
+.axis-link.on {
+  background: rgba(0, 116, 189, 0.12);
+  color: #4a90c4;
+}
+
+.axis-link.on.active {
+  background: rgba(0, 116, 189, 0.18);
+  color: #0074bd;
+}
+
+.axis-link:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
 .range-value-control {
@@ -7387,6 +7430,26 @@ html[data-theme="dark"] .select-property,
 html[data-theme="dark"] .range-value-unit,
 html[data-theme="dark"] .color-value {
   color: #afc3d0;
+}
+
+html[data-theme="dark"] .axis-link {
+  background: rgba(175, 195, 208, 0.1);
+  color: #93a5b4;
+}
+
+html[data-theme="dark"] .axis-link:hover:not(:disabled) {
+  background: rgba(93, 179, 240, 0.16);
+  color: #5db3f0;
+}
+
+html[data-theme="dark"] .axis-link.on {
+  background: rgba(93, 179, 240, 0.16);
+  color: #6fa8cf;
+}
+
+html[data-theme="dark"] .axis-link.on.active {
+  background: rgba(93, 179, 240, 0.24);
+  color: #5db3f0;
 }
 
 html[data-theme="dark"] .gear-type-options button {

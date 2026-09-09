@@ -9,8 +9,12 @@ import {
   meshYawDegrees,
   mirroredAxisCount,
   mirrorSign,
+  linkedResizeAxisCount,
+  linkedResizeValues,
+  NO_LINKED_RESIZE_AXES,
   normalizeDegrees,
   proportionalResizeScale,
+  resizeAxisIsLinked,
   preservesEdgeTreatmentSize,
   resizedImportedCoordinates,
   resizedImportedMeshPositions,
@@ -297,5 +301,58 @@ describe("workplane shape helpers", () => {
 
     expect(preservesEdgeTreatmentSize(grouped)).toBe(true);
     expect(resizedImportedMeshPositions(grouped)).toEqual([-20, 0, 0, -18, 2, 0, 18, 38, 0, 20, 40, 0]);
+  });
+});
+
+describe("linked resize axes", () => {
+  const bounds = { min: 0.1, max: 160 };
+  const current = { width: 20, depth: 10, height: 40 };
+
+  it("treats a lone checked axis as unlinked", () => {
+    const lone = { ...NO_LINKED_RESIZE_AXES, width: true };
+    expect(linkedResizeAxisCount(lone)).toBe(1);
+    expect(resizeAxisIsLinked("width", lone)).toBe(false);
+    expect(linkedResizeValues(current, "width", 30, lone, bounds)).toEqual({ width: 30 });
+  });
+
+  it("leaves an unlinked axis out of a link group", () => {
+    const linked = { width: true, depth: true, height: false };
+    expect(linkedResizeValues(current, "height", 80, linked, bounds)).toEqual({ height: 80 });
+  });
+
+  it("scales every linked axis by the edited axis's factor", () => {
+    const linked = { width: true, depth: true, height: false };
+    expect(linkedResizeValues(current, "width", 30, linked, bounds)).toEqual({ width: 30, depth: 15 });
+  });
+
+  it("carries all three axes when all are linked", () => {
+    const linked = { width: true, depth: true, height: true };
+    expect(linkedResizeValues(current, "depth", 5, linked, bounds)).toEqual({ width: 10, depth: 5, height: 20 });
+  });
+
+  it("clamps the shared factor so a bounded axis cannot break the ratio", () => {
+    const linked = { width: true, depth: true, height: true };
+    // height would land at 400, past the 160 cap, so the whole group stops at
+    // the factor height can still take (4x) instead of height alone stopping.
+    const next = linkedResizeValues(current, "width", 200, linked, bounds);
+    expect(next).toEqual({ width: 80, depth: 40, height: 160 });
+    expect(next.width! / next.depth!).toBeCloseTo(current.width / current.depth);
+    expect(next.height! / next.width!).toBeCloseTo(current.height / current.width);
+  });
+
+  it("clamps at the lower bound the same way", () => {
+    const linked = { width: true, depth: true, height: true };
+    // depth is the smallest axis, so it is the one that reaches the 0.1 floor
+    // first and caps the shared factor for the whole group.
+    const next = linkedResizeValues(current, "depth", 0.001, linked, bounds);
+    expect(next.depth).toBeCloseTo(0.1);
+    expect(next.width).toBeCloseTo(0.2);
+    expect(next.height).toBeCloseTo(0.4);
+  });
+
+  it("ignores degenerate input instead of producing NaN", () => {
+    const linked = { width: true, depth: true, height: true };
+    expect(linkedResizeValues(current, "width", Number.NaN, linked, bounds)).toEqual({});
+    expect(linkedResizeValues({ ...current, width: 0 }, "width", 10, linked, bounds)).toEqual({ width: 10 });
   });
 });

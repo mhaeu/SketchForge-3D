@@ -45,7 +45,7 @@ import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -1831,14 +1831,34 @@ function resizeCenterFromAnchor(frame: SelectionFrame, anchor: THREE.Vector3, si
     .add(frame.zAxis.clone().multiplyScalar(signs.z ? (signs.z * depth) / 2 : 0));
 }
 
-function resizedShapePatchFromFrame(shape: WorkplaneShape, center: THREE.Vector3, width: number, depth: number): Partial<WorkplaneShape> {
+/**
+ * Whether a linked resize may carry `axis` (width/depth) on this shape.
+ *
+ * A thread is defined by its parameters, not by stretched geometry: it may
+ * follow a link in length, but its diameter has to stay put or the profile
+ * stops matching the standard. canonicalizeShape rebuilds a thread from the
+ * new height alone, so sending width/depth along would only take effect on
+ * the drag frames where the height happens not to change - which is exactly
+ * the flicker where the diameter briefly scales too.
+ *
+ * The axis the user is actually dragging is always applied; only the carried
+ * partner axes are held back.
+ */
+function carriesLinkedGirth(shape: WorkplaneShape, driverAxis: ResizeAxis, axis: ResizeAxis) {
+  return axis === driverAxis || !shape.threadParams;
+}
+
+function resizedShapePatchFromFrame(shape: WorkplaneShape, center: THREE.Vector3, width: number, depth: number, height?: number): Partial<WorkplaneShape> {
   const patch: Partial<WorkplaneShape> = {
     x: cleanNearZero(center.x, 0.0005),
     z: cleanNearZero(center.z, 0.0005),
+    // Deliberately the *old* height: that pins the underside where it is, so a
+    // linked height grows the shape upward instead of around its middle.
     elevation: cleanNearZero(center.y - shape.height / 2, 0.0005),
     width,
     depth,
     size: resizedShapeSize(width, depth),
+    ...(height === undefined ? {} : { height }),
   };
   if (shape.kind === "cone") {
     patch.baseRadius = width / 2;
@@ -2069,6 +2089,7 @@ function resizeShapeFromFrameHandle(
   altKey: boolean,
   step: number,
   maxSize: number,
+  linkedAxes: LinkedResizeAxes,
 ): Partial<WorkplaneShape> {
   const shape = transform.startShape;
   const frame = transform.selectionFrame;
@@ -2090,12 +2111,35 @@ function resizeShapeFromFrameHandle(
 
   let nextWidth = axisResize(width, localDelta.x, signs.x);
   let nextDepth = axisResize(depth, localDelta.z, signs.z);
+  let nextHeight: number | undefined;
 
   if (shiftKey && signs.x && signs.z) {
     const scale = proportionalResizeScale(width, depth, nextWidth, nextDepth);
     const limitedScale = clamp(scale, MIN_SHAPE_SIZE / Math.max(MIN_SHAPE_SIZE, Math.min(width, depth)), maxSize / Math.max(width, depth));
     nextWidth = snapDimension(width * limitedScale, step, MIN_SHAPE_SIZE, maxSize);
     nextDepth = snapDimension(depth * limitedScale, step, MIN_SHAPE_SIZE, maxSize);
+  }
+
+  // Axis link: whichever linked axis this handle actually drives (the one that
+  // moved furthest, if it drives both) sets the factor for the whole group.
+  // The carried axes are not snapped afterwards - snapping them would defeat
+  // the ratio the link exists to hold.
+  const driver = ([
+    signs.x && linkedAxes.width ? { axis: "width" as const, value: nextWidth, moved: Math.abs(nextWidth / Math.max(MIN_SHAPE_SIZE, width) - 1) } : null,
+    signs.z && linkedAxes.depth ? { axis: "depth" as const, value: nextDepth, moved: Math.abs(nextDepth / Math.max(MIN_SHAPE_SIZE, depth) - 1) } : null,
+  ].filter(Boolean) as { axis: ResizeAxis; value: number; moved: number }[])
+    .sort((a, b) => b.moved - a.moved)[0];
+  if (driver) {
+    const linked = linkedResizeValues(
+      { width, depth, height: shape.height },
+      driver.axis,
+      driver.value,
+      linkedAxes,
+      { min: MIN_SHAPE_SIZE, max: maxSize },
+    );
+    if (linked.width !== undefined && carriesLinkedGirth(shape, driver.axis, "width")) nextWidth = linked.width;
+    if (linked.depth !== undefined && carriesLinkedGirth(shape, driver.axis, "depth")) nextDepth = linked.depth;
+    nextHeight = linked.height;
   }
 
   const nextCenter = altKey
@@ -2110,9 +2154,10 @@ function resizeShapeFromFrameHandle(
       x: cleanNearZero(nextCenter.x, 0.0005),
       z: cleanNearZero(nextCenter.z, 0.0005),
       elevation: cleanNearZero(nextCenter.y - shape.height / 2, 0.0005),
+      ...(nextHeight === undefined ? {} : { height: nextHeight }),
     };
   }
-  return resizedShapePatchFromFrame(shape, nextCenter, nextWidth, nextDepth);
+  return resizedShapePatchFromFrame(shape, nextCenter, nextWidth, nextDepth, nextHeight);
 }
 
 function axisScaleMatrix(axis: THREE.Vector3, scale: number, anchor: number) {
@@ -2245,13 +2290,22 @@ function resizeShapeAlongFrameNormal(
   frame: SelectionFrame,
   nextFrameHeight: number,
   resizingFromBottom: boolean,
+  linkedAxes: LinkedResizeAxes,
+  maxSize: number,
 ): Partial<WorkplaneShape> {
   // Threads must not be resized by stretching their mesh positions: that pulls
   // the turns apart. Skip the imported-mesh path so the normal height resize
   // below runs, which only sets the height and lets canonicalizeShape rebuild
   // the thread at the correct length - exactly like typing the length in the
   // inspector field.
-  const importedPatch = shape.threadParams
+  //
+  // Linked axes skip it for a different reason: that path deforms the mesh
+  // along one axis only and returns before the link is applied, so an imported
+  // or baked shape would move its height alone while the other linked axes sat
+  // still. Falling through sets width/depth/height as fields instead and lets
+  // resizedImportedCoordinates scale the mesh - the same route the inspector
+  // fields already take for these shapes.
+  const importedPatch = shape.threadParams || linkedResizeAxisCount(linkedAxes) >= 2
     ? null
     : resizeImportedShapeAlongFrameNormal(shape, frame, nextFrameHeight, resizingFromBottom);
   if (importedPatch) {
@@ -2277,18 +2331,24 @@ function resizeShapeAlongFrameNormal(
     x: cleanNearZero(nextCenter.x, 0.0005),
     z: cleanNearZero(nextCenter.z, 0.0005),
   };
-  if (dimensionAxis.axis === "width") {
-    patch.width = Math.max(MIN_SHAPE_SIZE, shapeWidth(shape) * scale);
-    patch.size = resizedShapeSize(patch.width, shapeDepth(shape));
-    patch.elevation = cleanNearZero(nextCenter.y - shape.height / 2, 0.0005);
-  } else if (dimensionAxis.axis === "depth") {
-    patch.depth = Math.max(MIN_SHAPE_SIZE, shapeDepth(shape) * scale);
-    patch.size = resizedShapeSize(shapeWidth(shape), patch.depth);
-    patch.elevation = cleanNearZero(nextCenter.y - shape.height / 2, 0.0005);
-  } else {
-    patch.height = Math.max(MIN_SHAPE_SIZE, shape.height * scale);
-    patch.elevation = cleanNearZero(nextCenter.y - patch.height / 2, 0.0005);
+  // A rotated shape's height handle can actually drive its width or depth,
+  // which is what dimensionAxis resolves. Whichever axis that turns out to be
+  // is the one that drives the link group.
+  const current = { width: shapeWidth(shape), depth: shapeDepth(shape), height: shape.height };
+  const next = linkedResizeValues(
+    current,
+    dimensionAxis.axis,
+    current[dimensionAxis.axis] * scale,
+    linkedAxes,
+    { min: MIN_SHAPE_SIZE, max: maxSize },
+  );
+  if (next.width !== undefined && carriesLinkedGirth(shape, dimensionAxis.axis, "width")) patch.width = next.width;
+  if (next.depth !== undefined && carriesLinkedGirth(shape, dimensionAxis.axis, "depth")) patch.depth = next.depth;
+  if (next.height !== undefined) patch.height = next.height;
+  if (patch.width !== undefined || patch.depth !== undefined) {
+    patch.size = resizedShapeSize(patch.width ?? current.width, patch.depth ?? current.depth);
   }
+  patch.elevation = cleanNearZero(nextCenter.y - (patch.height ?? shape.height) / 2, 0.0005);
   return patch;
 }
 
@@ -2300,6 +2360,7 @@ function resizeSelectionFromHandle(
   altKey: boolean,
   step: number,
   maxSize: number,
+  linkedAxes: LinkedResizeAxes,
 ) {
   const frame = transform.selectionFrame;
   const localDelta = transform.scaleStartPoint ? frameLocalDelta(frame, transform.scaleStartPoint, point) : new THREE.Vector3();
@@ -2338,26 +2399,58 @@ function resizeSelectionFromHandle(
     };
   }
 
+  // Axis link, applied to the selection frame so the whole group keeps its
+  // proportions rather than each member drifting on its own.
+  let scaleY = 1;
+  const driver = ([
+    signs.x && linkedAxes.width ? { axis: "width" as const, value: nextX.size, moved: Math.abs(nextX.scale - 1) } : null,
+    signs.z && linkedAxes.depth ? { axis: "depth" as const, value: nextZ.size, moved: Math.abs(nextZ.scale - 1) } : null,
+  ].filter(Boolean) as { axis: ResizeAxis; value: number; moved: number }[])
+    .sort((a, b) => b.moved - a.moved)[0];
+  if (driver) {
+    const linked = linkedResizeValues(
+      { width: frame.width, depth: frame.depth, height: frame.height },
+      driver.axis,
+      driver.value,
+      linkedAxes,
+      { min: MIN_SHAPE_SIZE, max: maxSize },
+    );
+    if (linked.width !== undefined) nextX = { size: linked.width, scale: linked.width / Math.max(MIN_SHAPE_SIZE, frame.width) };
+    if (linked.depth !== undefined) nextZ = { size: linked.depth, scale: linked.depth / Math.max(MIN_SHAPE_SIZE, frame.depth) };
+    if (linked.height !== undefined) scaleY = linked.height / Math.max(MIN_SHAPE_SIZE, frame.height);
+  }
+
   const nextCenter = altKey
     ? frame.center.clone()
     : resizeCenterFromAnchor(frame, transform.scaleAnchorPoint ?? resizeAnchorPointForFrame(frame, signs), signs, nextX.size, nextZ.size);
 
   return transform.items.map((item) => {
     const localCenter = frameLocalPoint(frame, item.startCenter);
+    // Vertically the group grows from its underside, matching the single-shape
+    // handles, so a linked height does not push the selection into the floor.
+    const localY = scaleY === 1 ? localCenter.y : frame.min.y + (localCenter.y - frame.min.y) * scaleY;
     const nextItemCenter = nextCenter
       .clone()
       .add(frame.xAxis.clone().multiplyScalar(localCenter.x * nextX.scale))
-      .add(frame.yAxis.clone().multiplyScalar(localCenter.y))
+      .add(frame.yAxis.clone().multiplyScalar(localY))
       .add(frame.zAxis.clone().multiplyScalar(localCenter.z * nextZ.scale));
     const width = snapDimension(shapeWidth(item.startShape) * nextX.scale, step, MIN_SHAPE_SIZE, maxSize);
     const depth = snapDimension(shapeDepth(item.startShape) * nextZ.scale, step, MIN_SHAPE_SIZE, maxSize);
     const actualScaleX = width / Math.max(MIN_SHAPE_SIZE, shapeWidth(item.startShape));
     const actualScaleZ = depth / Math.max(MIN_SHAPE_SIZE, shapeDepth(item.startShape));
+    const height = scaleY === 1
+      ? item.startShape.height
+      : clamp(item.startShape.height * scaleY, MIN_SHAPE_SIZE, maxSize);
+    // Threads follow the group in length only - see carriesLinkedGirth.
+    const girthPatch = scaleY !== 1 && item.startShape.threadParams
+      ? {}
+      : scaledHorizontalShapePatch(item.startShape, actualScaleX, actualScaleZ);
     const patch = {
-      ...scaledHorizontalShapePatch(item.startShape, actualScaleX, actualScaleZ),
+      ...girthPatch,
+      ...(scaleY === 1 ? {} : { height }),
       x: nextItemCenter.x,
       z: nextItemCenter.z,
-      elevation: cleanNearZero(nextItemCenter.y - item.startShape.height / 2, 0.0005),
+      elevation: cleanNearZero(nextItemCenter.y - height / 2, 0.0005),
     } satisfies Partial<WorkplaneShape>;
     return {
       id: item.id,
@@ -2413,6 +2506,14 @@ export function WorkplaneViewport({
 }: WorkplaneViewportProps) {
   const [snapOpen, setSnapOpen] = useState(false);
   const [snap, setSnap] = useState<GridSize>(() => normalizeSnapGrid(initialSnap, DEFAULT_SNAP_GRID));
+  // Which size axes scale together, for both the inspector fields and the
+  // viewport resize handles. An editor-wide setting for the session, like the
+  // snap grid - deliberately not stored per shape or in the project file.
+  const [linkedAxes, setLinkedAxes] = useState<LinkedResizeAxes>(NO_LINKED_RESIZE_AXES);
+  // Read from inside the pointer-drag handlers, which must not re-subscribe
+  // every time the setting changes.
+  const linkedAxesRef = useRef(linkedAxes);
+  linkedAxesRef.current = linkedAxes;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceSettings>(() => normalizeWorkspaceSettings(initialWorkspace));
   const [transformOverlay, setTransformOverlay] = useState<TransformOverlayState | null>(null);
@@ -3696,7 +3797,7 @@ export function WorkplaneViewport({
         transform.items.forEach((item) => {
           onUpdateShape(
             item.id,
-            resizeShapeAlongFrameNormal(item.startShape, transform.selectionFrame, nextFrameHeight, resizingFromBottom),
+            resizeShapeAlongFrameNormal(item.startShape, transform.selectionFrame, nextFrameHeight, resizingFromBottom, linkedAxesRef.current, maxHeight),
           );
         });
         return true;
@@ -3742,11 +3843,11 @@ export function WorkplaneViewport({
         }
         if (transform.items.length === 1) {
           const maxSize = shapeDimensionLimit(workspaceRef.current, transform.startShape.kind, 220);
-          const next = resizeShapeFromFrameHandle(transform, worldPoint, transform.handleKey, shiftKey, altKey, step, maxSize);
+          const next = resizeShapeFromFrameHandle(transform, worldPoint, transform.handleKey, shiftKey, altKey, step, maxSize, linkedAxesRef.current);
           onUpdateShape(transform.id, next);
         } else {
           const maxSize = Math.max(...transform.items.map((item) => shapeDimensionLimit(workspaceRef.current, item.startShape.kind, 260)));
-          resizeSelectionFromHandle(transform, worldPoint, transform.handleKey, shiftKey, altKey, step, maxSize).forEach(({ id, patch }) => onUpdateShape(id, patch));
+          resizeSelectionFromHandle(transform, worldPoint, transform.handleKey, shiftKey, altKey, step, maxSize, linkedAxesRef.current).forEach(({ id, patch }) => onUpdateShape(id, patch));
         }
         return true;
       }
@@ -5218,6 +5319,8 @@ export function WorkplaneViewport({
           }}
           onSnapChange={setSnap}
           onSnapOpenChange={setSnapOpen}
+          linkedAxes={linkedAxes}
+          onLinkedAxesChange={setLinkedAxes}
           onEditSketch={selectedShape.sketchProfile ? onEditSketch : undefined}
           canSeparateParts={canSeparateParts}
           onSeparateParts={onSeparateParts}

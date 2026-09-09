@@ -177,6 +177,67 @@ export function proportionalResizeScale(startWidth: number, startDepth: number, 
   return Math.abs(widthScale - 1) >= Math.abs(depthScale - 1) ? widthScale : depthScale;
 }
 
+export type ResizeAxis = "width" | "depth" | "height";
+export type LinkedResizeAxes = Record<ResizeAxis, boolean>;
+export const RESIZE_AXES: readonly ResizeAxis[] = ["width", "depth", "height"];
+export const NO_LINKED_RESIZE_AXES: LinkedResizeAxes = { width: false, depth: false, height: false };
+
+export function linkedResizeAxisCount(linked: LinkedResizeAxes) {
+  return RESIZE_AXES.reduce((total, axis) => total + (linked[axis] ? 1 : 0), 0);
+}
+
+/**
+ * True when editing `axis` should carry the other linked axes along - i.e. it
+ * is itself linked and has at least one partner. A single checked axis is a
+ * group of one and behaves exactly like no link at all.
+ */
+export function resizeAxisIsLinked(axis: ResizeAxis, linked: LinkedResizeAxes) {
+  return linked[axis] && linkedResizeAxisCount(linked) >= 2;
+}
+
+/**
+ * The dimensions after setting `axis` to `value` with every linked axis held
+ * in proportion. Unlinked axes are left out of the result untouched.
+ *
+ * The shared scale factor is clamped once against *every* linked axis rather
+ * than clamping each axis afterwards: capping them individually would let one
+ * axis stop at its bound while the others keep going, which silently destroys
+ * the very ratio the link exists to preserve. Since each current value already
+ * sits inside the bounds, the allowed factor range always contains 1, so the
+ * clamp can never invert the drag.
+ */
+export function linkedResizeValues(
+  current: Record<ResizeAxis, number>,
+  axis: ResizeAxis,
+  value: number,
+  linked: LinkedResizeAxes,
+  bounds: { min: number; max: number },
+): Partial<Record<ResizeAxis, number>> {
+  const clamp = (input: number) => Math.min(bounds.max, Math.max(bounds.min, input));
+  const round = (input: number) => Math.round(input * 10000) / 10000;
+  if (!Number.isFinite(value)) return {};
+  if (!resizeAxisIsLinked(axis, linked)) {
+    return { [axis]: round(clamp(value)) };
+  }
+
+  const from = current[axis];
+  if (!(from > 0)) return { [axis]: round(clamp(value)) };
+
+  const partners = RESIZE_AXES.filter((candidate) => linked[candidate] && current[candidate] > 0);
+  let scale = value / from;
+  if (!Number.isFinite(scale) || scale <= 0) return { [axis]: round(clamp(value)) };
+  for (const partner of partners) {
+    scale = Math.min(scale, bounds.max / current[partner]);
+    scale = Math.max(scale, bounds.min / current[partner]);
+  }
+
+  const next: Partial<Record<ResizeAxis, number>> = {};
+  for (const partner of partners) {
+    next[partner] = round(clamp(current[partner] * scale));
+  }
+  return next;
+}
+
 export function fallbackSolidColor(shape: WorkplaneShape) {
   if (shape.sketchOperation === "revolve") return "#78b96b";
   if (shape.kind === "cylinder") return "#d97813";

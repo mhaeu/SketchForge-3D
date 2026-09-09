@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, LockKeyhole, LockKeyholeOpen, Split } from "lucide-react";
+import { ChevronDown, ChevronUp, Link2, LockKeyhole, LockKeyholeOpen, Split, Unlink2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { ToolbarHideSelectedIcon } from "@/components/icons";
 import {
@@ -22,7 +22,7 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
-import { resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth } from "@/lib/workplaneShapes";
+import { linkedResizeValues, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
@@ -76,6 +76,9 @@ type RangePropertyConfig = {
   max: number;
   step?: number;
   onChange: (value: number) => void;
+  // Present only on the three size rows: toggles whether this axis scales
+  // together with the other linked ones.
+  link?: { axis: ResizeAxis; linked: boolean; active: boolean; onToggle: () => void };
 };
 
 type TextPropertyConfig = {
@@ -141,7 +144,13 @@ function propertyUsesLengthUnit(label: string) {
   return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness", "Tooth Size", "Tooth Width", "Center Hole", "Top Length", "Top Width", "Bottom Length", "Bottom Width", "Diameter", "Pitch", "Thread Length", "Clearance", "X", "Y", "Z", "Cross size", "Marker size"].includes(label);
 }
 
-function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate, textWidthMax = 260): ShapePropertyConfig[] {
+function getShapePropertiesWithAppLimits(
+  shape: WorkplaneShape,
+  onUpdate: ShapeInspectorUpdate,
+  textWidthMax = 260,
+  linkedAxes: LinkedResizeAxes = NO_LINKED_RESIZE_AXES,
+  dimensionMax = 160,
+): ShapePropertyConfig[] {
   // The reference point has a fixed on-screen size; it only exposes position,
   // so it gets no size/shape properties at all.
   if (shape.kind === "reference") {
@@ -179,18 +188,39 @@ function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeI
       taperBottomDepth: Math.max(MIN_SHAPE_SIZE, taper.bottomDepth * scale),
     };
   };
-  const setWidth = (value: number) => onUpdate(widthPatch(value), { resizeAxis: "width" });
-  const setDepth = (value: number) => onUpdate(depthPatch(value), { resizeAxis: "depth" });
-  const setConeWidth = (value: number) => {
-    const patch = widthPatch(value);
-    patch.baseRadius = Math.max(MIN_SHAPE_SIZE, (patch.width ?? baseWidth) / 2);
-    onUpdate(patch, { resizeAxis: "width" });
+  // Linked axes are carried along by reusing each axis's own patch builder, so
+  // taper fields stay consistent instead of being recomputed a second way.
+  const axisPatch = (axis: ResizeAxis, value: number): Partial<WorkplaneShape> => (
+    axis === "width" ? widthPatch(value) : axis === "depth" ? depthPatch(value) : { height: value }
+  );
+  const setAxis = (axis: ResizeAxis, value: number, extra?: (patch: Partial<WorkplaneShape>) => Partial<WorkplaneShape>) => {
+    const next = linkedResizeValues(
+      { width, depth, height: shape.height },
+      axis,
+      value,
+      linkedAxes,
+      { min: MIN_SHAPE_SIZE, max: dimensionMax },
+    );
+    // A thread is defined by its parameters: it may follow a link in length,
+    // but a carried width/depth would stretch its profile out of standard.
+    // canonicalizeShape rebuilds it from the new height instead.
+    const carries = (candidate: ResizeAxis) => candidate === axis || candidate === "height" || !shape.threadParams;
+    const patch = RESIZE_AXES.reduce<Partial<WorkplaneShape>>(
+      (merged, candidate) => next[candidate] === undefined || !carries(candidate)
+        ? merged
+        : { ...merged, ...axisPatch(candidate, next[candidate]) },
+      {},
+    );
+    if (Object.keys(patch).length === 0) return;
+    onUpdate({ ...patch, ...extra?.(patch) }, { resizeAxis: axis });
   };
-  const setBaseRadius = (value: number) => {
-    const diameter = value * 2;
-    onUpdate({ baseRadius: value, width: diameter, size: resizedShapeSize(diameter, baseDepth) }, { resizeAxis: "width" });
-  };
-  const setHeight = (height: number) => onUpdate({ height }, { resizeAxis: "height" });
+  const setWidth = (value: number) => setAxis("width", value);
+  const setDepth = (value: number) => setAxis("depth", value);
+  const setConeWidth = (value: number) => setAxis("width", value, (patch) => ({
+    baseRadius: Math.max(MIN_SHAPE_SIZE, (patch.width ?? baseWidth) / 2),
+  }));
+  const setBaseRadius = (value: number) => setAxis("width", value * 2, () => ({ baseRadius: value }));
+  const setHeight = (height: number) => setAxis("height", height);
 
   if (shape.threadParams) {
     const t = shape.threadParams;
@@ -429,9 +459,14 @@ function getShapePropertiesWithAppLimits(shape: WorkplaneShape, onUpdate: ShapeI
   ];
 }
 
-function getShapeProperties(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate, workspace: WorkplaneWorkspaceSettings): ShapePropertyConfig[] {
+function getShapeProperties(
+  shape: WorkplaneShape,
+  onUpdate: ShapeInspectorUpdate,
+  workspace: WorkplaneWorkspaceSettings,
+  linkedAxes: LinkedResizeAxes,
+): ShapePropertyConfig[] {
   const customLimit = workspace.shapeCustomizations[shape.kind]?.maxDimension;
-  const properties = getShapePropertiesWithAppLimits(shape, onUpdate, customLimit ?? 260);
+  const properties = getShapePropertiesWithAppLimits(shape, onUpdate, customLimit ?? 260, linkedAxes, customLimit ?? 160);
   if (customLimit === undefined) return properties;
   return properties.map((property) => {
     if (property.type === "text" || property.type === "select") return property;
@@ -454,6 +489,8 @@ export function ShapeInspector({
   canSeparateParts = false,
   onSeparateParts,
   onInteractionActiveChange,
+  linkedAxes = NO_LINKED_RESIZE_AXES,
+  onLinkedAxesChange,
 }: {
   shape: WorkplaneShape;
   referencePoint: { x: number; y: number; z: number };
@@ -461,6 +498,8 @@ export function ShapeInspector({
   snapOpen: boolean;
   workspace: WorkplaneWorkspaceSettings;
   onUpdate: ShapeInspectorUpdate;
+  linkedAxes?: LinkedResizeAxes;
+  onLinkedAxesChange?: (next: LinkedResizeAxes) => void;
   onSnapChange: Dispatch<SetStateAction<GridSize>>;
   onSnapOpenChange: Dispatch<SetStateAction<boolean>>;
   onEditSketch?: () => void;
@@ -470,7 +509,22 @@ export function ShapeInspector({
 }) {
   const solidColor = shape.color;
   const locked = Boolean(shape.locked);
-  const properties = getShapeProperties(shape, onUpdate, workspace);
+  // "Length" is this UI's name for the depth axis.
+  const axisForLabel: Record<string, ResizeAxis> = { Width: "width", Length: "depth", Height: "height" };
+  const withLinkToggles = (list: ShapePropertyConfig[]) => list.map((property) => {
+    const axis = property.type === "text" || property.type === "select" ? undefined : axisForLabel[property.label];
+    if (!axis || !onLinkedAxesChange) return property;
+    return {
+      ...property,
+      link: {
+        axis,
+        linked: linkedAxes[axis],
+        active: resizeAxisIsLinked(axis, linkedAxes),
+        onToggle: () => onLinkedAxesChange({ ...linkedAxes, [axis]: !linkedAxes[axis] }),
+      },
+    };
+  });
+  const properties = withLinkToggles(getShapeProperties(shape, onUpdate, workspace, linkedAxes));
   const gearType = shape.kind === "gear" ? normalizeGearType(shape.gearType) : null;
   const primaryProperties = shape.kind === "gear"
     ? properties.filter((property) => ["Center Hole", "Length", "Width", "Height"].includes(property.label))
@@ -892,6 +946,7 @@ function RangeProperty({
   min,
   max,
   step = 0.01,
+  link,
   workspace,
   disabled,
   onChange,
@@ -927,7 +982,28 @@ function RangeProperty({
   return (
     <label className="range-property" style={{ "--slider-pos": `${position}%` } as CSSProperties}>
       <span className="range-property-header">
-        <span className="range-property-name">{label}</span>
+        <span className="range-property-name">
+          {label}
+          {link ? (
+            <button
+              type="button"
+              className={`axis-link${link.linked ? " on" : ""}${link.active ? " active" : ""}`}
+              disabled={disabled}
+              title={link.active
+                ? "Linked: this axis keeps its ratio with the other linked axes"
+                : link.linked
+                  ? "Linked, but on its own - check a second axis to keep a ratio"
+                  : "Link this axis so it scales in proportion with the others"}
+              aria-pressed={link.linked}
+              onClick={(event) => {
+                event.preventDefault();
+                link.onToggle();
+              }}
+            >
+              {link.linked ? <Link2 size={15} strokeWidth={2.4} /> : <Unlink2 size={15} strokeWidth={2.2} />}
+            </button>
+          ) : null}
+        </span>
         <span className="range-value-control">
           <input
             type="text"
