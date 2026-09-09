@@ -32,11 +32,12 @@ let edgeOwnerLocalIndexes: number[] = [];
 let baseSolidBrep: string | null = null;
 let variableFilletKernel: OcctKernel | null = null;
 // The solid+edges imported into variableFilletKernel from baseSolidBrep,
-// cached alongside it - see isolatedVariableFilletSolid(). `fromBREP` turns
-// out to be just as one-shot-only as `toBREP` on a kernel that has run an
-// unequal-radius filletVariable (verified standalone), so the import must
-// happen exactly once per isolated kernel instance, before its first
-// filletVariable call, and never again.
+// cached alongside it - see isolatedVariableFilletSolid(). The import runs
+// exactly once per isolated kernel instance, before its first filletVariable
+// call: `fromBREP` was seen failing after one in a long session, and while
+// that does not reproduce in isolation (the fault is heap corruption, so what
+// it takes down varies), importing once up front costs nothing and keeps the
+// kernel's known-broken calls out of the drag loop entirely.
 let variableFilletSolid: ShapeHandle | null = null;
 let variableFilletEdges: ShapeHandle[] = [];
 
