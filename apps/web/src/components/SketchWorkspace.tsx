@@ -7,6 +7,7 @@ import { SketchRevolvePreview } from "@/components/SketchRevolvePreview";
 import { parseMeasurementInput } from "@/lib/measurementUnits";
 import { WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { closestPointOnSketchSegment, type SketchSegmentPlacement } from "@/lib/sketchPointRefinement";
+import { resizeSketchPoints, type ResizeHandle, type SelectionBounds } from "@/lib/sketchResize";
 import { isSketchPanGesture } from "@/lib/sketchPointerControls";
 import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
@@ -66,8 +67,6 @@ type PointerAction =
   | { kind: "move-image"; pointerId: number; imageId: string; origin: { x: number; z: number }; current: { x: number; z: number }; start: SketchImage }
   | { kind: "resize-image"; pointerId: number; imageId: string; handle: ResizeHandle; current: { x: number; z: number }; start: SketchImage };
 
-type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
-type SelectionBounds = { minX: number; maxX: number; minZ: number; maxZ: number; width: number; depth: number; cx: number; cz: number };
 
 function snapStep(size: GridSize) {
   if (size === "Off") return 0;
@@ -161,32 +160,6 @@ function translateSketchPoints(points: SketchPoint[], dx: number, dz: number) {
     z: point.z + dz,
     handleIn: point.handleIn ? { x: point.handleIn.x + dx, z: point.handleIn.z + dz } : undefined,
     handleOut: point.handleOut ? { x: point.handleOut.x + dx, z: point.handleOut.z + dz } : undefined,
-  }));
-}
-
-function resizeSketchPoints(points: SketchPoint[], bounds: SelectionBounds, handle: ResizeHandle, current: { x: number; z: number }) {
-  const minimum = 0.5;
-  let minX = bounds.minX;
-  let maxX = bounds.maxX;
-  let minZ = bounds.minZ;
-  let maxZ = bounds.maxZ;
-  if (handle.includes("w")) minX = Math.min(current.x, bounds.maxX - minimum);
-  if (handle.includes("e")) maxX = Math.max(current.x, bounds.minX + minimum);
-  if (handle.includes("n")) minZ = Math.min(current.z, bounds.maxZ - minimum);
-  if (handle.includes("s")) maxZ = Math.max(current.z, bounds.minZ + minimum);
-  const width = Math.max(minimum, bounds.width);
-  const depth = Math.max(minimum, bounds.depth);
-  const scaleX = (maxX - minX) / width;
-  const scaleZ = (maxZ - minZ) / depth;
-  const map = (value: { x: number; z: number }) => ({
-    x: minX + (value.x - bounds.minX) * scaleX,
-    z: minZ + (value.z - bounds.minZ) * scaleZ,
-  });
-  return points.map((point) => ({
-    ...point,
-    ...map(point),
-    handleIn: point.handleIn ? map(point.handleIn) : undefined,
-    handleOut: point.handleOut ? map(point.handleOut) : undefined,
   }));
 }
 
@@ -508,6 +481,8 @@ export function SketchWorkspace({
   // lines only; the start point stays fixed and the end point moves along the
   // current direction to the typed length.
   const [editingLengthSegmentId, setEditingLengthSegmentId] = useState<string | null>(null);
+  // Session-wide like the snap grid, not stored with the sketch.
+  const [lockAspect, setLockAspect] = useState(false);
   const [lengthDraft, setLengthDraft] = useState("");
   const [svgSize, setSvgSize] = useState({ width: 0, height: 0 });
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -531,7 +506,7 @@ export function SketchWorkspace({
       return { ...profile, points: profile.points.map((point) => movedById.get(point.id) ?? point) };
     }
     if (pointerAction?.kind === "resize-selection") {
-      const resized = resizeSketchPoints(pointerAction.startPoints, pointerAction.bounds, pointerAction.handle, pointerAction.current);
+      const resized = resizeSketchPoints(pointerAction.startPoints, pointerAction.bounds, pointerAction.handle, pointerAction.current, lockAspect);
       const resizedById = new Map(resized.map((point) => [point.id, point]));
       return { ...profile, points: profile.points.map((point) => resizedById.get(point.id) ?? point) };
     }
@@ -747,7 +722,7 @@ export function SketchWorkspace({
         "Sketch shape moved",
       );
     } else if (action.kind === "resize-selection") {
-      onTransformPoints(resizeSketchPoints(action.startPoints, action.bounds, action.handle, action.current), "Sketch shape resized");
+      onTransformPoints(resizeSketchPoints(action.startPoints, action.bounds, action.handle, action.current, lockAspect), "Sketch shape resized");
     } else if (action.kind === "move-point") {
       onMovePoint(action.pointId, action.current);
     } else if (action.kind === "move-handle") {
@@ -986,7 +961,22 @@ export function SketchWorkspace({
                     }
                   }
                   else if (event.button === 0 && tool === "select" && point) {
+                    // Select and start dragging in one press: a line is moved by
+                    // carrying its two endpoints, which is what move-selection
+                    // already does for a point set. Clicking without moving
+                    // leaves a zero delta, so a plain click still just selects.
                     onSelectSegment(segment.id);
+                    const ends = [segment.startId, segment.endId]
+                      .map((id) => pointById.get(id))
+                      .filter((entry): entry is SketchPoint => Boolean(entry))
+                      .map((entry) => ({
+                        ...entry,
+                        handleIn: entry.handleIn ? { ...entry.handleIn } : undefined,
+                        handleOut: entry.handleOut ? { ...entry.handleOut } : undefined,
+                      }));
+                    if (ends.length === 2) {
+                      beginEntityDrag(event, { kind: "move-selection", pointerId: event.pointerId, origin: point, current: point, startPoints: ends });
+                    }
                   } else if (event.button === 0) onSelectSegment(segment.id);
                 }}
               />
@@ -1257,6 +1247,16 @@ export function SketchWorkspace({
         </div>
       ) : null}
       <div className="grid-settings">
+        <button
+          type="button"
+          className={`sketch-image-aspect-toggle ${lockAspect ? "active" : ""}`}
+          aria-pressed={lockAspect}
+          title={lockAspect ? "Width and height keep their ratio while resizing" : "Link width and height while resizing"}
+          onClick={() => setLockAspect((value) => !value)}
+        >
+          {lockAspect ? <Link size={17} /> : <Link2Off size={17} />}
+          <span>{lockAspect ? "Ratio locked" : "Ratio free"}</span>
+        </button>
         <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
       </div>
       {(() => {
