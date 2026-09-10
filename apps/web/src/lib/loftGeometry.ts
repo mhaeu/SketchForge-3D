@@ -137,11 +137,10 @@ function circularAngleDistance(a: number, b: number) {
 // corner. Corners that can't be paired (unequal corner counts) fall back via fallbackSmallAngle
 // below. Ported from hbehrensj/loftmorph (commit d91b3df), with that fallback and buildAngles'
 // per-segment wraparound (below) made independent-per-stream -- see their own comments for why.
-function bestMatching(bottomCorners: number[], topCorners: number[], bottomRotation: number, topRotation: number): LoftAngleAnchor[] {
+function bestMatching(bottomCorners: number[], topCorners: number[]): LoftAngleAnchor[] {
   const swap = bottomCorners.length > topCorners.length;
   const small = swap ? topCorners : bottomCorners;
   const large = swap ? bottomCorners : topCorners;
-  const rotationDelta = (swap ? topRotation : bottomRotation) - (swap ? bottomRotation : topRotation);
   const m = small.length;
   const M = large.length;
   if (M === 0) return [];
@@ -189,7 +188,7 @@ function bestMatching(bottomCorners: number[], topCorners: number[], bottomRotat
     }
   }
 
-  const smallAngleFor = fallbackSmallAngle(bestMatchOf, small, large, rotationDelta);
+  const smallAngleFor = fallbackSmallAngle(bestMatchOf, small, large);
 
   const anchors: LoftAngleAnchor[] = [];
   for (let k = 0; k < M; k += 1) {
@@ -211,16 +210,12 @@ function bestMatching(bottomCorners: number[], topCorners: number[], bottomRotat
 // ringAt relies on and producing a self-crossing (non-manifold) ring. Interpolating circularly
 // between the nearest matched neighbors keeps the fallback inside that range; when nothing is
 // matched at all (one end has zero corners, e.g. an Oval) there are no neighbors to interpolate
-// from, so every corner keeps the large-angle fallback -- but shifted by how much the two ends
-// are rotated against each other. Taking the other end's angle verbatim would leave a corner-less
-// end sampled in the *other* end's rotation frame: its outline would turn while its facets stayed
-// put, so a low-segment Oval visibly changed shape under rotation instead of spinning. The shift
-// is zero whenever both ends share a rotation, which is the case the reference was tuned for.
-function fallbackSmallAngle(matchOf: number[], small: number[], large: number[], rotationDelta: number): (k: number) => number {
+// from, so every corner keeps the literal large-angle fallback, unchanged from the reference.
+function fallbackSmallAngle(matchOf: number[], small: number[], large: number[]): (k: number) => number {
   const M = large.length;
   const matchedIndices: number[] = [];
   for (let k = 0; k < M; k += 1) if (matchOf[k] !== -1) matchedIndices.push(k);
-  if (matchedIndices.length === 0) return (k) => large[k] + rotationDelta;
+  if (matchedIndices.length === 0) return (k) => large[k];
 
   const TWO_PI = 2 * Math.PI;
   const circularLerp = (a: number, b: number, t: number) => {
@@ -265,18 +260,18 @@ function normalizeCorners(corners: number[]): number[] {
 // lands on a ring vertex. Each anchor -- and each interpolated in-between angle -- carries an
 // independent aBottom/aTop pair, so ringAt below samples each end's own shape function at its own
 // matched angle rather than a single shared lab-frame angle.
-function buildAngles(bottomCorners: number[], topCorners: number[], segments: number, bottomRotation: number, topRotation: number): LoftAngleAnchor[] {
+function buildAngles(bottomCorners: number[], topCorners: number[], segments: number): LoftAngleAnchor[] {
   const TWO_PI = 2 * Math.PI;
   const bc = normalizeCorners(bottomCorners);
   const tc = normalizeCorners(topCorners);
-  const anchors = bestMatching(bc, tc, bottomRotation, topRotation);
+  const anchors = bestMatching(bc, tc);
 
   if (!anchors.length) {
     const n = Math.max(3, Math.round(segments));
     const angles: LoftAngleAnchor[] = [];
     for (let i = 0; i < n; i += 1) {
       const a = (TWO_PI * i) / n;
-      angles.push({ aBottom: a + bottomRotation, aTop: a + topRotation, aKey: a });
+      angles.push({ aBottom: a, aTop: a, aKey: a });
     }
     return angles;
   }
@@ -377,7 +372,7 @@ export function createLoftGeometry({
 
   const bottomCorners = shapeCorners(bottomShape, bX, bY, bottomRotation);
   const topCorners = shapeCorners(topShape, tX, tY, topRotation);
-  const angles = buildAngles(bottomCorners, topCorners, segments, bottomRotation, topRotation);
+  const angles = buildAngles(bottomCorners, topCorners, segments);
   const segmentCount = angles.length;
 
   const positions: number[] = [];
