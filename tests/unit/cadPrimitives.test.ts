@@ -122,4 +122,32 @@ describe("analytic CAD primitives for round shapes", () => {
       kernel.release(filleted);
     }
   });
+
+  it("keeps a filleted solid analytic when it is moved and re-treated", () => {
+    // reconstructSolid restores a stored cadBrep and applies the shape's move
+    // as brepTransform. Doing that with generalTransform rebuilds every face
+    // as a B-spline approximation even for a plain translation, which loses
+    // the cylinder/torus faces a fillet leaves behind and shifts the volume -
+    // the next edge treatment then cannot restore a valid solid.
+    const primitive = cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "cylinder", width: 20, depth: 20, height: 20 });
+    const solid = buildSolid(primitive!);
+    const box = kernel.getBoundingBox(solid);
+    const top = kernel.getSubShapes(solid, "edge").filter((edge) => {
+      const points = kernel.wireframe(edge, 0.05).points;
+      if (points.length < 6) return false;
+      for (let i = 1; i < points.length; i += 3) if (Math.abs(points[i] - box.ymax) > 1e-6) return false;
+      return true;
+    });
+    const filleted = kernel.fillet(solid, top, 5);
+    const before = kernel.getVolume(filleted);
+    const surfaces = (shape: number) => kernel.getSubShapes(shape, "face").map((face) => kernel.surfaceType(face)).sort();
+    expect(surfaces(filleted)).toEqual(["cylinder", "plane", "plane", "torus"]);
+
+    const move = [1, 0, 0, 7, 0, 1, 0, 0, 0, 0, 1, -3];
+    const restored = kernel.transform(kernel.fromBREP(kernel.toBREP(filleted)), move);
+
+    expect(kernel.isSolid(restored)).toBe(true);
+    expect(surfaces(restored)).toEqual(["cylinder", "plane", "plane", "torus"]);
+    expect(kernel.getVolume(restored)).toBeCloseTo(before, 3);
+  });
 });

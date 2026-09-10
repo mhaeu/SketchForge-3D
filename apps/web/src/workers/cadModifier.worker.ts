@@ -232,7 +232,12 @@ function reconstructSolid(cad: OcctKernel, part: CadModifierMeshPart) {
   }
   if (part.brep) {
     let exact = cad.fromBREP(part.brep);
-    if (part.brepTransform?.length === 12) exact = cad.generalTransform(exact, part.brepTransform);
+    // Via applyCadTransform, not generalTransform: the latter rebuilds every
+    // face as a B-spline approximation even for a plain move, which drops the
+    // analytic cylinder/torus faces a fillet leaves behind (and shifted the
+    // volume by ~1% in measurement). The next edge treatment then works on an
+    // approximation and fails to restore a valid solid.
+    if (part.brepTransform?.length === 12) exact = applyCadTransform(cad, exact, part.brepTransform);
     const restoredSolids = cad.getSubShapes(exact, "solid");
     if (cadShapeIsValid(cad, exact) && (cad.isSolid(exact) || restoredSolids.length > 0)) {
       return restoredSolids.length === 1 ? restoredSolids[0] : exact;
