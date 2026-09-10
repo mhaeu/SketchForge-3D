@@ -150,4 +150,41 @@ describe("analytic CAD primitives for round shapes", () => {
     expect(surfaces(restored)).toEqual(["cylinder", "plane", "plane", "torus"]);
     expect(kernel.getVolume(restored)).toBeCloseTo(before, 3);
   });
+
+  it("recognizes an oversized chamfer as unusable even though OCCT calls it valid", () => {
+    // The case a user hit: fillet the top edge at the maximum radius, then
+    // chamfer the bottom past the cylinder's radius. OCCT returns valid=true
+    // for a result that is no solid at all - zero solids and a negative
+    // volume, i.e. a shell of face fragments - so validity alone cannot gate
+    // the preview. This mirrors cadShapeIsUsableSolid in the worker.
+    const usable = (shape: number) => {
+      if (!kernel.isValid(shape)) return false;
+      if (!kernel.isSolid(shape) && kernel.getSubShapes(shape, "solid").length === 0) return false;
+      return kernel.getVolume(shape) > 0;
+    };
+
+    const primitive = cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "cylinder", width: 20, depth: 20, height: 20 });
+    const solid = buildSolid(primitive!);
+    const ring = (shape: number, side: "top" | "bottom") => {
+      const box = kernel.getBoundingBox(shape);
+      const y = side === "top" ? box.ymax : box.ymin;
+      return kernel.getSubShapes(shape, "edge").filter((edge) => {
+        const points = kernel.wireframe(edge, 0.05).points;
+        if (points.length < 6) return false;
+        for (let i = 1; i < points.length; i += 3) if (Math.abs(points[i] - y) > 1e-6) return false;
+        return true;
+      });
+    };
+
+    const filleted = kernel.fillet(solid, ring(solid, "top"), 9.9);
+    expect(usable(filleted)).toBe(true);
+
+    const sane = kernel.chamfer(filleted, ring(filleted, "bottom"), 9.9);
+    expect(usable(sane)).toBe(true);
+
+    const oversized = kernel.chamfer(filleted, ring(filleted, "bottom"), 12);
+    expect(kernel.isValid(oversized)).toBe(true);      // OCCT is happy
+    expect(kernel.getVolume(oversized)).toBeLessThan(0); // ...with an inside-out shell
+    expect(usable(oversized)).toBe(false);              // the guard is not
+  });
 });

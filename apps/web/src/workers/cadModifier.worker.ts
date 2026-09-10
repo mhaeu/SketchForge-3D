@@ -65,6 +65,27 @@ function cadShapeIsValid(cad: OcctKernel, shape: ShapeHandle) {
   }
 }
 
+/**
+ * `isValid` is not enough to accept an edge-treatment result: an oversized
+ * chamfer on a round edge comes back valid=true while being no solid at all -
+ * zero solids, negative volume, just a shell of face fragments, which is what
+ * reaches the viewport as stray surfaces. Measured on a filleted cylinder
+ * (r=10) chamfered at d=12: valid, 0 solids, volume -504.
+ *
+ * Volume is the reliable tell, since an inside-out result reports it negative.
+ * A compound of several treated components is fine as long as it contains
+ * solids and encloses something.
+ */
+function cadShapeIsUsableSolid(cad: OcctKernel, shape: ShapeHandle) {
+  if (!cadShapeIsValid(cad, shape)) return false;
+  if (!cad.isSolid(shape) && cad.getSubShapes(shape, "solid").length === 0) return false;
+  try {
+    return cad.getVolume(shape) > 0;
+  } catch {
+    return false;
+  }
+}
+
 function orientedFaceNormal(cad: OcctKernel, face: ShapeHandle, point: { x: number; y: number; z: number }) {
   const uv = cad.uvFromPoint(face, point);
   const normal = cad.surfaceNormal(face, uv.u, uv.v);
@@ -555,7 +576,7 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
         componentResults.push(component);
       }
       result = componentResults.length === 1 ? componentResults[0] : activeCad.makeCompound(componentResults);
-      if (!cadShapeIsValid(activeCad, result)) throw new Error("The chosen size creates invalid or overlapping edge geometry");
+      if (!cadShapeIsUsableSolid(activeCad, result)) throw new Error("The chosen size creates invalid or overlapping edge geometry");
       const options = tessellationOptions(request.quality, request.amount);
       const mesh = copyCadMesh(activeCad.tessellate(result, options));
       const displayEdges = collectEdges(activeCad, result, 0).displayEdges;
