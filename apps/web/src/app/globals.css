@@ -5043,6 +5043,15 @@ button {
   opacity: 0.52;
 }
 
+/* Sits right under the Solid/Hole choice, matching the color card's frame so
+   the two read as one block of appearance settings. */
+.shape-opacity-row {
+  margin: 0 10px 12px;
+  padding: 6px 14px 10px;
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 8px;
+}
+
 .color-card {
   margin: 0 10px 12px;
   padding: 13px 14px 15px;
@@ -7410,6 +7419,7 @@ html[data-theme="dark"] .shape-inspector .inspector-action-button:hover:not(:dis
 
 html[data-theme="dark"] .shape-inspector-header,
 html[data-theme="dark"] .shape-state-card,
+html[data-theme="dark"] .shape-opacity-row,
 html[data-theme="dark"] .color-card,
 html[data-theme="dark"] .property-card,
 html[data-theme="dark"] .shape-floating-controls,

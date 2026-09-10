@@ -760,6 +760,24 @@ export function ShapeInspector({
         </button>
       </div>
 
+      <div className="shape-opacity-row">
+        <ShapePropertyRows
+          properties={[{
+            label: "Opacity",
+            value: Math.round((shape.opacity ?? 1) * 100),
+            min: 5,
+            max: 100,
+            step: 1,
+            onChange: (value) => onUpdate({ opacity: normalizeShapeOpacity(value / 100) }),
+          }]}
+          workspace={workspace}
+          // A hole is already drawn see-through to read as a cutter, so its own
+          // appearance wins and the slider would do nothing.
+          disabled={locked || Boolean(shape.hole)}
+          onInteractionActiveChange={onInteractionActiveChange}
+        />
+      </div>
+
       {colorOpen ? (
         <div className="color-card" aria-label="Shape color">
           <div className="color-card-header">
@@ -833,21 +851,6 @@ export function ShapeInspector({
               />
             ) : null}
             <ShapePropertyRows properties={primaryProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
-            <ShapePropertyRows
-              properties={[{
-                label: "Opacity",
-                value: Math.round((shape.opacity ?? 1) * 100),
-                min: 5,
-                max: 100,
-                step: 1,
-                onChange: (value) => onUpdate({ opacity: normalizeShapeOpacity(value / 100) }),
-              }]}
-              workspace={workspace}
-              // A hole is already drawn see-through to read as a cutter, so its
-              // own appearance wins and the slider would do nothing.
-              disabled={locked || Boolean(shape.hole)}
-              onInteractionActiveChange={onInteractionActiveChange}
-            />
           </div>
         ) : null}
       </div>
