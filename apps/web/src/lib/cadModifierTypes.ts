@@ -23,13 +23,21 @@ export type CadModifierDisplayEdge = {
   points: number[];
 };
 
-export type CadModifierPrimitivePart = {
-  kind: "box";
-  width: number;
-  depth: number;
-  height: number;
-  transform?: number[];
-};
+/**
+ * An analytic solid the CAD worker can rebuild exactly, instead of importing
+ * the viewport's tessellation. That matters beyond precision: a round shape
+ * arriving as a mesh reaches OCCT as a 96-sided prism, and filleting its ring
+ * of 96 near-tangent edges produces invalid geometry well before the radius
+ * is geometrically impossible.
+ *
+ * All kinds share the box's local frame: centred on x/z with the base at
+ * y = 0, placed by `transform`.
+ */
+export type CadModifierPrimitivePart =
+  | { kind: "box"; width: number; depth: number; height: number; transform?: number[] }
+  | { kind: "cylinder"; radius: number; height: number; transform?: number[] }
+  | { kind: "cone"; baseRadius: number; topRadius: number; height: number; transform?: number[] }
+  | { kind: "sphere"; radius: number; transform?: number[] };
 
 export type CadModifierMeshPart = {
   positions?: Float32Array;

@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 
+import * as THREE from "three";
 import { OcctKernel, type ShapeHandle } from "occt-wasm";
 import type { CadModifierComponentMesh, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import { CAD_MODIFIER_RUNTIME_BASE, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
@@ -168,20 +169,56 @@ function applyCadTransform(cad: OcctKernel, shape: ShapeHandle, transform: numbe
   }
 }
 
-function reconstructPrimitiveSolid(cad: OcctKernel, primitive: CadModifierPrimitivePart) {
-  if (primitive.kind !== "box") {
-    throw new Error(`Unsupported CAD primitive: ${primitive.kind}`);
+// BRepPrimAPI builds cylinders and cones along +Z from the origin, and
+// spheres centred on it. The primitive frame here is the box's: base at
+// y = 0, centred on x/z. This is that correction, as a plain matrix.
+function primitiveToLocalFrame(axisToY: boolean, liftY: number) {
+  const matrix = new THREE.Matrix4();
+  if (axisToY) matrix.multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+  if (liftY) matrix.premultiply(new THREE.Matrix4().makeTranslation(0, liftY, 0));
+  const e = matrix.elements;
+  // Row-major 3x4, matching cadTransformFromMatrix on the editor side.
+  return [e[0], e[4], e[8], e[12], e[1], e[5], e[9], e[13], e[2], e[6], e[10], e[14]];
+}
+
+function buildPrimitiveSolid(cad: OcctKernel, primitive: CadModifierPrimitivePart) {
+  if (primitive.kind === "box") {
+    const { width, depth, height } = primitive;
+    if (![width, depth, height].every((value) => Number.isFinite(value) && value > 0)) {
+      throw new Error("The selected primitive has invalid dimensions");
+    }
+    return cad.makeBoxFromCorners(
+      { x: -width / 2, y: 0, z: -depth / 2 },
+      { x: width / 2, y: height, z: depth / 2 },
+    );
   }
-  const width = primitive.width;
-  const depth = primitive.depth;
-  const height = primitive.height;
-  if (![width, depth, height].every((value) => Number.isFinite(value) && value > 0)) {
+
+  if (primitive.kind === "cylinder") {
+    const { radius, height } = primitive;
+    if (![radius, height].every((value) => Number.isFinite(value) && value > 0)) {
+      throw new Error("The selected primitive has invalid dimensions");
+    }
+    return applyCadTransform(cad, cad.makeCylinder(radius, height), primitiveToLocalFrame(true, 0));
+  }
+
+  if (primitive.kind === "cone") {
+    const { baseRadius, topRadius, height } = primitive;
+    if (![height, baseRadius].every((value) => Number.isFinite(value) && value > 0) || !Number.isFinite(topRadius) || topRadius < 0) {
+      throw new Error("The selected primitive has invalid dimensions");
+    }
+    return applyCadTransform(cad, cad.makeCone(baseRadius, topRadius, height), primitiveToLocalFrame(true, 0));
+  }
+
+  const { radius } = primitive;
+  if (!Number.isFinite(radius) || radius <= 0) {
     throw new Error("The selected primitive has invalid dimensions");
   }
-  const solid = cad.makeBoxFromCorners(
-    { x: -width / 2, y: 0, z: -depth / 2 },
-    { x: width / 2, y: height, z: depth / 2 },
-  );
+  // A sphere's local frame puts its underside on y = 0, like every other kind.
+  return applyCadTransform(cad, cad.makeSphere(radius), primitiveToLocalFrame(false, radius));
+}
+
+function reconstructPrimitiveSolid(cad: OcctKernel, primitive: CadModifierPrimitivePart) {
+  const solid = buildPrimitiveSolid(cad, primitive);
   const transformed = applyCadTransform(cad, solid, primitive.transform);
   if (!cad.isSolid(transformed) || !cadShapeIsValid(cad, transformed)) {
     throw new Error("The selected primitive could not be prepared as a valid CAD solid");

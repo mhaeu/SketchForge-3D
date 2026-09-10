@@ -44,18 +44,11 @@ function allFinitePositive(values: number[]) {
   return values.every((value) => Number.isFinite(value) && value > 0);
 }
 
-export function cadModifierPrimitiveForAnalyticBox(shape: WorkplaneShape): CadModifierPrimitivePart | null {
-  if (shape.kind !== "box" || shape.importedMesh || shape.groupedShapes?.length) {
-    return null;
-  }
-
-  const width = shapeWidth(shape);
-  const depth = shapeDepth(shape);
-  const height = shape.height;
-  if (!allFinitePositive([width, depth, height])) {
-    return null;
-  }
-
+/**
+ * Places a primitive built in the local frame (centred on x/z, base at y = 0)
+ * into the world, reproducing the shape's own rotation and mirroring.
+ */
+function primitivePlacementTransform(shape: WorkplaneShape, height: number) {
   const centerY = height / 2;
   const matrix = new THREE.Matrix4()
     .makeTranslation(shape.x, (shape.elevation ?? 0) + centerY, shape.z)
@@ -71,13 +64,80 @@ export function cadModifierPrimitiveForAnalyticBox(shape: WorkplaneShape): CadMo
     .multiply(new THREE.Matrix4().makeTranslation(0, -centerY, 0));
 
   const transform = cadTransformFromMatrix(matrix);
+  return isIdentityCadTransform(transform) ? undefined : transform;
+}
+
+export function cadModifierPrimitiveForAnalyticBox(shape: WorkplaneShape): CadModifierPrimitivePart | null {
+  if (shape.kind !== "box" || shape.importedMesh || shape.groupedShapes?.length) {
+    return null;
+  }
+
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  const height = shape.height;
+  if (!allFinitePositive([width, depth, height])) {
+    return null;
+  }
+
   return {
     kind: "box",
     width,
     depth,
     height,
-    transform: isIdentityCadTransform(transform) ? undefined : transform,
+    transform: primitivePlacementTransform(shape, height),
   };
+}
+
+// A shape whose footprint is not a circle has no analytic counterpart, and a
+// low-sided "cylinder" is a prism the user can see - rebuilding either as a
+// round solid would treat edges that are not on screen. Only the default
+// tessellation (or finer) counts as intended-round.
+const ROUND_SIDES_THRESHOLD = 96;
+
+function isRoundFootprint(shape: WorkplaneShape) {
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  if (Math.abs(width - depth) > 0.0005) return false;
+  return Math.round(shape.sides ?? ROUND_SIDES_THRESHOLD) >= ROUND_SIDES_THRESHOLD;
+}
+
+/**
+ * Cylinder, cone and sphere as analytic solids. Without this they reach the
+ * CAD worker as tessellated meshes, i.e. as prisms whose rings of near-tangent
+ * edges break OCCT's fillet builder - see CadModifierPrimitivePart.
+ */
+export function cadModifierPrimitiveForRoundShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
+  if (shape.importedMesh || shape.groupedShapes?.length) return null;
+
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  const height = shape.height;
+  if (!allFinitePositive([width, depth, height])) return null;
+
+  if (shape.kind === "cylinder") {
+    if (!isRoundFootprint(shape)) return null;
+    return { kind: "cylinder", radius: width / 2, height, transform: primitivePlacementTransform(shape, height) };
+  }
+
+  if (shape.kind === "cone") {
+    if (!isRoundFootprint(shape)) return null;
+    const baseRadius = shape.baseRadius ?? width / 2;
+    const topRadius = shape.topRadius ?? 0;
+    if (!Number.isFinite(baseRadius) || baseRadius <= 0) return null;
+    if (!Number.isFinite(topRadius) || topRadius < 0) return null;
+    // A cone that tapers to nothing at both ends has no volume to build.
+    if (baseRadius <= 0 && topRadius <= 0) return null;
+    return { kind: "cone", baseRadius, topRadius, height, transform: primitivePlacementTransform(shape, height) };
+  }
+
+  if (shape.kind === "sphere") {
+    // Only a true sphere; anything else is an ellipsoid, which OCCT has no
+    // primitive for.
+    if (Math.abs(width - depth) > 0.0005 || Math.abs(width - height) > 0.0005) return null;
+    return { kind: "sphere", radius: height / 2, transform: primitivePlacementTransform(shape, height) };
+  }
+
+  return null;
 }
 
 export function cadModifierPrimitiveForBakedShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
@@ -236,7 +296,9 @@ function bakeCadDisplayEdgesForShape(shape: WorkplaneShape, frame: BakedCadMetad
 
 function bakeCadPrimitiveFrameForShapeTransform(shape: WorkplaneShape, frame: BakedCadMetadataFrame) {
   const primitive = cadModifierPrimitiveForBakedShape(shape) ?? cadModifierPrimitiveForAnalyticBox(shape);
-  if (!primitive) {
+  // Box only: this frame is persisted in .skf, and the round kinds are rebuilt
+  // from the live shape rather than from a bake.
+  if (primitive?.kind !== "box") {
     return undefined;
   }
 

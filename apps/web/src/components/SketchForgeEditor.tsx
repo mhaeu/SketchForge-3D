@@ -84,7 +84,7 @@ import {
   withHoleMode,
   workplaneShapesEqual,
 } from "@/lib/workplaneShapes";
-import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape } from "@/lib/cadBakeMetadata";
+import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
   CAD_MODIFIER_MAX_SHARP_ANGLE,
@@ -2397,6 +2397,9 @@ function cadModifierPrimitiveForShape(shape: WorkplaneShape): CadModifierPrimiti
   // worker instead so edge selection/treatment matches the viewport exactly.
   if (shapeHasTaper(shape)) return null;
   return cadModifierPrimitiveForBakedShape(shape)
+    // Round kinds go analytic unconditionally: sending their tessellation
+    // instead is what makes filleting them produce invalid geometry.
+    ?? cadModifierPrimitiveForRoundShape(shape)
     ?? (shapeHasTransformToBake(shape) ? cadModifierPrimitiveForAnalyticBox(shape) : null);
 }
 

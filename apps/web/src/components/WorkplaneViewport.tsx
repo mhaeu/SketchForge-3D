@@ -2283,7 +2283,9 @@ function resizeImportedShapeAlongFrameNormal(
   const primitiveTransform = primitive
     ? deformation.clone().multiply(cadTransformToMatrix(primitive.transform))
     : null;
-  const cadPrimitiveFrame = primitive && primitiveTransform
+  // Only a box is recorded here: cadPrimitiveFrame is persisted in .skf, and
+  // the round kinds exist to be rebuilt from the live shape, not from a bake.
+  const cadPrimitiveFrame = primitive?.kind === "box" && primitiveTransform
     ? {
         kind: primitive.kind,
         width: primitive.width,
