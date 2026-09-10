@@ -47,6 +47,7 @@ import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
+import { createTransparentSurfaceSort } from "@/lib/transparentSort";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
@@ -149,6 +150,8 @@ const MAX_SHARED_SHAPE_MATERIALS = 128;
 // place ahead of the shapes (render order 0) instead of a sorted one.
 const WORKPLANE_SURFACE_RENDER_ORDER = -2;
 const WORKPLANE_GRID_RENDER_ORDER = -1;
+// Keeps a shape that reaches into another one from being painted over by it.
+const transparentSort = createTransparentSurfaceSort();
 const sharedShapeGeometryCache = new Map<string, { geometry: THREE.BufferGeometry; users: number }>();
 const sharedEdgesGeometryCache = new WeakMap<THREE.BufferGeometry, Map<number, THREE.EdgesGeometry>>();
 const sharedShapeMaterialCache = new Map<string, { material: THREE.MeshStandardMaterial; users: number }>();
@@ -5445,8 +5448,13 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   renderer.shadowMap.type = THREE.PCFShadowMap;
   host.appendChild(renderer.domElement);
 
+  renderer.setTransparentSort(transparentSort.compare);
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#f8fbfc");
+  // Runs before Three.js builds and sorts the render list, so the per-frame
+  // depth cache the transparent sort uses is dropped at the right moment.
+  scene.onBeforeRender = (_renderer, _scene, sceneCamera) => transparentSort.beginFrame(sceneCamera);
 
   const camera = new THREE.PerspectiveCamera(CAMERA_FOV, host.clientWidth / Math.max(1, host.clientHeight), 0.1, 6000);
   camera.layers.enable(RENDER_LAYER_SHAPES);
@@ -7460,12 +7468,19 @@ function sharedShapeMaterial(shape: WorkplaneShape) {
   const opacity = shape.hole
     ? (shape.importedMesh ? 0.34 : 0.52)
     : normalizeShapeOpacity(shape.opacity) ?? 1;
+  // Back faces are the other half of the ordering problem: they sit behind the
+  // front faces of their own object and of everything near it, yet they blend
+  // on top of whatever was drawn before them. Dropping them leaves a
+  // see-through shape reading as a single skin at exactly the opacity that was
+  // set, instead of two stacked layers in an arbitrary order. Opaque shapes
+  // keep both sides, where an import with flipped triangles still needs them.
+  const side = opacity < 1 ? THREE.FrontSide : THREE.DoubleSide;
   const key = JSON.stringify({
     color: shape.hole ? "#b7c0c9" : shape.color,
     transparent: opacity < 1,
     opacity,
     roughness: shape.hole ? 0.88 : 0.57,
-    side: "double",
+    side,
   });
   const cached = sharedShapeMaterialCache.get(key);
   if (cached) {
@@ -7479,7 +7494,7 @@ function sharedShapeMaterial(shape: WorkplaneShape) {
     opacity,
     roughness: shape.hole ? 0.88 : 0.57,
     metalness: 0.02,
-    side: THREE.DoubleSide,
+    side,
     // Without this a see-through object hides whatever sits behind it,
     // because its own depth values still occlude them.
     depthWrite: opacity >= 1,
