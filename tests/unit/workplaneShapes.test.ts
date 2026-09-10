@@ -10,6 +10,7 @@ import {
   mirroredAxisCount,
   mirrorSign,
   linkedResizeAxisCount,
+  normalizeShapeOpacity,
   shapeEdgeTreatmentLimit,
   shapeFootprintIsRadial,
   linkedResizeValues,
@@ -377,5 +378,31 @@ describe("edge treatment limit", () => {
   it("still takes the height when it is the smaller side", () => {
     expect(shapeEdgeTreatmentLimit(shape({ kind: "cylinder", height: 6 }))).toBe(6);
     expect(shapeEdgeTreatmentLimit(shape({ kind: "box", height: 6 }))).toBe(6);
+  });
+});
+
+describe("shape opacity", () => {
+  it("clamps to a still-visible range and drops a fully opaque value", () => {
+    // Absent means opaque, so the material cache keeps one entry for the
+    // common case instead of one per rounding of 1.
+    expect(normalizeShapeOpacity(undefined)).toBeUndefined();
+    expect(normalizeShapeOpacity(1)).toBeUndefined();
+    expect(normalizeShapeOpacity(0.9995)).toBeUndefined();
+    expect(normalizeShapeOpacity(Number.NaN)).toBeUndefined();
+    expect(normalizeShapeOpacity(0)).toBe(0.05);
+    expect(normalizeShapeOpacity(-2)).toBe(0.05);
+    expect(normalizeShapeOpacity(5)).toBeUndefined();
+    expect(normalizeShapeOpacity(0.4)).toBe(0.4);
+  });
+
+  it("canonicalizes and compares the value", () => {
+    expect(canonicalizeShape(shape({ opacity: 1 })).opacity).toBeUndefined();
+    expect(canonicalizeShape(shape({ opacity: 0.42 })).opacity).toBe(0.42);
+    expect(workplaneShapesEqual(shape({ opacity: 0.4 }), shape({ opacity: 0.4 }))).toBe(true);
+    expect(workplaneShapesEqual(shape({ opacity: 0.4 }), shape({ opacity: 0.5 }))).toBe(false);
+    // workplaneShapesEqual compares raw shapes, so 1 and absent differ until
+    // canonicalizeShape has folded them together - same as the mirror flags.
+    expect(workplaneShapesEqual(shape({ opacity: 1 }), shape({}))).toBe(false);
+    expect(workplaneShapesEqual(canonicalizeShape(shape({ opacity: 1 })), canonicalizeShape(shape({})))).toBe(true);
   });
 });

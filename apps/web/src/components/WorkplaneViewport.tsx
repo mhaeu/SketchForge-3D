@@ -47,7 +47,7 @@ import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -967,6 +967,7 @@ function shapeTransformSignature(shape: WorkplaneShape) {
 function shapeMaterialSignature(shape: WorkplaneShape): string {
   return JSON.stringify({
     color: shape.color,
+    opacity: shape.opacity ?? 1,
     hole: Boolean(shape.hole),
     imagePlate: shapeResourceId(shape.imagePlate),
     imageData: shape.imagePlate?.dataUrl ?? "",
@@ -7442,10 +7443,15 @@ function releaseSharedShapeGeometry(mesh: THREE.Mesh | THREE.LineSegments) {
 }
 
 function sharedShapeMaterial(shape: WorkplaneShape) {
+  // A hole is already drawn see-through to read as a cutter, so its own
+  // appearance wins over the shape's opacity setting.
+  const opacity = shape.hole
+    ? (shape.importedMesh ? 0.34 : 0.52)
+    : normalizeShapeOpacity(shape.opacity) ?? 1;
   const key = JSON.stringify({
     color: shape.hole ? "#b7c0c9" : shape.color,
-    transparent: Boolean(shape.hole),
-    opacity: shape.hole ? (shape.importedMesh ? 0.34 : 0.52) : 1,
+    transparent: opacity < 1,
+    opacity,
     roughness: shape.hole ? 0.88 : 0.57,
     side: "double",
   });
@@ -7457,11 +7463,14 @@ function sharedShapeMaterial(shape: WorkplaneShape) {
   }
   const material = new THREE.MeshStandardMaterial({
     color: shape.hole ? "#b7c0c9" : shape.color,
-    transparent: Boolean(shape.hole),
-    opacity: shape.hole ? (shape.importedMesh ? 0.34 : 0.52) : 1,
+    transparent: opacity < 1,
+    opacity,
     roughness: shape.hole ? 0.88 : 0.57,
     metalness: 0.02,
     side: THREE.DoubleSide,
+    // Without this a see-through object hides whatever sits behind it,
+    // because its own depth values still occlude them.
+    depthWrite: opacity >= 1,
   });
   material.userData.cached = true;
   material.userData.sharedShapeMaterialKey = key;

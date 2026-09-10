@@ -288,9 +288,17 @@ export function mirroredAxisCount(shape: WorkplaneShape) {
   return [shape.mirrorX, shape.mirrorY, shape.mirrorZ].filter(Boolean).length;
 }
 
+/** Clamped to 0.05..1; 1 (fully opaque) is stored as absent. */
+export function normalizeShapeOpacity(value: number | undefined) {
+  if (!Number.isFinite(value)) return undefined;
+  const clamped = Math.min(1, Math.max(0.05, value as number));
+  return clamped >= 0.999 ? undefined : Number(clamped.toFixed(3));
+}
+
 export function canonicalizeShape(shape: WorkplaneShape): WorkplaneShape {
   const next: WorkplaneShape = {
     ...shape,
+    opacity: normalizeShapeOpacity(shape.opacity),
     rotation: cleanRotationDegrees(shape.rotation ?? 0),
     rotationX: cleanRotationDegrees(shape.rotationX ?? 0),
     rotationZ: cleanRotationDegrees(shape.rotationZ ?? 0),
@@ -338,6 +346,7 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.name === b.name &&
     a.kind === b.kind &&
     a.color === b.color &&
+    a.opacity === b.opacity &&
     a.hole === b.hole &&
     a.x === b.x &&
     a.z === b.z &&

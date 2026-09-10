@@ -22,7 +22,7 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
-import { linkedResizeValues, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
@@ -795,6 +795,20 @@ export function ShapeInspector({
               <span>Custom</span>
             </label>
           </div>
+          <ShapePropertyRows
+            properties={[{
+              label: "Opacity",
+              value: Math.round((shape.opacity ?? 1) * 100),
+              min: 5,
+              max: 100,
+              step: 1,
+              // A hole is drawn see-through anyway, so its own look wins.
+              onChange: (value) => onUpdate({ opacity: normalizeShapeOpacity(value / 100) }),
+            }]}
+            workspace={workspace}
+            disabled={locked || Boolean(shape.hole)}
+            onInteractionActiveChange={onInteractionActiveChange}
+          />
         </div>
       ) : null}
 

@@ -227,6 +227,11 @@ export type WorkplaneShape = {
   name: string;
   kind: ShapeKind;
   color: string;
+  /**
+   * Viewport-only see-through, 0..1, absent meaning fully opaque. No export
+   * format carries it: STL has no material at all, STEP only colours.
+   */
+  opacity?: number;
   hole?: boolean;
   x: number;
   z: number;
