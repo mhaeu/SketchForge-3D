@@ -164,6 +164,27 @@ export function resizedImportedMeshPositions(shape: WorkplaneShape) {
   return shape.importedMesh ? resizedImportedCoordinates(shape, shape.importedMesh.positions) : [];
 }
 
+/**
+ * True when the shape's width/depth describe a *diameter* rather than an edge
+ * length. An edge treatment on such a shape is bounded by the radius: a
+ * chamfer wider than that would have to cut past the axis, which OCCT still
+ * reports as a valid solid while quietly producing nonsense.
+ */
+export function shapeFootprintIsRadial(shape: Pick<WorkplaneShape, "kind">) {
+  return shape.kind === "cylinder"
+    || shape.kind === "cone"
+    || shape.kind === "sphere"
+    || shape.kind === "halfSphere"
+    || shape.kind === "polygon";
+}
+
+/** Largest edge-treatment size the shape's own geometry can absorb. */
+export function shapeEdgeTreatmentLimit(shape: Pick<WorkplaneShape, "kind" | "width" | "depth" | "size" | "height">) {
+  const footprint = Math.min(shapeWidth(shape as WorkplaneShape), shapeDepth(shape as WorkplaneShape));
+  const horizontal = shapeFootprintIsRadial(shape) ? footprint / 2 : footprint;
+  return Math.min(horizontal, shape.height);
+}
+
 export function resizedShapeSize(width: number, depth: number) {
   return Math.max(width, depth);
 }

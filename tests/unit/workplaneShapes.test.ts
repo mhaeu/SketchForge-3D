@@ -10,6 +10,8 @@ import {
   mirroredAxisCount,
   mirrorSign,
   linkedResizeAxisCount,
+  shapeEdgeTreatmentLimit,
+  shapeFootprintIsRadial,
   linkedResizeValues,
   NO_LINKED_RESIZE_AXES,
   normalizeDegrees,
@@ -354,5 +356,26 @@ describe("linked resize axes", () => {
     const linked = { width: true, depth: true, height: true };
     expect(linkedResizeValues(current, "width", Number.NaN, linked, bounds)).toEqual({});
     expect(linkedResizeValues({ ...current, width: 0 }, "width", 10, linked, bounds)).toEqual({ width: 10 });
+  });
+});
+
+describe("edge treatment limit", () => {
+  it("bounds a radial shape by its radius, not its diameter", () => {
+    // A chamfer wider than the radius would have to cut past the axis. OCCT
+    // still calls the result a valid solid, so the bound has to come from here.
+    expect(shapeFootprintIsRadial(shape({ kind: "cylinder" }))).toBe(true);
+    expect(shapeEdgeTreatmentLimit(shape({ kind: "cylinder" }))).toBe(10);
+    expect(shapeEdgeTreatmentLimit(shape({ kind: "cone" }))).toBe(10);
+    expect(shapeEdgeTreatmentLimit(shape({ kind: "sphere" }))).toBe(10);
+  });
+
+  it("bounds a box by its edge length", () => {
+    expect(shapeFootprintIsRadial(shape({ kind: "box" }))).toBe(false);
+    expect(shapeEdgeTreatmentLimit(shape({ kind: "box" }))).toBe(20);
+  });
+
+  it("still takes the height when it is the smaller side", () => {
+    expect(shapeEdgeTreatmentLimit(shape({ kind: "cylinder", height: 6 }))).toBe(6);
+    expect(shapeEdgeTreatmentLimit(shape({ kind: "box", height: 6 }))).toBe(6);
   });
 });

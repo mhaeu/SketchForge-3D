@@ -76,6 +76,7 @@ import {
   preservesEdgeTreatmentSize,
   resizedImportedMeshPositions,
   serializeShapesForSync,
+  shapeEdgeTreatmentLimit,
   shapeDepth,
   shapeHasTaper,
   shapeTransformShouldRemainEditable,
@@ -5945,8 +5946,9 @@ export function SketchForgeEditor({
   const edgeModifierMaxAmount = useMemo(() => {
     const source = cadModifierBaseShapeRef.current ?? selectedShape;
     if (!source) return 10;
-    const smallestDimension = Math.min(shapeWidth(source), shapeDepth(source), source.height);
-    return Math.max(MIN_EDGE_MODIFIER_AMOUNT, smallestDimension * 0.99);
+    // Radial shapes are bounded by their radius, not their diameter - see
+    // shapeEdgeTreatmentLimit.
+    return Math.max(MIN_EDGE_MODIFIER_AMOUNT, shapeEdgeTreatmentLimit(source) * 0.99);
   }, [edgeModifier, selectedShape]);
   const selectedEdgeFeatureCount = useMemo(() => selectedShape ? edgeTreatmentFeatureCount(selectedShape) : 0, [selectedShape]);
   const selectedReversibleEdgeFeatureCount = useMemo(() => selectedShape ? reversibleEdgeTreatmentCount(selectedShape) : 0, [selectedShape]);
