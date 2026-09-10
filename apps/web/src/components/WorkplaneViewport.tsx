@@ -141,6 +141,14 @@ const importedGeometryCache = new WeakMap<
 const preservedImportedGeometryCache = new WeakMap<WorkplaneShape, THREE.BufferGeometry>();
 const MAX_SHARED_SHAPE_GEOMETRIES = 192;
 const MAX_SHARED_SHAPE_MATERIALS = 128;
+// The workplane is see-through itself, so it shares the transparent pass with
+// see-through shapes. Three.js orders that pass back to front by object centre,
+// which puts the plane over a shape standing on it as often as not - the shape
+// then washes out towards the plane colour and reads as far more transparent
+// than its setting. The ground belongs behind everything, so it gets a fixed
+// place ahead of the shapes (render order 0) instead of a sorted one.
+const WORKPLANE_SURFACE_RENDER_ORDER = -2;
+const WORKPLANE_GRID_RENDER_ORDER = -1;
 const sharedShapeGeometryCache = new Map<string, { geometry: THREE.BufferGeometry; users: number }>();
 const sharedEdgesGeometryCache = new WeakMap<THREE.BufferGeometry, Map<number, THREE.EdgesGeometry>>();
 const sharedShapeMaterialCache = new Map<string, { material: THREE.MeshStandardMaterial; users: number }>();
@@ -5790,12 +5798,16 @@ function rebuildWorkplane(
         opacity: muted ? (theme === "dark" ? 0.17 : 0.22) : palette.surface.opacity,
         roughness: 0.92,
         side: THREE.DoubleSide,
+        // Drawing first would otherwise let the plane's depth values swallow
+        // anything see-through below it, which is a legal place for a shape.
+        depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
       }),
     );
     surface.name = muted ? "WorkplaneBaseReference" : "WorkplaneBase";
+    surface.renderOrder = WORKPLANE_SURFACE_RENDER_ORDER;
     surface.rotation.x = -Math.PI / 2;
     surface.receiveShadow = workspace.showShadows && !muted;
     group.add(surface);
@@ -5982,7 +5994,7 @@ function linesFromPoints(points: number[], material: THREE.LineBasicMaterial) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
   const lines = new THREE.LineSegments(geometry, material);
-  lines.renderOrder = 1;
+  lines.renderOrder = WORKPLANE_GRID_RENDER_ORDER;
   return lines;
 }
 
