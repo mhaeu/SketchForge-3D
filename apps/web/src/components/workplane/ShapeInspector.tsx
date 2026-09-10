@@ -795,20 +795,6 @@ export function ShapeInspector({
               <span>Custom</span>
             </label>
           </div>
-          <ShapePropertyRows
-            properties={[{
-              label: "Opacity",
-              value: Math.round((shape.opacity ?? 1) * 100),
-              min: 5,
-              max: 100,
-              step: 1,
-              // A hole is drawn see-through anyway, so its own look wins.
-              onChange: (value) => onUpdate({ opacity: normalizeShapeOpacity(value / 100) }),
-            }]}
-            workspace={workspace}
-            disabled={locked || Boolean(shape.hole)}
-            onInteractionActiveChange={onInteractionActiveChange}
-          />
         </div>
       ) : null}
 
@@ -847,6 +833,21 @@ export function ShapeInspector({
               />
             ) : null}
             <ShapePropertyRows properties={primaryProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            <ShapePropertyRows
+              properties={[{
+                label: "Opacity",
+                value: Math.round((shape.opacity ?? 1) * 100),
+                min: 5,
+                max: 100,
+                step: 1,
+                onChange: (value) => onUpdate({ opacity: normalizeShapeOpacity(value / 100) }),
+              }]}
+              workspace={workspace}
+              // A hole is already drawn see-through to read as a cutter, so its
+              // own appearance wins and the slider would do nothing.
+              disabled={locked || Boolean(shape.hole)}
+              onInteractionActiveChange={onInteractionActiveChange}
+            />
           </div>
         ) : null}
       </div>

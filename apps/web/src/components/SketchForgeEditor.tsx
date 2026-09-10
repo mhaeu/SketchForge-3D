@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle as CircleIcon, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { Check, Circle as CircleIcon, Link, Link2Off, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -5586,6 +5586,9 @@ export function SketchForgeEditor({
   const sketchRevolveUpdateRequestRef = useRef(new Map<string, number>());
   const sketchRevolveUpdateTimerRef = useRef(new Map<string, number>());
   const [sketchTool, setSketchTool] = useState<SketchTool>("line");
+  // Sits here rather than in SketchWorkspace so the toolbar can show it: the
+  // toggle belongs where the user looks for tools, not next to the snap grid.
+  const [sketchLockAspect, setSketchLockAspect] = useState(false);
   const [sketchProfile, setSketchProfile] = useState<SketchProfile>(() => emptySketchProfile());
   const [sketchHistory, setSketchHistory] = useState<SketchProfile[]>([emptySketchProfile()]);
   const [sketchHistoryIndex, setSketchHistoryIndex] = useState(0);
@@ -9264,6 +9267,8 @@ export function SketchForgeEditor({
         sketchActive={sketchActive}
         sketchOperation={sketchOperation}
         sketchTool={sketchTool}
+        sketchLockAspect={sketchLockAspect}
+        onSketchLockAspect={() => setSketchLockAspect((value) => !value)}
         sketchCanUndo={sketchHistoryIndex > 0}
         sketchCanRedo={sketchHistoryIndex < sketchHistory.length - 1}
         canEditSketch={selectedShapes.length === 1 && Boolean(selectedShape?.sketchProfile)}
@@ -9319,6 +9324,7 @@ export function SketchForgeEditor({
             revolvePreviewPositions={sketchRevolvePreview?.positions ?? null}
             referenceShapes={sketchReferenceShapes.filter((shape) => shape.id !== editingSketchShapeId)}
             tool={sketchTool}
+            lockAspect={sketchLockAspect}
             activePointId={sketchActivePointId}
             selected={sketchSelection}
             measurement={sketchMeasurement}
@@ -9581,6 +9587,8 @@ function SecondaryToolbar({
   sketchActive,
   sketchOperation,
   sketchTool,
+  sketchLockAspect,
+  onSketchLockAspect,
   sketchCanUndo,
   sketchCanRedo,
   canEditSketch,
@@ -9637,6 +9645,8 @@ function SecondaryToolbar({
   sketchActive: boolean;
   sketchOperation: SketchOperation;
   sketchTool: SketchTool;
+  sketchLockAspect: boolean;
+  onSketchLockAspect: () => void;
   sketchCanUndo: boolean;
   sketchCanRedo: boolean;
   canEditSketch: boolean;
@@ -10150,6 +10160,19 @@ function SecondaryToolbar({
                       disabled={sketchTool !== "select"}
                     >
                       <SketchReferenceIcon name="image" />
+                    </button>
+                    <button
+                      className={`toolbar-icon sketch-tool-icon ${sketchLockAspect ? "active" : ""} ${sketchTool === "select" ? "" : "disabled"}`}
+                      type="button"
+                      aria-label="Lock aspect ratio"
+                      aria-pressed={sketchLockAspect}
+                      title={sketchTool === "select"
+                        ? (sketchLockAspect ? "Width and height keep their ratio while resizing" : "Link width and height while resizing")
+                        : "Choose Select to link width and height"}
+                      onClick={onSketchLockAspect}
+                      disabled={sketchTool !== "select"}
+                    >
+                      {sketchLockAspect ? <Link size={17} /> : <Link2Off size={17} />}
                     </button>
                     <button className={`toolbar-icon sketch-tool-icon ${sketchTool === "refine" ? "active" : ""}`} type="button" aria-label="Add or Remove Points" title="Add or Remove Points" onClick={() => onSketchTool("refine")}>
                       <SketchReferenceIcon name="refine" />

@@ -38,6 +38,7 @@ type SketchWorkspaceProps = {
   onPlanePoint: (point: { x: number; z: number }, handles?: { handleIn: { x: number; z: number }; handleOut: { x: number; z: number } }) => void;
   onAddPrimitive: (primitive: SketchPrimitive, center: { x: number; z: number }) => void;
   onPointPress: (id: string) => void;
+  lockAspect: boolean;
   onSelectSegment: (id: string) => void;
   onSelectMany: (pointIds: string[], segmentIds: string[], imageIds: string[]) => void;
   onSelectImage: (id: string) => void;
@@ -453,6 +454,7 @@ export function SketchWorkspace({
   onPlanePoint,
   onAddPrimitive,
   onPointPress,
+  lockAspect,
   onSelectSegment,
   onSelectMany,
   onSelectImage,
@@ -481,8 +483,6 @@ export function SketchWorkspace({
   // lines only; the start point stays fixed and the end point moves along the
   // current direction to the typed length.
   const [editingLengthSegmentId, setEditingLengthSegmentId] = useState<string | null>(null);
-  // Session-wide like the snap grid, not stored with the sketch.
-  const [lockAspect, setLockAspect] = useState(false);
   const [lengthDraft, setLengthDraft] = useState("");
   const [svgSize, setSvgSize] = useState({ width: 0, height: 0 });
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1247,16 +1247,6 @@ export function SketchWorkspace({
         </div>
       ) : null}
       <div className="grid-settings">
-        <button
-          type="button"
-          className={`sketch-image-aspect-toggle ${lockAspect ? "active" : ""}`}
-          aria-pressed={lockAspect}
-          title={lockAspect ? "Width and height keep their ratio while resizing" : "Link width and height while resizing"}
-          onClick={() => setLockAspect((value) => !value)}
-        >
-          {lockAspect ? <Link size={17} /> : <Link2Off size={17} />}
-          <span>{lockAspect ? "Ratio locked" : "Ratio free"}</span>
-        </button>
         <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
       </div>
       {(() => {
