@@ -91,6 +91,10 @@ function axisMaps(from: ResizeRegion, to: ResizeRegion): Record<Axis, AxisMap> {
 }
 
 const AXIS_OFFSET: Record<Axis, number> = { X: 0, Y: 1, Z: 2 };
+
+function lexicallyBefore(p: number[], q: number[]) {
+  return p[0] !== q[0] ? p[0] < q[0] : p[1] !== q[1] ? p[1] < q[1] : p[2] < q[2];
+}
 const near = (a: number, b: number) => Math.abs(a - b) <= EDGE_EPSILON;
 
 /**
@@ -99,12 +103,10 @@ const near = (a: number, b: number) => Math.abs(a - b) <= EDGE_EPSILON;
  * and used by both sides, so the two halves share bit-identical vertices
  * and the seam stays watertight.
  */
-function cutAlongPlane(positions: number[], axis: Axis, at: number, box: ResizeRegion): number[] {
+function cutAlongPlane(positions: number[], axis: Axis, at: number): number[] {
   const offset = AXIS_OFFSET[axis];
   const out: number[] = [];
   const side = [0, 0, 0];
-  const lo = [box.minX, box.minY, box.minZ];
-  const hi = [box.maxX, box.maxY, box.maxZ];
   const pushPolygon = (polygon: number[][]) => {
     for (let i = 1; i + 1 < polygon.length; i += 1) {
       out.push(polygon[0][0], polygon[0][1], polygon[0][2], polygon[i][0], polygon[i][1], polygon[i][2], polygon[i + 1][0], polygon[i + 1][1], polygon[i + 1][2]);
@@ -119,17 +121,12 @@ function cutAlongPlane(positions: number[], axis: Axis, at: number, box: ResizeR
       if (side[i] > 0) positive += 1;
       if (side[i] < 0) negative += 1;
     }
-    // A triangle that never reaches the box has nothing inside it to part
-    // from, so the plane is left to run through it uncut - fewer triangles,
-    // and the same surface.
-    let touchesBox = positive > 0 && negative > 0;
-    for (let c = 0; c < 3 && touchesBox; c += 1) {
-      const v0 = positions[index + c];
-      const v1 = positions[index + 3 + c];
-      const v2 = positions[index + 6 + c];
-      touchesBox = Math.max(v0, v1, v2) >= lo[c] - EDGE_EPSILON && Math.min(v0, v1, v2) <= hi[c] + EDGE_EPSILON;
-    }
-    if (!touchesBox) {
+    // Every triangle the plane crosses is cut, not just those near the box:
+    // cutting one triangle but not its neighbour across an edge would leave
+    // a T-junction, and the mesh would no longer be manifold - which the
+    // boolean operations downstream (grouping) insist on. The extra
+    // triangles are coplanar splits and invisible.
+    if (positive === 0 || negative === 0) {
       for (let i = 0; i < 9; i += 1) out.push(positions[index + i]);
       continue;
     }
@@ -143,12 +140,17 @@ function cutAlongPlane(positions: number[], axis: Axis, at: number, box: ResizeR
       if (side[i] >= 0) above.push(tri[i]);
       if (side[i] <= 0) below.push(tri[i]);
       if ((side[i] > 0 && side[j] < 0) || (side[i] < 0 && side[j] > 0)) {
-        const t = side[i] / (side[i] - side[j]);
-        const point = [
-          tri[i][0] + (tri[j][0] - tri[i][0]) * t,
-          tri[i][1] + (tri[j][1] - tri[i][1]) * t,
-          tri[i][2] + (tri[j][2] - tri[i][2]) * t,
-        ];
+        // The neighbouring triangle walks this edge the other way round.
+        // Interpolating from a fixed end - the lexically smaller one - makes
+        // both produce the same bits, which is what lets the seam between
+        // them be found again later.
+        const forward = lexicallyBefore(tri[i], tri[j]);
+        const p = forward ? tri[i] : tri[j];
+        const q = forward ? tri[j] : tri[i];
+        const dp = forward ? side[i] : side[j];
+        const dq = forward ? side[j] : side[i];
+        const t = dp / (dp - dq);
+        const point = [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
         point[offset] = at;
         above.push(point);
         below.push(point);
@@ -194,8 +196,8 @@ function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, Axi
 
   let cut = positions;
   for (const axis of AXES) {
-    cut = cutAlongPlane(cut, axis, from[`min${axis}`], from);
-    cut = cutAlongPlane(cut, axis, from[`max${axis}`], from);
+    cut = cutAlongPlane(cut, axis, from[`min${axis}`]);
+    cut = cutAlongPlane(cut, axis, from[`max${axis}`]);
   }
   const triCount = Math.floor(cut.length / 9);
   const lo = [from.minX, from.minY, from.minZ];
@@ -266,13 +268,16 @@ function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, Axi
     }
   }
 
-  // Riding: outside material in front of a moved face. Seeded by the outside
-  // triangles across seam edges that lie in the face's plane and reach beyond
-  // it - unless the edge also lies in a face that stayed put, where the
-  // outside is the fixed neighbour, not something in front - then flooded
-  // through the outside mesh. A face that moves inwards while its opposite
-  // moves too (the box being shifted) is trailing, and nothing behind it
-  // rides; a face moving on its own drags its material either way.
+  // Riding: outside material in the path of a moved face. Seeded by the
+  // outside triangles across seam edges lying in the face's plane whose solid
+  // side sits in the face's path - probed a hair inside the surface, it has to
+  // lie in front of the face and within the face's footprint. That takes a
+  // block stacked on the box, or a lid resting on it, and leaves out what
+  // merely touches the seam from beside or below: the pyramid's base under a
+  // box around its tip, the bottle's shoulder beside its neck. From the seeds
+  // the ride floods through the outside mesh. A face that moves inwards while
+  // its opposite moves too (the box being shifted) is trailing, and nothing
+  // behind it rides; a face moving on its own drags its material either way.
   const riding = new Uint8Array(triCount);
   let anyRiding = false;
   const movedFaces: number[] = [];
@@ -284,14 +289,32 @@ function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, Axi
     if (map.maxMoved && (!both || map.to[1] > map.from[1])) movedFaces.push(index * 2 + 1);
     if (map.minMoved !== map.maxMoved) fixedFaces.push(map.minMoved ? index * 2 + 1 : index * 2);
   });
-  const beyondFace = (t: number, face: number) => {
-    const axis = face >> 1;
+  const probeDepth = Math.max(1e-4, 1e-3 * Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]));
+  const probeTolerance = probeDepth * 1e-3;
+  const solidInPath = (t: number, ia: number, ib: number, face: number) => {
     const i = t * 9;
-    for (let c = 0; c < 9; c += 3) {
-      const v = cut[i + c + axis];
-      if (face & 1 ? v > hi[axis] + EDGE_EPSILON : v < lo[axis] - EDGE_EPSILON) return true;
+    const ux = cut[i + 3] - cut[i];
+    const uy = cut[i + 4] - cut[i + 1];
+    const uz = cut[i + 5] - cut[i + 2];
+    const vx = cut[i + 6] - cut[i];
+    const vy = cut[i + 7] - cut[i + 1];
+    const vz = cut[i + 8] - cut[i + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const length = Math.hypot(nx, ny, nz);
+    if (length < 1e-12) return false;
+    const probe = [
+      (cut[ia] + cut[ib]) / 2 - (nx / length) * probeDepth,
+      (cut[ia + 1] + cut[ib + 1]) / 2 - (ny / length) * probeDepth,
+      (cut[ia + 2] + cut[ib + 2]) / 2 - (nz / length) * probeDepth,
+    ];
+    const axis = face >> 1;
+    if (face & 1 ? probe[axis] < hi[axis] - probeTolerance : probe[axis] > lo[axis] + probeTolerance) return false;
+    for (let c = 0; c < 3; c += 1) {
+      if (c !== axis && (probe[c] < lo[c] - probeTolerance || probe[c] > hi[c] + probeTolerance)) return false;
     }
-    return false;
+    return true;
   };
   let outsideByKey: Map<string, number[]> | null = null;
   for (const face of movedFaces) {
@@ -302,7 +325,7 @@ function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, Axi
       const across = seams[e + 2];
       if (!onFace(ia, face) || !onFace(ib, face)) continue;
       if (fixedFaces.some((fixed) => onFace(ia, fixed) && onFace(ib, fixed))) continue;
-      if (beyondFace(across, face)) seeds.push(across);
+      if (solidInPath(across, ia, ib, face)) seeds.push(across);
     }
     if (seeds.length === 0) continue;
     // The whole outside mesh is only indexed once something actually rides.
@@ -457,8 +480,8 @@ export function tightenRegionToShape(shape: WorkplaneShape, region: ResizeRegion
   if (!shape.importedMesh || shape.importedMesh.positions.length < 9) return region;
   let cut = resizedImportedMeshPositions(shape);
   for (const axis of AXES) {
-    cut = cutAlongPlane(cut, axis, region[`min${axis}`], region);
-    cut = cutAlongPlane(cut, axis, region[`max${axis}`], region);
+    cut = cutAlongPlane(cut, axis, region[`min${axis}`]);
+    cut = cutAlongPlane(cut, axis, region[`max${axis}`]);
   }
   const lo = [region.minX, region.minY, region.minZ];
   const hi = [region.maxX, region.maxY, region.maxZ];

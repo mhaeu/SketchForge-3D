@@ -3,7 +3,9 @@ import { clampRegionToShape, deformPositionsInRegion, fullShapeRegion, regionRes
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 // A closed box as a triangle soup, the way importedMesh stores geometry.
-const quad = (a: number[], b: number[], c: number[], d: number[]) => [...a, ...b, ...c, ...a, ...c, ...d];
+// Meshes in the app face outwards (counter-clockwise seen from outside),
+// and the region logic relies on that to tell which side of a face is solid.
+const quad = (a: number[], b: number[], c: number[], d: number[]) => [...a, ...c, ...b, ...a, ...d, ...c];
 function boxSoup(minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number, omit: Array<"top" | "bottom"> = []) {
   const c = (x: number, y: number, z: number) => [x, y, z];
   const p = [
@@ -60,6 +62,23 @@ const outsideUnchanged = (mesh: number[], from: ResizeRegion, to: ResizeRegion, 
   return before.size === after.size && [...before].every((k) => after.has(k));
 };
 
+// Every edge of a closed surface is walked by exactly two triangles. Holds
+// on exact coordinates, since a seam is only found where both sides agree
+// to the bit - which is what this checks after cutting and deforming.
+const watertight = (positions: number[]) => {
+  const counts = new Map<string, number>();
+  const k = (i: number) => `${positions[i]},${positions[i + 1]},${positions[i + 2]}`;
+  for (let i = 0; i + 8 < positions.length; i += 9) {
+    for (let e = 0; e < 3; e += 1) {
+      const a = k(i + e * 3);
+      const b = k(i + ((e + 1) % 3) * 3);
+      const edge = a < b ? `${a}|${b}` : `${b}|${a}`;
+      counts.set(edge, (counts.get(edge) ?? 0) + 1);
+    }
+  }
+  return [...counts.values()].every((count) => count === 2);
+};
+
 describe("region deformation", () => {
   it("stretch scales the rows inside the box and leaves the rest alone", () => {
     const result = deformPositionsInRegion(bottle, neck, { ...neck, maxY: 25 }, "stretch");
@@ -109,14 +128,28 @@ describe("region deformation ends at the box", () => {
   const apex: P = [0, 10, 0];
   const corners: P[] = [[-10, 0, -10], [10, 0, -10], [10, 0, 10], [-10, 0, 10]];
   const pyramid = [
-    ...corners.flatMap((corner, i) => [...corner, ...corners[(i + 1) % 4], ...apex]),
-    ...corners[0], ...corners[2], ...corners[1],
-    ...corners[0], ...corners[3], ...corners[2],
+    ...corners.flatMap((corner, i) => [...corner, ...apex, ...corners[(i + 1) % 4]]),
+    ...corners[0], ...corners[1], ...corners[2],
+    ...corners[0], ...corners[2], ...corners[3],
   ];
+
+  it("stays watertight through the cut alone", () => {
+    // Neighbouring triangles walk their shared edge in opposite directions;
+    // the cut point on it has to come out bit-identical from both, or the
+    // seam is lost and the inside later moves off as a separate piece.
+    const skewed = [0.1, 0.3, 0.7, 9.3, 9.9, 1.3, 4.2, 0.2, 8.1, 9.3, 9.9, 1.3, 0.1, 0.3, 0.7, 7.7, 9.1, 9.4];
+    const region: ResizeRegion = { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 };
+    const cut = deformPositionsInRegion(skewed, region, region, "stretch");
+    // Three edges cross the plane; the shared one yields one point, not two.
+    const onPlane = new Set(points(cut).filter((p) => near(p[1], 5)).map((p) => p.join(",")));
+    expect(onPlane.size).toBe(3);
+    expect(watertight(deformPositionsInRegion(pyramid, region, region, "stretch"))).toBe(true);
+  });
 
   it("cuts new vertices where the box meets the faces, so only the top moves", () => {
     const top: ResizeRegion = { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 };
     const result = deformPositionsInRegion(pyramid, top, { ...top, maxY: 15 }, "stretch");
+    expect(watertight(result)).toBe(true);
     // A ring of new vertices at y = 5 stays; the apex alone goes to 15.
     expect(ys(result)).toEqual([0, 5, 15]);
     // Below the ring the faces are exactly the old ones: the slope of a
@@ -133,6 +166,7 @@ describe("region deformation ends at the box", () => {
     const inBox = (p: P) => Math.abs(p[0]) <= 2 + 1e-9 && Math.abs(p[2]) <= 2 + 1e-9 && p[1] >= 5 - 1e-9;
     expect(ys(result, inBox)).toEqual([8, 11, 15]);
     expect(outsideUnchanged(pyramid, tip, { ...tip, maxY: 15 }, result)).toBe(true);
+    expect(watertight(result)).toBe(true);
   });
 
   it("push lifts the top as it is and inserts a straight band at the cut", () => {
@@ -144,6 +178,24 @@ describe("region deformation ends at the box", () => {
     expect(ys(result)).toEqual([0, 5, 10, 15]);
     expect(xs(result, (p) => near(p[1], 5))).toEqual([-5, 5]);
     expect(xs(result, (p) => near(p[1], 10))).toEqual([-5, 5]);
+    expect(watertight(result)).toBe(true);
+  });
+
+  it("a side handle on the top half leaves the base alone", () => {
+    // The base touches the tight box along the cut ring, which lies in the
+    // box's +x plane as well - but the base's solid is below the box, not
+    // in the path of the +x face, so it must not ride along.
+    const top: ResizeRegion = { minX: -5, maxX: 5, minY: 5, maxY: 10, minZ: -5, maxZ: 5 };
+    for (const mode of ["stretch", "push"] as const) {
+      const result = deformPositionsInRegion(pyramid, top, { ...top, maxX: 8 }, mode);
+      expect(outsideUnchanged(pyramid, top, { ...top, maxX: 8 }, result), mode).toBe(true);
+      const below = xs(result, (p) => p[1] < 5 - 1e-9);
+      expect([below[0], below.at(-1)], mode).toEqual([-10, 10]);
+      expect(xs(result, (p) => near(p[1], 5)), mode).toContain(8);
+      // The tip itself did move: stretched about the -x face, or pushed by 3.
+      expect(xs(result, (p) => near(p[1], 10)), mode).toEqual([mode === "stretch" ? 1.5 : 3]);
+      expect(watertight(result), mode).toBe(true);
+    }
   });
 
   it("widening the top half from one side moves only that wall, with a step at the cut", () => {
@@ -160,6 +212,7 @@ describe("region deformation ends at the box", () => {
       expect(atCut, mode).toContain(10);
       expect(atCut, mode).toContain(15);
       expect(outsideUnchanged(block, top, { ...top, maxX: 15 }, result), mode).toBe(true);
+      expect(watertight(result), mode).toBe(true);
     }
   });
 
@@ -179,6 +232,8 @@ describe("region deformation ends at the box", () => {
     // No face of the middle piece lies in the cut plane, so the whole piece
     // moves up and the band goes in at 5.
     expect(ys(pushed)).toEqual([0, 5, 8, 10.5, 13, 18]);
+    expect(watertight(stretched)).toBe(true);
+    expect(watertight(pushed)).toBe(true);
   });
 
   it("shifting the box moves its contents and everything above, inserting below", () => {
@@ -192,6 +247,7 @@ describe("region deformation ends at the box", () => {
     // Bottom block stays (0..5), a band fills 5..7, the middle sits at 7..12,
     // the top block rides to 12..17.
     expect(ys(result)).toEqual([0, 5, 7, 12, 17]);
+    expect(watertight(result)).toBe(true);
   });
 });
 
@@ -242,9 +298,9 @@ describe("region resize on a shape", () => {
     const apex = [0, 10, 0];
     const corners = [[-10, 0, -10], [10, 0, -10], [10, 0, 10], [-10, 0, 10]];
     const pyramid = [
-      ...corners.flatMap((corner, i) => [...corner, ...corners[(i + 1) % 4], ...apex]),
-      ...corners[0], ...corners[2], ...corners[1],
-      ...corners[0], ...corners[3], ...corners[2],
+      ...corners.flatMap((corner, i) => [...corner, ...apex, ...corners[(i + 1) % 4]]),
+      ...corners[0], ...corners[1], ...corners[2],
+      ...corners[0], ...corners[2], ...corners[3],
     ];
     const cone = {
       ...shape, height: 10, size: 20,
