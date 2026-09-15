@@ -423,6 +423,50 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
     return (mask & (1 << (c * 2)) ? shiftLo[c] : 0) + (mask & (1 << (c * 2 + 1)) ? shiftHi[c] : 0);
   };
 
+  const aIn = [0, 0, 0];
+  const bIn = [0, 0, 0];
+  const cIn = [0, 0, 0];
+  const aOut = [0, 0, 0];
+  const bOut = [0, 0, 0];
+  const same = (p: number[], q: number[]) => near(p[0], q[0]) && near(p[1], q[1]) && near(p[2], q[2]);
+  const mapInside = (i: number, target: number[]) => {
+    for (let c = 0; c < 3; c += 1) target[c] = insideMap(c, cut[i + c], i);
+  };
+  const mapOutside = (i: number, across: number, target: number[]) => {
+    for (let c = 0; c < 3; c += 1) target[c] = cut[i + c] + (anyRiding ? outsideShift(across, c) : 0);
+  };
+
+  // A seam whose inside face grows within its own plane out past the
+  // outside edge (a ledge left by an earlier drag, stretched further) must
+  // not get a band: the band would lie in that plane and double the face.
+  // The outside edge follows the inside edge instead - every outside copy
+  // of those two vertices moves onto the inside position, and the outside
+  // face adjoining them stretches to keep up.
+  const outsideOverride = new Map<string, number[]>();
+  for (let e = 0; e + 2 < seams.length; e += 3) {
+    const ia = seams[e];
+    const ib = seams[e + 1];
+    mapInside(ia, aIn);
+    mapInside(ib, bIn);
+    mapOutside(ia, seams[e + 2], aOut);
+    mapOutside(ib, seams[e + 2], bOut);
+    if (same(aIn, aOut) && same(bIn, bOut)) continue;
+    const triangle = Math.floor(ia / 9) * 9;
+    mapInside(triangle + (((ia - triangle) / 3 + 2) % 3) * 3, cIn);
+    if (growsPastEdge(aIn, bIn, cIn, aOut, bOut)) {
+      outsideOverride.set(vertexKey(cut, ia), aIn.slice());
+      outsideOverride.set(vertexKey(cut, ib), bIn.slice());
+    }
+  }
+  const overridden = (i: number) => {
+    if (outsideOverride.size === 0) return null;
+    // Only a hull vertex can be one of the overridden ones.
+    for (let c = 0; c < 3; c += 1) {
+      if (cut[i + c] < lo[c] - EDGE_EPSILON || cut[i + c] > hi[c] + EDGE_EPSILON) return null;
+    }
+    return outsideOverride.get(vertexKey(cut, i)) ?? null;
+  };
+
   const out = cut.slice();
   for (let t = 0; t < inside.length; t += 1) {
     const i = t * 9;
@@ -430,11 +474,17 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
       for (let v = i; v < i + 9; v += 3) {
         for (let c = 0; c < 3; c += 1) out[v + c] = insideMap(c, cut[v + c], v);
       }
-    } else if (anyRiding && riding[t]) {
+      continue;
+    }
+    if (anyRiding && riding[t]) {
       for (let c = 0; c < 3; c += 1) {
         const shift = outsideShift(t, c);
         if (shift) for (let v = i; v < i + 9; v += 3) out[v + c] += shift;
       }
+    }
+    for (let v = i; v < i + 9; v += 3) {
+      const override = overridden(v);
+      if (override) for (let c = 0; c < 3; c += 1) out[v + c] = override[c];
     }
   }
 
@@ -442,23 +492,19 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
   // sweeps the edge from its outside position to its inside one. The edge is
   // walked the way its inside triangle walks it, which keeps the band facing
   // outwards as long as the inside moved away from the outside.
-  const aIn = [0, 0, 0];
-  const bIn = [0, 0, 0];
-  const aOut = [0, 0, 0];
-  const bOut = [0, 0, 0];
-  const same = (p: number[], q: number[]) => near(p[0], q[0]) && near(p[1], q[1]) && near(p[2], q[2]);
   let slid = false;
   for (let e = 0; e + 2 < seams.length; e += 3) {
     const ia = seams[e];
     const ib = seams[e + 1];
     const across = seams[e + 2];
-    for (let c = 0; c < 3; c += 1) {
-      aIn[c] = insideMap(c, cut[ia + c], ia);
-      bIn[c] = insideMap(c, cut[ib + c], ib);
-      const shift = anyRiding ? outsideShift(across, c) : 0;
-      aOut[c] = cut[ia + c] + shift;
-      bOut[c] = cut[ib + c] + shift;
-    }
+    mapInside(ia, aIn);
+    mapInside(ib, bIn);
+    mapOutside(ia, across, aOut);
+    mapOutside(ib, across, bOut);
+    const aOverride = overridden(ia);
+    const bOverride = overridden(ib);
+    if (aOverride) for (let c = 0; c < 3; c += 1) aOut[c] = aOverride[c];
+    if (bOverride) for (let c = 0; c < 3; c += 1) bOut[c] = bOverride[c];
     const aMoved = !same(aIn, aOut);
     const bMoved = !same(bIn, bOut);
     if (!aMoved && !bMoved) continue;
@@ -475,7 +521,134 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
       else out.push(...aOut, ...bIn, ...aIn);
     }
   }
-  return slid ? stitchPlaneSeams(out, [...lo, ...hi, ...lo2, ...hi2].map((value, index) => ({ axis: index % 3, at: value }))) : out;
+  const planes = [...lo, ...hi, ...lo2, ...hi2].map((value, index) => ({ axis: index % 3, at: value }));
+  // The stitch only ever repairs what a seam sliding along its own line
+  // leaves behind. Run more widely it would split band edges at vertices of
+  // neighbouring bands that merely happen to lie on them - where a rigid
+  // in-plane shift folds the bands at the points the old and new outline
+  // cross - and tear open what was closed.
+  return stitchPlaneSeams(weldNearPlanes(out, planes).positions, planes, slid);
+}
+
+/**
+ * Snaps vertices that lie within a hair of each other onto one position -
+ * but only around the box planes, where cuts made in different drags meet:
+ * the same corner point reached along different edges comes out a few
+ * hundred-thousandths apart, which is far more than the seam matching
+ * tolerates and far less than anything a model distinguishes. Triangles
+ * that collapse in the process are dropped.
+ */
+function weldNearPlanes(positions: number[], planes: Array<{ axis: number; at: number }>, tolerance = 1e-4): { positions: number[]; changed: boolean } {
+  const planeValues: number[][] = [[], [], []];
+  planes.forEach((plane) => planeValues[plane.axis].push(plane.at));
+  const nearPlane = (i: number) => {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const values = planeValues[axis];
+      const v = positions[i + axis];
+      for (let k = 0; k < values.length; k += 1) {
+        if (v >= values[k] - tolerance && v <= values[k] + tolerance) return true;
+      }
+    }
+    return false;
+  };
+  // Cells of one tolerance; a vertex is compared with the cells on the side
+  // of its own it is closest to, which covers everything within tolerance.
+  const cells = new Map<number, number[][]>();
+  const cellHash = (x: number, y: number, z: number) => (x * 73856093) ^ (y * 19349663) ^ (z * 83492791);
+  const out = positions.slice();
+  const touched = new Set<number>();
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    if (!nearPlane(i)) continue;
+    const px = positions[i];
+    const py = positions[i + 1];
+    const pz = positions[i + 2];
+    const fx = px / tolerance;
+    const fy = py / tolerance;
+    const fz = pz / tolerance;
+    const cx = Math.floor(fx);
+    const cy = Math.floor(fy);
+    const cz = Math.floor(fz);
+    const sx = fx - cx < 0.5 ? -1 : 1;
+    const sy = fy - cy < 0.5 ? -1 : 1;
+    const sz = fz - cz < 0.5 ? -1 : 1;
+    let representative: number[] | null = null;
+    for (let dx = 0; dx <= 1 && !representative; dx += 1) {
+      for (let dy = 0; dy <= 1 && !representative; dy += 1) {
+        for (let dz = 0; dz <= 1 && !representative; dz += 1) {
+          const bucket = cells.get(cellHash(cx + dx * sx, cy + dy * sy, cz + dz * sz));
+          if (!bucket) continue;
+          for (const candidate of bucket) {
+            if (Math.abs(candidate[0] - px) <= tolerance && Math.abs(candidate[1] - py) <= tolerance && Math.abs(candidate[2] - pz) <= tolerance) {
+              representative = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (representative) {
+      if (representative[0] !== px || representative[1] !== py || representative[2] !== pz) {
+        out[i] = representative[0];
+        out[i + 1] = representative[1];
+        out[i + 2] = representative[2];
+        touched.add(Math.floor(i / 9));
+      }
+      continue;
+    }
+    const hash = cellHash(cx, cy, cz);
+    const bucket = cells.get(hash);
+    const point = [px, py, pz];
+    if (bucket) bucket.push(point);
+    else cells.set(hash, [point]);
+  }
+  if (touched.size === 0) return { positions: out, changed: false };
+  // A triangle that lost a corner to the weld may have collapsed.
+  const dropped = new Set<number>();
+  touched.forEach((t) => {
+    const i = t * 9;
+    if (collinear(out.slice(i, i + 3), out.slice(i + 3, i + 6), out.slice(i + 6, i + 9))) dropped.add(t);
+  });
+  if (dropped.size === 0) return { positions: out, changed: true };
+  const kept: number[] = [];
+  for (let i = 0; i + 8 < out.length; i += 9) {
+    if (dropped.has(i / 9)) continue;
+    for (let k = 0; k < 9; k += 1) kept.push(out[i + k]);
+  }
+  return { positions: kept, changed: true };
+}
+
+/**
+ * Whether the inside triangle (a, b, c), with a-b the seam edge, has grown
+ * within its own plane out past where the edge used to be: the displacement
+ * of the edge lies in the triangle's plane and points away from c.
+ */
+function growsPastEdge(a: number[], b: number[], c: number[], aOld: number[], bOld: number[]) {
+  const ex = b[0] - a[0];
+  const ey = b[1] - a[1];
+  const ez = b[2] - a[2];
+  const nx = ey * (c[2] - a[2]) - ez * (c[1] - a[1]);
+  const ny = ez * (c[0] - a[0]) - ex * (c[2] - a[2]);
+  const nz = ex * (c[1] - a[1]) - ey * (c[0] - a[0]);
+  const normalLength = Math.hypot(nx, ny, nz);
+  if (normalLength < 1e-12) return false;
+  let outward = false;
+  for (const [p, old] of [[a, aOld], [b, bOld]] as const) {
+    const dx = p[0] - old[0];
+    const dy = p[1] - old[1];
+    const dz = p[2] - old[2];
+    const length = Math.hypot(dx, dy, dz);
+    if (length <= EDGE_EPSILON) continue;
+    // In the plane?
+    if (Math.abs(dx * nx + dy * ny + dz * nz) > EDGE_EPSILON * length * normalLength) return false;
+    // Away from c: the edge swept by the displacement faces the other way
+    // than the triangle does.
+    const sx = ey * dz - ez * dy;
+    const sy = ez * dx - ex * dz;
+    const sz = ex * dy - ey * dx;
+    if (sx * nx + sy * ny + sz * nz < 0) outward = true;
+    else return false;
+  }
+  return outward;
 }
 
 function collinear(a: number[], b: number[], c: number[]) {
@@ -497,7 +670,8 @@ function collinear(a: number[], b: number[], c: number[]) {
  * Seams lie in the planes of the old and new box, so only edges and
  * vertices in those planes are examined, plane by plane.
  */
-function stitchPlaneSeams(positions: number[], planes: Array<{ axis: number; at: number }>): number[] {
+function stitchPlaneSeams(positions: number[], planes: Array<{ axis: number; at: number }>, needed: boolean): number[] {
+  if (!needed) return positions;
   type Vertex = { x: number; y: number; z: number };
   const triangleCount = Math.floor(positions.length / 9);
   const unique = planes.filter((plane, index) => planes.findIndex((other) => other.axis === plane.axis && near(other.at, plane.at)) === index);

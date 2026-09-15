@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { fullShapeRegion, regionResizedShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
+import { fullShapeRegion, regionResizedShape, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 // The editor's own meshes come from three.js geometries, which are not
@@ -52,8 +52,19 @@ function meshShape(geometry: THREE.BufferGeometry): WorkplaneShape {
   } as unknown as WorkplaneShape;
 }
 
+// The editor's own four-sided pyramid: an indexed base and four sides.
+function editorPyramid(width: number, height: number, depth: number) {
+  const w = width / 2;
+  const d = depth / 2;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-w, 0, -d, w, 0, -d, w, 0, d, -w, 0, d, 0, height, 0]), 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3, 0, 4, 1, 1, 4, 2, 2, 4, 3, 3, 4, 0]);
+  return geometry;
+}
+
 const geometries: Record<string, () => THREE.BufferGeometry> = {
   box: () => new THREE.BoxGeometry(20, 10, 20),
+  "editor pyramid": () => editorPyramid(20, 10, 20),
   cylinder: () => new THREE.CylinderGeometry(10, 10, 10, 32),
   pyramid: () => new THREE.CylinderGeometry(0, 10, 10, 4),
   cone: () => new THREE.CylinderGeometry(3, 10, 10, 32),
@@ -69,6 +80,10 @@ const flows: Record<string, Array<(r: ResizeRegion) => Partial<ResizeRegion>>> =
     (r) => ({ maxY: r.maxY + 3, minX: r.minX - 1, maxX: r.maxX + 1, minZ: r.minZ - 1, maxZ: r.maxZ + 1 }),
     (r) => ({ minY: r.minY + 3, maxY: r.maxY + 3 }),
   ],
+  "height shrink with linked axes, lift": [
+    (r) => ({ maxY: r.maxY - 2, minX: r.minX + 1, maxX: r.maxX - 1, minZ: r.minZ + 1, maxZ: r.maxZ - 1 }),
+    (r) => ({ minY: r.minY + 3, maxY: r.maxY + 3 }),
+  ],
   "bottom height handle, lift": [(r) => ({ minY: r.minY - 2 }), (r) => ({ minY: r.minY + 3, maxY: r.maxY + 3 })],
   "side, lift": [(r) => ({ maxX: r.maxX + 3 }), (r) => ({ minY: r.minY + 3, maxY: r.maxY + 3 })],
   "lift, height": [(r) => ({ minY: r.minY + 3, maxY: r.maxY + 3 }), (r) => ({ maxY: r.maxY + 3 })],
@@ -78,18 +93,23 @@ const flows: Record<string, Array<(r: ResizeRegion) => Partial<ResizeRegion>>> =
   "lift down": [(r) => ({ minY: r.minY - 2, maxY: r.maxY - 2 })],
 };
 
+// Where the box sits on the shape, as fractions of its height.
+const placements: Record<string, [number, number]> = { "upper half": [0.5, 1], "lower half": [0, 0.5], "middle third": [1 / 3, 2 / 3] };
+
 describe("region resize keeps real meshes closed through handle sequences", () => {
   const modes: RegionResizeMode[] = ["stretch", "push"];
   for (const [shapeName, build] of Object.entries(geometries)) {
+    for (const [placementName, [fromFraction, toFraction]] of Object.entries(placements)) {
     for (const [flowName, steps] of Object.entries(flows)) {
       for (const first of modes) {
         for (const second of modes) {
-          it(`${shapeName}: ${flowName} (${first}, then ${second})`, () => {
+          it(`${shapeName}, ${placementName}: ${flowName} (${first}, then ${second})`, () => {
             let shape = meshShape(build());
             expect(openEdges(shape.importedMesh!.positions)).toEqual([]);
             const full = fullShapeRegion(shape);
-            // The upper half of the shape.
-            let region: ResizeRegion = { ...full, minY: full.maxY / 2 };
+            // The box, shrunk onto the geometry within it the way the editor
+            // does before the handles get to work.
+            let region: ResizeRegion = tightenRegionToShape(shape, { ...full, minY: full.maxY * fromFraction, maxY: full.maxY * toFraction });
             steps.forEach((step, index) => {
               const mode = index === 0 ? first : second;
               const result = regionResizedShape(shape, region, { ...region, ...step(region) }, mode);
@@ -101,6 +121,7 @@ describe("region resize keeps real meshes closed through handle sequences", () =
           });
         }
       }
+    }
     }
   }
 });
