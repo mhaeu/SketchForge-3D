@@ -22,6 +22,7 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
+import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
@@ -150,6 +151,8 @@ function formatPropertyNumber(value: number, accuracy: MeasurementAccuracy, step
 }
 
 function propertyUsesLengthUnit(label: string) {
+  // The region bounds ("Length from" ...) are lengths as well.
+  if (/^(Length|Width|Height) (from|to)$/.test(label)) return true;
   return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness", "Tooth Size", "Tooth Width", "Center Hole", "Top Length", "Top Width", "Bottom Length", "Bottom Width", "Diameter", "Pitch", "Thread Length", "Clearance", "X", "Y", "Z", "Cross size", "Marker size"].includes(label);
 }
 
@@ -557,6 +560,8 @@ export function ShapeInspector({
   onInteractionActiveChange,
   linkedAxes = NO_LINKED_RESIZE_AXES,
   onLinkedAxesChange,
+  resizeRegion = null,
+  onResizeRegionChange,
 }: {
   shape: WorkplaneShape;
   referencePoint: { x: number; y: number; z: number };
@@ -566,6 +571,10 @@ export function ShapeInspector({
   onUpdate: ShapeInspectorUpdate;
   linkedAxes?: LinkedResizeAxes;
   onLinkedAxesChange?: (next: LinkedResizeAxes) => void;
+  // While set, the viewport handles resize this box inside the shape rather
+  // than the shape; the inspector is where the box itself is placed.
+  resizeRegion?: ResizeRegion | null;
+  onResizeRegionChange?: (region: ResizeRegion) => void;
   onSnapChange: Dispatch<SetStateAction<GridSize>>;
   onSnapOpenChange: Dispatch<SetStateAction<boolean>>;
   onEditSketch?: () => void;
@@ -829,6 +838,23 @@ export function ShapeInspector({
         </button>
       ) : null}
 
+      {resizeRegion && onResizeRegionChange ? (
+        <div className="property-card region-card">
+          <div className="property-card-header region-card-header">
+            <span>Region</span>
+          </div>
+          <p className="region-card-hint">The handles now resize this box. Place it here:</p>
+          <div className="property-list">
+            <ShapePropertyRows
+              properties={regionBoundProperties(shape, resizeRegion, onResizeRegionChange)}
+              workspace={workspace}
+              disabled={locked}
+              onInteractionActiveChange={onInteractionActiveChange}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {primaryProperties.length > 0 || gearType ? (
       <div className={`property-card ${propertiesOpen ? "" : "collapsed"}`}>
         <button
@@ -850,7 +876,10 @@ export function ShapeInspector({
                 onChange={(gearType) => onUpdate({ gearType })}
               />
             ) : null}
-            <ShapePropertyRows properties={primaryProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            {/* With a region active the handles no longer size the shape, and
+                neither should these fields - a whole-shape scale would drag the
+                box along in a way the user did not ask for. */}
+            <ShapePropertyRows properties={primaryProperties} workspace={workspace} disabled={locked || Boolean(resizeRegion)} onInteractionActiveChange={onInteractionActiveChange} />
           </div>
         ) : null}
       </div>
@@ -974,6 +1003,40 @@ export function ShapeInspector({
       ) : null}
     </aside>
   );
+}
+
+/**
+ * The six bounds of a resize region as rows, in the shape's display frame:
+ * width and length run from the centre, height from the underside. Each
+ * bound is kept on its own side of the opposite one so the box never
+ * collapses or flips.
+ */
+function regionBoundProperties(shape: WorkplaneShape, region: ResizeRegion, onChange: (region: ResizeRegion) => void): ShapePropertyConfig[] {
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  const rows: Array<{ label: string; lo: keyof ResizeRegion; hi: keyof ResizeRegion; min: number; max: number }> = [
+    { label: "Length", lo: "minZ", hi: "maxZ", min: -depth / 2, max: depth / 2 },
+    { label: "Width", lo: "minX", hi: "maxX", min: -width / 2, max: width / 2 },
+    { label: "Height", lo: "minY", hi: "maxY", min: 0, max: shape.height },
+  ];
+  return rows.flatMap(({ label, lo, hi, min, max }) => [
+    {
+      label: `${label} from`,
+      value: region[lo],
+      min,
+      max,
+      step: 0.1,
+      onChange: (value: number) => onChange({ ...region, [lo]: Math.min(value, region[hi] - MIN_REGION_SIZE) }),
+    },
+    {
+      label: `${label} to`,
+      value: region[hi],
+      min,
+      max,
+      step: 0.1,
+      onChange: (value: number) => onChange({ ...region, [hi]: Math.max(value, region[lo] + MIN_REGION_SIZE) }),
+    },
+  ]);
 }
 
 function ShapePropertyRows({

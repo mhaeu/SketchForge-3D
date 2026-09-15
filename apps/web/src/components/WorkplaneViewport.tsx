@@ -48,6 +48,7 @@ import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { createTransparentSurfaceSort } from "@/lib/transparentSort";
+import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
@@ -208,6 +209,13 @@ type WorkplaneViewportProps = {
   // viewport resize handles. Owned by the editor so the toolbar can show it.
   linkedAxes: LinkedResizeAxes;
   onLinkedAxesChange: (next: LinkedResizeAxes) => void;
+  // Region resize: while set, the selection box and its handles belong to
+  // this box inside the shape, and dragging them deforms the mesh instead of
+  // scaling the whole shape. Owned by the editor; the viewport reports the
+  // box back after each drag, because re-centring the mesh moves it.
+  resizeRegion: ActiveResizeRegion | null;
+  resizeRegionMode: RegionResizeMode;
+  onResizeRegionChange: (region: ResizeRegion) => void;
   initialSnap?: GridSize;
   initialWorkspace?: WorkplaneWorkspaceSettings;
   workspaceSettingsKey?: string | null;
@@ -440,6 +448,8 @@ type RotationHandleSide = "near" | "right" | "far" | "left";
 type RotationHandleSides = Record<RotationAxis, RotationHandleSide>;
 type ShapeUpdatePatch = Partial<WorkplaneShape> & { bakeTransform?: boolean };
 type ResizeSigns = { x: number; z: number };
+type ActiveResizeRegion = { shapeId: string; region: ResizeRegion };
+
 type ResizeAnchorMemory = {
   shapeId: string;
   handleKey: string;
@@ -485,6 +495,18 @@ type TransformDragState = {
   rotationWheelSnapDegrees?: number;
   wheelCenter?: RotationWheelView;
   hasMoved?: boolean;
+  // Captured at pointer-down: the box the handles are resizing, the mode, and
+  // a plain box shape standing in for it so the ordinary handle maths can run
+  // on it unchanged. The region is not re-read during the drag - the editor
+  // re-clamps it against the changing shape, which would move the target.
+  regionResize?: {
+    region: ResizeRegion;
+    mode: RegionResizeMode;
+    boxShape: WorkplaneShape;
+    // Meshes produced by earlier pointer moves of this drag. Each is dropped
+    // two moves later, once the scene has certainly moved on from it.
+    superseded: NonNullable<WorkplaneShape["importedMesh"]>[];
+  };
 };
 
 type TransformDragItem = {
@@ -1765,6 +1787,92 @@ function selectionFrameForShapes(
   };
 }
 
+/**
+ * The selection frame of a region box instead of the whole shape. The region
+ * lives in the shape's display frame (x/z centred, y from the underside), so
+ * the box is that frame's cuboid carried into the world by the shape's own
+ * placement.
+ */
+function regionSelectionFrame(shape: WorkplaneShape, region: ResizeRegion): SelectionFrame {
+  const quaternion = quaternionForShape(shape);
+  const xAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize();
+  const yAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion).normalize();
+  const zAxis = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).normalize();
+  const width = Math.max(MIN_SHAPE_SIZE, region.maxX - region.minX);
+  const height = Math.max(MIN_SHAPE_SIZE, region.maxY - region.minY);
+  const depth = Math.max(MIN_SHAPE_SIZE, region.maxZ - region.minZ);
+  const localCenter = new THREE.Vector3(
+    (region.minX + region.maxX) / 2,
+    (region.minY + region.maxY) / 2 - shape.height / 2,
+    (region.minZ + region.maxZ) / 2,
+  ).applyQuaternion(quaternion);
+  return {
+    ids: [shape.id],
+    center: shapeCenter(shape).add(localCenter),
+    quaternion,
+    xAxis,
+    yAxis,
+    zAxis,
+    width,
+    height,
+    depth,
+    min: new THREE.Vector3(-width / 2, -height / 2, -depth / 2),
+    max: new THREE.Vector3(width / 2, height / 2, depth / 2),
+    singleShape: shape,
+  };
+}
+
+/** The region frame when one applies to this selection, else the usual one. */
+function selectionFrameWithRegion(
+  shapes: WorkplaneShape[],
+  selectedIds: string[],
+  workplane: PlacementWorkplane | undefined,
+  region: ActiveResizeRegion | null,
+): SelectionFrame | null {
+  if (region && selectedIds.length === 1 && selectedIds[0] === region.shapeId) {
+    const shape = shapes.find((entry) => entry.id === region.shapeId && !entry.hidden);
+    if (shape) return regionSelectionFrame(shape, region.region);
+  }
+  return selectionFrameForShapes(shapes, selectedIds, workplane);
+}
+
+/**
+ * A stand-in shape for the region box: a plain, unrotated box at the box's
+ * place and size. The handle maths resizes it like any box, and the result
+ * is read back as the new region.
+ */
+function regionBoxShape(shape: WorkplaneShape, region: ResizeRegion): WorkplaneShape {
+  const width = region.maxX - region.minX;
+  const depth = region.maxZ - region.minZ;
+  return {
+    id: shape.id,
+    name: shape.name,
+    color: shape.color,
+    kind: "box",
+    x: shape.x + (region.minX + region.maxX) / 2,
+    z: shape.z + (region.minZ + region.maxZ) / 2,
+    elevation: (shape.elevation ?? 0) + region.minY,
+    width,
+    depth,
+    height: region.maxY - region.minY,
+    size: Math.max(width, depth),
+    rotation: 0,
+  };
+}
+
+function regionFromBoxShape(shape: WorkplaneShape, box: WorkplaneShape): ResizeRegion {
+  const width = shapeWidth(box);
+  const depth = shapeDepth(box);
+  return {
+    minX: box.x - width / 2 - shape.x,
+    maxX: box.x + width / 2 - shape.x,
+    minY: (box.elevation ?? 0) - (shape.elevation ?? 0),
+    maxY: (box.elevation ?? 0) + box.height - (shape.elevation ?? 0),
+    minZ: box.z - depth / 2 - shape.z,
+    maxZ: box.z + depth / 2 - shape.z,
+  };
+}
+
 function framePoint(frame: SelectionFrame, x: number, y: number, z: number) {
   return frame.center
     .clone()
@@ -2542,6 +2650,9 @@ export function WorkplaneViewport({
   workplaneMode,
   linkedAxes,
   onLinkedAxesChange,
+  resizeRegion,
+  resizeRegionMode,
+  onResizeRegionChange,
   initialSnap,
   initialWorkspace,
   workspaceSettingsKey,
@@ -2583,6 +2694,14 @@ export function WorkplaneViewport({
   // every time the setting changes.
   const linkedAxesRef = useRef(linkedAxes);
   linkedAxesRef.current = linkedAxes;
+  // The box the handles currently act on. Follows the prop between drags;
+  // during a drag it carries the live box, which the editor learns about at
+  // pointer-up (see finishTransform).
+  const resizeRegionRef = useRef<ActiveResizeRegion | null>(resizeRegion);
+  const resizeRegionModeRef = useRef(resizeRegionMode);
+  resizeRegionModeRef.current = resizeRegionMode;
+  const onResizeRegionChangeRef = useRef(onResizeRegionChange);
+  onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceSettings>(() => normalizeWorkspaceSettings(initialWorkspace));
   const [transformOverlay, setTransformOverlay] = useState<TransformOverlayState | null>(null);
@@ -2680,6 +2799,17 @@ export function WorkplaneViewport({
 
   const resolvedThemeRef = useRef(resolvedTheme);
   resolvedThemeRef.current = resolvedTheme;
+
+  useEffect(() => {
+    // Mid-drag the ref carries the live box; the editor's copy catches up at
+    // pointer-up, so a prop change arriving during the drag is stale.
+    if (transformRef.current?.regionResize) return;
+    resizeRegionRef.current = resizeRegion;
+    const state = threeRef.current;
+    if (state) {
+      state.needsRender = true;
+    }
+  }, [resizeRegion]);
 
   const onCameraOrientationChangeRef = useRef(onCameraOrientationChange);
   onCameraOrientationChangeRef.current = onCameraOrientationChange;
@@ -2877,6 +3007,7 @@ export function WorkplaneViewport({
         false,
         placementWorkplaneRef.current,
         resolvedThemeRef.current,
+        resizeRegionRef.current,
       );
       syncAlignOverlay(threeRef.current, alignReferenceShapesRef.current, selectedIdsRef.current, alignModeRef.current, alignAnchorIdRef.current, alignHandlesRef.current, alignOverlayRef, setAlignOverlay);
       syncMirrorOverlay(threeRef.current, mirrorReferenceShapesRef.current, selectedIdsRef.current, mirrorModeRef.current, mirrorOverlayRef, setMirrorOverlay);
@@ -2938,6 +3069,7 @@ export function WorkplaneViewport({
         false,
         placementWorkplaneRef.current,
         resolvedThemeRef.current,
+        resizeRegionRef.current,
       );
       syncAlignOverlay(threeRef.current, alignReferenceShapesRef.current, selectedIds, alignModeRef.current, alignAnchorIdRef.current, alignHandlesRef.current, alignOverlayRef, setAlignOverlay);
       syncMirrorOverlay(threeRef.current, mirrorReferenceShapesRef.current, selectedIds, mirrorModeRef.current, mirrorOverlayRef, setMirrorOverlay);
@@ -3042,6 +3174,7 @@ export function WorkplaneViewport({
         false,
         placementWorkplaneRef.current,
         resolvedThemeRef.current,
+        resizeRegionRef.current,
       );
     }
     setSelectionHelpersVisible(state, !workplaneMode && transformRef.current?.kind !== "rotate");
@@ -3083,6 +3216,7 @@ export function WorkplaneViewport({
         false,
         placementWorkplaneRef.current,
         resolvedThemeRef.current,
+        resizeRegionRef.current,
       );
       syncRulerOverlay(threeRef.current, rulerModelRef.current, rulerOverlayRef, setRulerOverlay, workspace.accuracy);
       syncMoveDimensionWorldLines(threeRef.current, moveDimensionSessionRef.current, resolvedTheme);
@@ -3160,6 +3294,7 @@ export function WorkplaneViewport({
           false,
           placementWorkplaneRef.current,
           resolvedThemeRef.current,
+          resizeRegionRef.current,
         );
         syncAlignOverlay(state, alignReferenceShapesRef.current, selectedIdsRef.current, alignModeRef.current, alignAnchorIdRef.current, alignHandlesRef.current, alignOverlayRef, setAlignOverlay);
         syncMirrorOverlay(state, mirrorReferenceShapesRef.current, selectedIdsRef.current, mirrorModeRef.current, mirrorOverlayRef, setMirrorOverlay);
@@ -3626,11 +3761,15 @@ export function WorkplaneViewport({
       clearMoveDimensions();
       const ids = selectedIdsRef.current;
       const activeWorkplane = placementWorkplaneRef.current;
-      const frame = selectionFrameForShapes(shapesRef.current, ids, activeWorkplane);
+      const activeRegion = resizeRegionRef.current;
+      const frame = selectionFrameWithRegion(shapesRef.current, ids, activeWorkplane, activeRegion);
       const shape = frame?.singleShape ?? shapesRef.current.find((entry) => entry.id === ids[0]);
       if (!frame || !shape || ids.length === 0 || ids.some((id) => shapesRef.current.find((entry) => entry.id === id)?.locked)) {
         return;
       }
+      const regionResize = activeRegion && activeRegion.shapeId === shape.id && (kind === "scale" || kind === "height")
+        ? { region: activeRegion.region, mode: resizeRegionModeRef.current, boxShape: regionBoxShape(shape, activeRegion.region), superseded: [] }
+        : undefined;
 
       const rotationAxis = rotationAxisForHandle(handleKey);
       const resizeHandleKey = handleKey;
@@ -3738,6 +3877,7 @@ export function WorkplaneViewport({
         rotationScreenSign: kind === "rotate" && state ? rotationScreenSign(axisVector, state.camera) : 1,
         rotationStartQuaternion: kind === "rotate" ? quaternionForShape(shape) : undefined,
         wheelCenter: wheel,
+        regionResize,
       };
       if (kind === "rotate" && state) {
         const renderRect = state.renderer.domElement.getBoundingClientRect();
@@ -3851,6 +3991,42 @@ export function WorkplaneViewport({
       }
 
       const step = snapStep(snapRef.current);
+      if (transform.regionResize && transform.items.length === 1) {
+        const { region, mode, boxShape } = transform.regionResize;
+        let boxPatch: Partial<WorkplaneShape> | null = null;
+        if (transform.kind === "height") {
+          const axis = (transform.liftAxis ?? transform.selectionFrame.yAxis).clone().normalize();
+          const currentPoint = transform.liftPlane ? toRawPlanePoint(clientX, clientY, transform.liftPlane) : null;
+          const rawDelta = currentPoint && transform.liftStartPoint ? currentPoint.clone().sub(transform.liftStartPoint).dot(axis) : 0;
+          const resizingFromBottom = transform.handleKey === "bottom-height";
+          const rawFrameHeight = transform.selectionFrame.height + (resizingFromBottom ? -rawDelta : rawDelta);
+          const maxHeight = shapeDimensionLimit(workspaceRef.current, transform.startShape.kind, 180);
+          const nextFrameHeight = clamp(
+            transform.selectionFrame.height + snapValue(rawFrameHeight - transform.selectionFrame.height, step),
+            MIN_SHAPE_SIZE,
+            maxHeight,
+          );
+          boxPatch = resizeShapeAlongFrameNormal(boxShape, transform.selectionFrame, nextFrameHeight, resizingFromBottom, linkedAxesRef.current, maxHeight);
+        } else if (transform.kind === "scale") {
+          const worldPoint = transform.scalePlane ? toRawPlanePoint(clientX, clientY, transform.scalePlane) : null;
+          if (!worldPoint) {
+            return true;
+          }
+          const maxSize = shapeDimensionLimit(workspaceRef.current, transform.startShape.kind, 220);
+          boxPatch = resizeShapeFromFrameHandle({ ...transform, startShape: boxShape }, worldPoint, transform.handleKey, shiftKey, altKey, step, maxSize, linkedAxesRef.current);
+        }
+        if (boxPatch) {
+          const next = regionResizedShape(transform.startShape, region, regionFromBoxShape(transform.startShape, { ...boxShape, ...boxPatch }), mode);
+          if (next) {
+            onUpdateShape(transform.id, next.patch);
+            resizeRegionRef.current = { shapeId: transform.id, region: next.region };
+            const { superseded } = transform.regionResize;
+            if (next.patch.importedMesh) superseded.push(next.patch.importedMesh);
+            while (superseded.length > 2) disposeImportedMeshGeometry(superseded.shift()!);
+          }
+          return true;
+        }
+      }
       if (transform.kind === "height") {
         const axis = (transform.liftAxis ?? transform.selectionFrame.yAxis).clone().normalize();
         const currentPoint = transform.liftPlane
@@ -4047,6 +4223,14 @@ export function WorkplaneViewport({
       }, 250);
     }
     transformRef.current = null;
+    if (transform.regionResize) {
+      // Everything but the mesh that ended up in the shape is dead now.
+      transform.regionResize.superseded.slice(0, -1).forEach(disposeImportedMeshGeometry);
+      const live = resizeRegionRef.current;
+      if (live?.shapeId === transform.id && !regionsEqual(live.region, transform.regionResize.region)) {
+        onResizeRegionChangeRef.current(live.region);
+      }
+    }
     setActiveRotationWheel(false);
     setActiveTransformKind(null);
     setPinnedRotationWheelView(null);
@@ -4135,6 +4319,37 @@ export function WorkplaneViewport({
     if (Number.isFinite(value) && value > 0) {
       const customLimit = workspaceRef.current.shapeCustomizations[shape.kind]?.maxDimension;
       const nextValue = Math.min(customLimit ?? Number.POSITIVE_INFINITY, Math.max(MIN_SHAPE_SIZE, value));
+      const region = resizeRegionRef.current;
+      if (region && region.shapeId === shape.id && (edit.axis === "width" || edit.axis === "depth" || edit.axis === "height")) {
+        // A typed size for the region box: the face opposite the handle that
+        // was last used stays put, like a drag from that handle would.
+        const from = region.region;
+        const to = { ...from };
+        const anchor = lastResizeAnchorRef.current?.shapeId === shape.id ? lastResizeAnchorRef.current : null;
+        if (edit.axis === "height") {
+          if (anchor?.pressedY === "bottom") to.minY = from.maxY - nextValue;
+          else to.maxY = from.minY + nextValue;
+        } else {
+          const lo = edit.axis === "width" ? "minX" : "minZ";
+          const hi = edit.axis === "width" ? "maxX" : "maxZ";
+          const signs = anchor ? resizeSignsForDimension(anchor.signs, edit.axis) : { x: 0, z: 0 };
+          const sign = edit.axis === "width" ? signs.x : signs.z;
+          if (sign > 0) to[hi] = from[lo] + nextValue;
+          else if (sign < 0) to[lo] = from[hi] - nextValue;
+          else {
+            const center = (from[lo] + from[hi]) / 2;
+            to[lo] = center - nextValue / 2;
+            to[hi] = center + nextValue / 2;
+          }
+        }
+        const next = regionResizedShape(shape, from, to, resizeRegionModeRef.current);
+        if (next) {
+          onUpdateShape(id, next.patch);
+          onResizeRegionChangeRef.current(next.region);
+        }
+        setEditingDimension(null);
+        return;
+      }
       if (edit.axis === "width") {
         const frame = selectionFrameForShapes([shape], [shape.id]);
         if (shapeHasTaper(shape) && frame) {
@@ -4425,7 +4640,7 @@ export function WorkplaneViewport({
       if (handle) {
         const shape = shapesRef.current.find((entry) => entry.id === handle.id);
         const activeWorkplane = placementWorkplaneRef.current;
-        const frame = selectionFrameForShapes(shapesRef.current, selectedIdsRef.current, activeWorkplane);
+        const frame = selectionFrameWithRegion(shapesRef.current, selectedIdsRef.current, activeWorkplane, resizeRegionRef.current);
         const scalePlane = handle.kind === "scale" && frame
           ? localResizePlaneForFrame(frame, workplaneFootprintY(frame, activeWorkplane))
           : undefined;
@@ -4796,6 +5011,7 @@ export function WorkplaneViewport({
           true,
           placementWorkplaneRef.current,
           resolvedThemeRef.current,
+          resizeRegionRef.current,
         );
         syncCutPreviewOverlays(threeRef.current, previewShapes);
         syncMoveDimensionOverlay(
@@ -5394,6 +5610,8 @@ export function WorkplaneViewport({
           onSnapOpenChange={setSnapOpen}
           linkedAxes={linkedAxes}
           onLinkedAxesChange={onLinkedAxesChange}
+          resizeRegion={resizeRegion && resizeRegion.shapeId === selectedShape.id ? resizeRegion.region : null}
+          onResizeRegionChange={onResizeRegionChange}
           onEditSketch={selectedShape.sketchProfile ? onEditSketch : undefined}
           canSeparateParts={canSeparateParts}
           onSeparateParts={onSeparateParts}
@@ -6627,6 +6845,7 @@ function syncTransformOverlay(
   updateDomImmediately = false,
   workplane: PlacementWorkplane = horizontalPlacementWorkplane(),
   theme: ResolvedAppTheme = "light",
+  resizeRegion: ActiveResizeRegion | null = null,
 ) {
   if (selectedIds.length < 1) {
     syncTransformGuideWorldLines(state, null, theme);
@@ -6638,7 +6857,7 @@ function syncTransformOverlay(
   }
 
   const activeWorkplane = workplane;
-  const frame = selectionFrameForShapes(shapes, selectedIds, activeWorkplane);
+  const frame = selectionFrameWithRegion(shapes, selectedIds, activeWorkplane, resizeRegion);
   if (!frame) {
     syncTransformGuideWorldLines(state, null, theme);
     if (overlayRef.current) {
@@ -8021,6 +8240,20 @@ function getImportedMeshCache(mesh: NonNullable<WorkplaneShape["importedMesh"]>)
 
 function getImportedMeshGeometry(mesh: NonNullable<WorkplaneShape["importedMesh"]>) {
   return getImportedMeshCache(mesh).geometry;
+}
+
+/**
+ * Frees the GPU buffers behind a mesh that will not be drawn again. Cached
+ * geometries are otherwise kept for the life of the page, which is fine for
+ * the odd import but not for a region drag that produces a new mesh every
+ * pointer move.
+ */
+function disposeImportedMeshGeometry(mesh: NonNullable<WorkplaneShape["importedMesh"]>) {
+  const cached = importedGeometryCache.get(mesh);
+  if (!cached) return;
+  importedGeometryCache.delete(mesh);
+  cached.edges.forEach((edges) => edges.dispose());
+  cached.geometry.dispose();
 }
 
 function getPreservedImportedMeshGeometry(shape: WorkplaneShape) {

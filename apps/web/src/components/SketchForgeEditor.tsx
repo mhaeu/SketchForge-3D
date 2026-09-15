@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle as CircleIcon, Link, Link2, Link2Off, Unlink2, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { BoxSelect, Check, Circle as CircleIcon, Link, Link2, Link2Off, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -89,6 +89,7 @@ import {
   type LinkedResizeAxes,
   type ResizeAxis,
 } from "@/lib/workplaneShapes";
+import { clampRegionToShape, fullShapeRegion, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
@@ -2408,12 +2409,16 @@ function cadModifierPrimitiveForShape(shape: WorkplaneShape): CadModifierPrimiti
     ?? (shapeHasTransformToBake(shape) ? cadModifierPrimitiveForAnalyticBox(shape) : null);
 }
 
-function bakeShapeTransformIntoMesh(shape: WorkplaneShape): WorkplaneShape {
+function bakeShapeTransformIntoMesh(shape: WorkplaneShape, force = false): WorkplaneShape {
   // Text and groups must retain their editable source data across transforms.
   // Baking a group would discard groupedShapes and make Ungroup unavailable.
   // The reference point is a permanent scene helper and must never be baked
-  // into a mesh either.
-  if (shape.kind === "reference" || shapeTransformShouldRemainEditable(shape) || !shapeHasTransformToBake(shape)) {
+  // into a mesh either. A region resize needs a plain mesh no matter what
+  // the shape was, and asks for the bake with `force`.
+  if (shape.kind === "reference") {
+    return shape;
+  }
+  if (!force && (shapeTransformShouldRemainEditable(shape) || !shapeHasTransformToBake(shape))) {
     return shape;
   }
 
@@ -5597,6 +5602,11 @@ export function SketchForgeEditor({
   // applies to every resize, whichever shape is selected - so it lives in the
   // toolbar rather than on a shape, and is not stored in the project file.
   const [linkedAxes, setLinkedAxes] = useState<LinkedResizeAxes>(NO_LINKED_RESIZE_AXES);
+  // Region resize: the resize handles work on a box inside one shape instead
+  // of on the whole shape. The box is an editing aid for the current
+  // selection, so it lives here, not on the shape or in the project file.
+  const [regionResize, setRegionResize] = useState<{ shapeId: string; region: ResizeRegion } | null>(null);
+  const [regionResizeMode, setRegionResizeMode] = useState<RegionResizeMode>("push");
   const [sketchProfile, setSketchProfile] = useState<SketchProfile>(() => emptySketchProfile());
   const [sketchHistory, setSketchHistory] = useState<SketchProfile[]>([emptySketchProfile()]);
   const [sketchHistoryIndex, setSketchHistoryIndex] = useState(0);
@@ -8013,6 +8023,62 @@ export function SketchForgeEditor({
     commitShapes([...shapes.filter((shape) => !groupIds.has(shape.id)), ...restored], restored.map((shape) => shape.id), `Ungrouped ${groups.length} group${groups.length === 1 ? "" : "s"}`);
   }, [commitShapes, selectedShapes, shapes]);
 
+  // The region only makes sense for the one shape it was set up on. Once
+  // the selection moves on, or the shape is gone, it is dropped.
+  useEffect(() => {
+    if (!regionResize) return;
+    const shape = shapes.find((entry) => entry.id === regionResize.shapeId);
+    // The region is measured in the mesh's own frame, so the shape has to stay
+    // the plain, unrotated mesh it was converted to. A rotation (baked into
+    // new vertices) or an undo past the conversion makes the box meaningless.
+    const usable = selectedIds.length === 1
+      && selectedIds[0] === regionResize.shapeId
+      && Boolean(shape && shape.kind === "mesh" && shape.importedMesh && !shape.locked && !shapeHasTransformToBake(shape));
+    if (!usable) setRegionResize(null);
+  }, [regionResize, selectedIds, shapes]);
+
+  const regionResizeShape = regionResize ? shapes.find((shape) => shape.id === regionResize.shapeId) ?? null : null;
+  // Whatever else changed the shape's size (undo, say) - the box stays inside it.
+  const activeRegionResize = useMemo(
+    () => (regionResize && regionResizeShape ? { shapeId: regionResize.shapeId, region: clampRegionToShape(regionResize.region, regionResizeShape) } : null),
+    [regionResize, regionResizeShape],
+  );
+
+  const toggleRegionResize = useCallback(() => {
+    if (regionResize) {
+      setRegionResize(null);
+      return;
+    }
+    if (selectedShapes.length !== 1 || !selectedShape) {
+      setNotice("Select one object to resize a region of it");
+      return;
+    }
+    if (selectedShape.locked || isReferencePoint(selectedShape)) {
+      setNotice("Unlock the object first");
+      return;
+    }
+    // The handles will move vertices, so the shape has to be a plain mesh at
+    // scale 1 in its own frame. Anything else - a primitive, a loft, a
+    // group, a rotated mesh - is baked into one first, as its own history
+    // step, so the conversion alone can be undone.
+    const needsBake = !selectedShape.importedMesh || shapeHasTransformToBake(selectedShape) || selectedShape.kind !== "mesh";
+    let target = selectedShape;
+    if (needsBake) {
+      const baked = canonicalizeShape(bakeShapeTransformIntoMesh(selectedShape, true));
+      if (!baked.importedMesh) {
+        setNotice("This object cannot be converted to a mesh");
+        return;
+      }
+      target = baked;
+      commitShapes(shapes.map((shape) => (shape.id === baked.id ? baked : shape)), [baked.id], `Converted ${selectedShape.name} to a mesh for region resize`);
+    }
+    setRegionResize({ shapeId: target.id, region: fullShapeRegion(target) });
+  }, [commitShapes, regionResize, selectedShape, selectedShapes.length, shapes]);
+
+  const updateRegionResize = useCallback((region: ResizeRegion) => {
+    setRegionResize((current) => (current ? { ...current, region } : current));
+  }, []);
+
   const separateSelectedParts = useCallback(() => {
     if (selectedShapes.length !== 1 || !selectedShape) {
       setNotice("Select one object to separate");
@@ -9279,6 +9345,11 @@ export function SketchForgeEditor({
         onSketchLockAspect={() => setSketchLockAspect((value) => !value)}
         linkedAxes={linkedAxes}
         onToggleLinkedAxis={(axis) => setLinkedAxes((current) => ({ ...current, [axis]: !current[axis] }))}
+        regionResizeActive={Boolean(activeRegionResize)}
+        canRegionResize={selectedShapes.length === 1 && Boolean(selectedShape && !selectedShape.locked && !isReferencePoint(selectedShape))}
+        regionResizeMode={regionResizeMode}
+        onToggleRegionResize={toggleRegionResize}
+        onRegionResizeMode={setRegionResizeMode}
         sketchCanUndo={sketchHistoryIndex > 0}
         sketchCanRedo={sketchHistoryIndex < sketchHistory.length - 1}
         canEditSketch={selectedShapes.length === 1 && Boolean(selectedShape?.sketchProfile)}
@@ -9384,6 +9455,9 @@ export function SketchForgeEditor({
           workplaneMode={workplaneMode}
           linkedAxes={linkedAxes}
           onLinkedAxesChange={setLinkedAxes}
+          resizeRegion={activeRegionResize}
+          resizeRegionMode={regionResizeMode}
+          onResizeRegionChange={updateRegionResize}
           initialSnap={snapGrid}
           initialWorkspace={workspaceSettings}
           workspaceSettingsKey={projectId ?? "local-workplane"}
@@ -9583,6 +9657,22 @@ const LINKED_AXIS_TOOLS: Array<{ axis: ResizeAxis; letter: string; name: string 
   { axis: "height", letter: "H", name: "Height" },
 ];
 
+// How the material inside a resize region reacts to the box changing size.
+const REGION_MODE_TOOLS: Array<{ mode: RegionResizeMode; label: string; title: string; Icon: typeof StretchVertical }> = [
+  {
+    mode: "stretch",
+    label: "Stretch the region",
+    title: "Stretch: the material inside the box scales with it - its features change shape",
+    Icon: StretchVertical,
+  },
+  {
+    mode: "push",
+    label: "Push the region",
+    title: "Push: the material inside the box keeps its shape and moves with the handle - new material fills in at the opposite face",
+    Icon: UnfoldVertical,
+  },
+];
+
 function SecondaryToolbar({
   toolbarMode,
   projectName,
@@ -9610,6 +9700,11 @@ function SecondaryToolbar({
   onSketchLockAspect,
   linkedAxes,
   onToggleLinkedAxis,
+  regionResizeActive,
+  canRegionResize,
+  regionResizeMode,
+  onToggleRegionResize,
+  onRegionResizeMode,
   sketchCanUndo,
   sketchCanRedo,
   canEditSketch,
@@ -9670,6 +9765,11 @@ function SecondaryToolbar({
   onSketchLockAspect: () => void;
   linkedAxes: LinkedResizeAxes;
   onToggleLinkedAxis: (axis: ResizeAxis) => void;
+  regionResizeActive: boolean;
+  canRegionResize: boolean;
+  regionResizeMode: RegionResizeMode;
+  onToggleRegionResize: () => void;
+  onRegionResizeMode: (mode: RegionResizeMode) => void;
   sketchCanUndo: boolean;
   sketchCanRedo: boolean;
   canEditSketch: boolean;
@@ -10110,6 +10210,40 @@ function SecondaryToolbar({
                 </button>
               );
             })}
+          </div>
+        </div>
+        <div className="toolbar-section">
+          <div className="toolbar-section-label">Region</div>
+          <div className="toolbar-section-tools">
+            <button
+              className={`toolbar-icon toolbar-region-tool ${regionResizeActive ? "active" : ""} ${canRegionResize ? "" : "disabled"}`}
+              type="button"
+              aria-label="Resize a region of the object"
+              aria-pressed={regionResizeActive}
+              title={regionResizeActive
+                ? "Region resize is on: the handles change only the box - set the box in the inspector"
+                : canRegionResize
+                  ? "Resize only a region of the object (converts it to a mesh)"
+                  : "Select one unlocked object to resize a region of it"}
+              onClick={onToggleRegionResize}
+              disabled={!canRegionResize}
+            >
+              <BoxSelect size={26} strokeWidth={1.8} />
+            </button>
+            {REGION_MODE_TOOLS.map(({ mode, label, title, Icon }) => (
+              <button
+                key={mode}
+                className={`toolbar-icon toolbar-region-tool ${regionResizeMode === mode ? "active" : ""}`}
+                type="button"
+                role="radio"
+                aria-label={label}
+                aria-checked={regionResizeMode === mode}
+                title={title}
+                onClick={() => onRegionResizeMode(mode)}
+              >
+                <Icon size={26} strokeWidth={1.8} />
+              </button>
+            ))}
           </div>
         </div>
         <div className="toolbar-section">

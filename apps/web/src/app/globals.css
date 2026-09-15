@@ -5221,6 +5221,32 @@ button {
   padding-bottom: 0;
 }
 
+/* Region resize: the box the handles act on, placed from the inspector. */
+.region-card .region-card-header {
+  cursor: default;
+  color: #0074bd;
+}
+
+.region-card-hint {
+  margin: -6px 0 8px;
+  color: #5d7183;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+html[data-theme="dark"] .region-card .region-card-header {
+  color: #6cc4ef;
+}
+
+html[data-theme="dark"] .region-card-hint {
+  color: #9db3c2;
+}
+
+.toolbar-icon.toolbar-region-tool svg {
+  width: 26px;
+  height: 26px;
+}
+
 .property-card-header {
   display: flex;
   align-items: center;
