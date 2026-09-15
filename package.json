@@ -38,7 +38,7 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.8",
     "@types/three": "^0.184.1",
-    "brepjs": "^19.0.1",
+    "brepjs": "^19.0.4",
     "clsx": "^2.1.1",
     "electron-updater": "^6.8.9",
     "fflate": "^0.8.2",
