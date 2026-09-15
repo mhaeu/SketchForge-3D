@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle as CircleIcon, Link, Link2Off, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { Check, Circle as CircleIcon, Link, Link2, Link2Off, Unlink2, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -84,6 +84,10 @@ import {
   shapeWidth,
   withHoleMode,
   workplaneShapesEqual,
+  NO_LINKED_RESIZE_AXES,
+  resizeAxisIsLinked,
+  type LinkedResizeAxes,
+  type ResizeAxis,
 } from "@/lib/workplaneShapes";
 import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
@@ -5589,6 +5593,10 @@ export function SketchForgeEditor({
   // Sits here rather than in SketchWorkspace so the toolbar can show it: the
   // toggle belongs where the user looks for tools, not next to the snap grid.
   const [sketchLockAspect, setSketchLockAspect] = useState(false);
+  // Which size axes scale together. One setting for the whole session - it
+  // applies to every resize, whichever shape is selected - so it lives in the
+  // toolbar rather than on a shape, and is not stored in the project file.
+  const [linkedAxes, setLinkedAxes] = useState<LinkedResizeAxes>(NO_LINKED_RESIZE_AXES);
   const [sketchProfile, setSketchProfile] = useState<SketchProfile>(() => emptySketchProfile());
   const [sketchHistory, setSketchHistory] = useState<SketchProfile[]>([emptySketchProfile()]);
   const [sketchHistoryIndex, setSketchHistoryIndex] = useState(0);
@@ -9269,6 +9277,8 @@ export function SketchForgeEditor({
         sketchTool={sketchTool}
         sketchLockAspect={sketchLockAspect}
         onSketchLockAspect={() => setSketchLockAspect((value) => !value)}
+        linkedAxes={linkedAxes}
+        onToggleLinkedAxis={(axis) => setLinkedAxes((current) => ({ ...current, [axis]: !current[axis] }))}
         sketchCanUndo={sketchHistoryIndex > 0}
         sketchCanRedo={sketchHistoryIndex < sketchHistory.length - 1}
         canEditSketch={selectedShapes.length === 1 && Boolean(selectedShape?.sketchProfile)}
@@ -9372,6 +9382,8 @@ export function SketchForgeEditor({
           mirrorReferenceShapes={shapes}
           placementWorkplane={placementWorkplane}
           workplaneMode={workplaneMode}
+          linkedAxes={linkedAxes}
+          onLinkedAxesChange={setLinkedAxes}
           initialSnap={snapGrid}
           initialWorkspace={workspaceSettings}
           workspaceSettingsKey={projectId ?? "local-workplane"}
@@ -9564,6 +9576,13 @@ const sketchShapeMenuItems = [
   { primitive: "hexagon", label: "Hexagon", icon: HexagonIcon },
 ] satisfies Array<{ primitive: SketchPrimitive; label: string; icon: typeof SquareIcon }>;
 
+// Letters match the inspector fields: Length runs along Z, Width along X.
+const LINKED_AXIS_TOOLS: Array<{ axis: ResizeAxis; letter: string; name: string }> = [
+  { axis: "depth", letter: "L", name: "Length" },
+  { axis: "width", letter: "W", name: "Width" },
+  { axis: "height", letter: "H", name: "Height" },
+];
+
 function SecondaryToolbar({
   toolbarMode,
   projectName,
@@ -9589,6 +9608,8 @@ function SecondaryToolbar({
   sketchTool,
   sketchLockAspect,
   onSketchLockAspect,
+  linkedAxes,
+  onToggleLinkedAxis,
   sketchCanUndo,
   sketchCanRedo,
   canEditSketch,
@@ -9647,6 +9668,8 @@ function SecondaryToolbar({
   sketchTool: SketchTool;
   sketchLockAspect: boolean;
   onSketchLockAspect: () => void;
+  linkedAxes: LinkedResizeAxes;
+  onToggleLinkedAxis: (axis: ResizeAxis) => void;
   sketchCanUndo: boolean;
   sketchCanRedo: boolean;
   canEditSketch: boolean;
@@ -10061,6 +10084,33 @@ function SecondaryToolbar({
         <div className="toolbar-section">
           <div className="toolbar-section-label">Modify</div>
           <div className="toolbar-section-tools">{modifyTools.map(renderToolButton)}</div>
+        </div>
+        <div className="toolbar-section">
+          <div className="toolbar-section-label">Link</div>
+          <div className="toolbar-section-tools">
+            {LINKED_AXIS_TOOLS.map(({ axis, letter, name }) => {
+              const linked = linkedAxes[axis];
+              const active = resizeAxisIsLinked(axis, linkedAxes);
+              return (
+                <button
+                  key={axis}
+                  className={`toolbar-icon toolbar-axis-link ${linked ? "active" : ""} ${active ? "paired" : ""}`}
+                  type="button"
+                  aria-label={`Link ${name.toLowerCase()} while resizing`}
+                  aria-pressed={linked}
+                  title={active
+                    ? `${name} keeps its ratio with the other linked axes`
+                    : linked
+                      ? `${name} is linked, but on its own - link a second axis to keep a ratio`
+                      : `Link ${name.toLowerCase()} so it scales in proportion with the other linked axes`}
+                  onClick={() => onToggleLinkedAxis(axis)}
+                >
+                  <span className="toolbar-axis-link-letter">{letter}</span>
+                  {linked ? <Link2 size={15} strokeWidth={2.4} /> : <Unlink2 size={15} strokeWidth={2.2} />}
+                </button>
+              );
+            })}
+          </div>
         </div>
         <div className="toolbar-section">
           <div className="toolbar-section-label">Arrange</div>

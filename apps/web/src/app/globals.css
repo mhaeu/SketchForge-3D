@@ -2357,6 +2357,31 @@ button {
   color: #0b8dbd;
 }
 
+/* The three axis-link toggles: a letter over a chain icon, so the button
+   reads at a glance as "which axis" and "linked or not". */
+.toolbar-axis-link {
+  grid-auto-flow: row;
+  align-content: center;
+  gap: 2px;
+}
+
+.toolbar-axis-link .toolbar-axis-link-letter {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.toolbar-icon.toolbar-axis-link svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Linked, but without a partner the link has nothing to hold its ratio to. */
+.toolbar-axis-link.active:not(.paired) {
+  color: #4a90c4;
+  box-shadow: inset 0 0 0 2px rgba(0, 166, 219, 0.16);
+}
+
 .toolbar-icon svg,
 .toolbar-icon .toolbar-sprite-icon,
 .toolbar-icon .vector-toolbar-sprite-icon,

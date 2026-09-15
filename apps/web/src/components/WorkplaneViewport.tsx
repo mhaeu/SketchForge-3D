@@ -48,7 +48,7 @@ import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { createTransparentSurfaceSort } from "@/lib/transparentSort";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, NO_LINKED_RESIZE_AXES, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -204,6 +204,10 @@ type WorkplaneViewportProps = {
   mirrorReferenceShapes: WorkplaneShape[];
   placementWorkplane: PlacementWorkplane;
   workplaneMode: boolean;
+  // Which size axes scale together, for both the inspector fields and the
+  // viewport resize handles. Owned by the editor so the toolbar can show it.
+  linkedAxes: LinkedResizeAxes;
+  onLinkedAxesChange: (next: LinkedResizeAxes) => void;
   initialSnap?: GridSize;
   initialWorkspace?: WorkplaneWorkspaceSettings;
   workspaceSettingsKey?: string | null;
@@ -2536,6 +2540,8 @@ export function WorkplaneViewport({
   mirrorReferenceShapes,
   placementWorkplane,
   workplaneMode,
+  linkedAxes,
+  onLinkedAxesChange,
   initialSnap,
   initialWorkspace,
   workspaceSettingsKey,
@@ -2573,10 +2579,6 @@ export function WorkplaneViewport({
 }: WorkplaneViewportProps) {
   const [snapOpen, setSnapOpen] = useState(false);
   const [snap, setSnap] = useState<GridSize>(() => normalizeSnapGrid(initialSnap, DEFAULT_SNAP_GRID));
-  // Which size axes scale together, for both the inspector fields and the
-  // viewport resize handles. An editor-wide setting for the session, like the
-  // snap grid - deliberately not stored per shape or in the project file.
-  const [linkedAxes, setLinkedAxes] = useState<LinkedResizeAxes>(NO_LINKED_RESIZE_AXES);
   // Read from inside the pointer-drag handlers, which must not re-subscribe
   // every time the setting changes.
   const linkedAxesRef = useRef(linkedAxes);
@@ -5391,7 +5393,7 @@ export function WorkplaneViewport({
           onSnapChange={setSnap}
           onSnapOpenChange={setSnapOpen}
           linkedAxes={linkedAxes}
-          onLinkedAxesChange={setLinkedAxes}
+          onLinkedAxesChange={onLinkedAxesChange}
           onEditSketch={selectedShape.sketchProfile ? onEditSketch : undefined}
           canSeparateParts={canSeparateParts}
           onSeparateParts={onSeparateParts}
