@@ -444,6 +444,47 @@ function displayPositions(shape: WorkplaneShape) {
   return lastDisplay.positions;
 }
 
+/**
+ * Shrinks a box onto the geometry it actually contains. The user's limits
+ * may run past the mesh - a box around the top of a pyramid keeps the
+ * shape's full width as its limit, while the pyramid is much narrower up
+ * there - and a face floating in empty space would anchor the deformation
+ * in the wrong place. Cutting along the limits first puts vertices exactly
+ * where the surface meets them, so the tight box never falls short of the
+ * surface either.
+ */
+export function tightenRegionToShape(shape: WorkplaneShape, region: ResizeRegion): ResizeRegion {
+  if (!shape.importedMesh || shape.importedMesh.positions.length < 9) return region;
+  let cut = resizedImportedMeshPositions(shape);
+  for (const axis of AXES) {
+    cut = cutAlongPlane(cut, axis, region[`min${axis}`], region);
+    cut = cutAlongPlane(cut, axis, region[`max${axis}`], region);
+  }
+  const lo = [region.minX, region.minY, region.minZ];
+  const hi = [region.maxX, region.maxY, region.maxZ];
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < cut.length; i += 3) {
+    let contained = true;
+    for (let c = 0; c < 3 && contained; c += 1) {
+      contained = cut[i + c] >= lo[c] - EDGE_EPSILON && cut[i + c] <= hi[c] + EDGE_EPSILON;
+    }
+    if (!contained) continue;
+    for (let c = 0; c < 3; c += 1) {
+      min[c] = Math.min(min[c], cut[i + c]);
+      max[c] = Math.max(max[c], cut[i + c]);
+    }
+  }
+  if (!min.every(Number.isFinite) || !max.every(Number.isFinite)) return region;
+  const tight = {
+    minX: Math.max(lo[0], min[0]), maxX: Math.min(hi[0], max[0]),
+    minY: Math.max(lo[1], min[1]), maxY: Math.min(hi[1], max[1]),
+    minZ: Math.max(lo[2], min[2]), maxZ: Math.min(hi[2], max[2]),
+  };
+  // A box too thin to hold anything is left as the user set it.
+  return AXES.every((axis) => tight[`max${axis}`] - tight[`min${axis}`] >= MIN_REGION_SIZE) ? tight : region;
+}
+
 export type RegionResizeResult = {
   patch: Partial<WorkplaneShape>;
   /** The region expressed in the patched shape's frame. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampRegionToShape, deformPositionsInRegion, fullShapeRegion, regionResizedShape, type ResizeRegion } from "@/lib/regionResize";
+import { clampRegionToShape, deformPositionsInRegion, fullShapeRegion, regionResizedShape, tightenRegionToShape, type ResizeRegion } from "@/lib/regionResize";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 // A closed box as a triangle soup, the way importedMesh stores geometry.
@@ -236,6 +236,32 @@ describe("region resize on a shape", () => {
     // The region follows the re-centring so the next drag starts from it.
     expect(region.minX).toBe(-5);
     expect(region.maxX).toBe(15);
+  });
+
+  it("shrinks the box onto the geometry inside the limits", () => {
+    const apex = [0, 10, 0];
+    const corners = [[-10, 0, -10], [10, 0, -10], [10, 0, 10], [-10, 0, 10]];
+    const pyramid = [
+      ...corners.flatMap((corner, i) => [...corner, ...corners[(i + 1) % 4], ...apex]),
+      ...corners[0], ...corners[2], ...corners[1],
+      ...corners[0], ...corners[3], ...corners[2],
+    ];
+    const cone = {
+      ...shape, height: 10, size: 20,
+      importedMesh: { ...shape.importedMesh!, positions: pyramid, baseHeight: 10 },
+    } as WorkplaneShape;
+    // Limits: the top half at the shape's full width. Up there the pyramid
+    // is only 10 wide, and the box has to end where the surface does, or a
+    // side handle would anchor the deformation in empty space.
+    const tight = tightenRegionToShape(cone, { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 });
+    expect(tight).toEqual({ minX: -5, maxX: 5, minY: 5, maxY: 10, minZ: -5, maxZ: 5 });
+    // A limit the geometry reaches stays a limit; within |x|, |z| <= 2 the
+    // faces only exist from y = 8 up, so the underside moves there.
+    const narrow = tightenRegionToShape(cone, { minX: -2, maxX: 2, minY: 5, maxY: 10, minZ: -2, maxZ: 2 });
+    expect(narrow).toEqual({ minX: -2, maxX: 2, minY: 8, maxY: 10, minZ: -2, maxZ: 2 });
+    // Empty limits are left alone rather than collapsed.
+    const empty = { minX: 2, maxX: 4, minY: 9, maxY: 10, minZ: 2, maxZ: 4 };
+    expect(tightenRegionToShape(cone, empty)).toEqual(empty);
   });
 
   it("clamps a region to the shape and keeps it a box", () => {

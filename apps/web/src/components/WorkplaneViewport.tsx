@@ -214,8 +214,12 @@ type WorkplaneViewportProps = {
   // scaling the whole shape. Owned by the editor; the viewport reports the
   // box back after each drag, because re-centring the mesh moves it.
   resizeRegion: ActiveResizeRegion | null;
+  // The limits the user set for the box, for the inspector; `resizeRegion`
+  // is the box shrunk onto the geometry within them.
+  resizeRegionLimits: ResizeRegion | null;
   resizeRegionMode: RegionResizeMode;
   onResizeRegionChange: (region: ResizeRegion) => void;
+  onResizeRegionLimitsChange: (limits: ResizeRegion) => void;
   initialSnap?: GridSize;
   initialWorkspace?: WorkplaneWorkspaceSettings;
   workspaceSettingsKey?: string | null;
@@ -2651,8 +2655,10 @@ export function WorkplaneViewport({
   linkedAxes,
   onLinkedAxesChange,
   resizeRegion,
+  resizeRegionLimits,
   resizeRegionMode,
   onResizeRegionChange,
+  onResizeRegionLimitsChange,
   initialSnap,
   initialWorkspace,
   workspaceSettingsKey,
@@ -5628,8 +5634,8 @@ export function WorkplaneViewport({
           onSnapOpenChange={setSnapOpen}
           linkedAxes={linkedAxes}
           onLinkedAxesChange={onLinkedAxesChange}
-          resizeRegion={resizeRegion && resizeRegion.shapeId === selectedShape.id ? resizeRegion.region : null}
-          onResizeRegionChange={onResizeRegionChange}
+          resizeRegion={resizeRegion && resizeRegion.shapeId === selectedShape.id ? resizeRegionLimits : null}
+          onResizeRegionChange={onResizeRegionLimitsChange}
           onEditSketch={selectedShape.sketchProfile ? onEditSketch : undefined}
           canSeparateParts={canSeparateParts}
           onSeparateParts={onSeparateParts}

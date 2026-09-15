@@ -89,7 +89,7 @@ import {
   type LinkedResizeAxes,
   type ResizeAxis,
 } from "@/lib/workplaneShapes";
-import { clampRegionToShape, fullShapeRegion, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
+import { clampRegionToShape, fullShapeRegion, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
@@ -218,6 +218,7 @@ type IntersectionBuildResult = {
   failureNotice: string;
 };
 type BooleanAutomationMode = "before" | "after" | "ungroup";
+type RegionResizeState = { shapeId: string; limits: ResizeRegion; region: ResizeRegion };
 type BooleanAutomationResult = {
   ok: boolean;
   caseId: string;
@@ -5605,7 +5606,11 @@ export function SketchForgeEditor({
   // Region resize: the resize handles work on a box inside one shape instead
   // of on the whole shape. The box is an editing aid for the current
   // selection, so it lives here, not on the shape or in the project file.
-  const [regionResize, setRegionResize] = useState<{ shapeId: string; region: ResizeRegion } | null>(null);
+  // `limits` is the box as the user set it in the inspector; `region` is
+  // that box shrunk onto the geometry it contains, and the one the handles
+  // work on. Kept apart so widening a limit lets the box grow back into
+  // geometry the tight box had left out.
+  const [regionResize, setRegionResize] = useState<RegionResizeState | null>(null);
   const [regionResizeMode, setRegionResizeMode] = useState<RegionResizeMode>("push");
   const [sketchProfile, setSketchProfile] = useState<SketchProfile>(() => emptySketchProfile());
   const [sketchHistory, setSketchHistory] = useState<SketchProfile[]>([emptySketchProfile()]);
@@ -8042,7 +8047,7 @@ export function SketchForgeEditor({
   // instead of leaving it at its last size around a reverted mesh.
   const regionResizeRef = useRef(regionResize);
   regionResizeRef.current = regionResize;
-  const regionByHistoryEntryRef = useRef(new WeakMap<object, { shapeId: string; region: ResizeRegion } | null>());
+  const regionByHistoryEntryRef = useRef(new WeakMap<object, RegionResizeState | null>());
   useEffect(() => {
     const entry = historyRef.current[historyIndex];
     if (!entry) return;
@@ -8057,7 +8062,7 @@ export function SketchForgeEditor({
   // on for a shape that is already a mesh, placing it from the inspector)
   // are written onto the entry they happened on, so a later undo and redo
   // bring them back.
-  const setRegionResizeRemembered = useCallback((next: { shapeId: string; region: ResizeRegion } | null) => {
+  const setRegionResizeRemembered = useCallback((next: RegionResizeState | null) => {
     setRegionResize(next);
     const entry = historyRef.current[historyIndexRef.current];
     if (entry) regionByHistoryEntryRef.current.set(entry, next);
@@ -8098,21 +8103,40 @@ export function SketchForgeEditor({
       target = baked;
       commitShapes(shapes.map((shape) => (shape.id === baked.id ? baked : shape)), [baked.id], `Converted ${selectedShape.name} to a mesh for region resize`);
     }
-    setRegionResizeRemembered({ shapeId: target.id, region: fullShapeRegion(target) });
+    const full = fullShapeRegion(target);
+    setRegionResizeRemembered({ shapeId: target.id, limits: full, region: full });
   }, [commitShapes, regionResize, selectedShape, selectedShapes.length, setRegionResizeRemembered, shapes]);
 
+  // The viewport reports the box after a drag. A face the drag moved becomes
+  // the new limit on that side; the other limits stay as the user set them.
   const updateRegionResize = useCallback((region: ResizeRegion) => {
     const current = regionResizeRef.current;
     if (!current) return;
+    const limits = { ...current.limits };
+    (Object.keys(region) as Array<keyof ResizeRegion>).forEach((face) => {
+      if (Math.abs(region[face] - current.region[face]) > 1e-9) limits[face] = region[face];
+    });
+    const shape = shapesRef.current.find((entry) => entry.id === current.shapeId);
+    const next = { ...current, limits, region: shape ? tightenRegionToShape(shape, clampRegionToShape(region, shape)) : region };
     // At the end of a drag the history entry for it does not exist yet - it
     // is written when the interaction is finalized, and picks the box up
     // from state then. Writing onto the current entry here would put the
     // dragged box on the entry before the drag.
     if (projectInteractionActiveRef.current) {
-      setRegionResize({ ...current, region });
+      setRegionResize(next);
       return;
     }
-    setRegionResizeRemembered({ ...current, region });
+    setRegionResizeRemembered(next);
+  }, [setRegionResizeRemembered]);
+
+  // The inspector sets the limits; the box the handles use hugs whatever
+  // geometry lies within them.
+  const updateRegionLimits = useCallback((limits: ResizeRegion) => {
+    const current = regionResizeRef.current;
+    const shape = shapesRef.current.find((entry) => entry.id === current?.shapeId);
+    if (!current || !shape) return;
+    const clamped = clampRegionToShape(limits, shape);
+    setRegionResizeRemembered({ ...current, limits: clamped, region: tightenRegionToShape(shape, clamped) });
   }, [setRegionResizeRemembered]);
 
   const separateSelectedParts = useCallback(() => {
@@ -9492,8 +9516,10 @@ export function SketchForgeEditor({
           linkedAxes={linkedAxes}
           onLinkedAxesChange={setLinkedAxes}
           resizeRegion={activeRegionResize}
+          resizeRegionLimits={activeRegionResize && regionResize ? regionResize.limits : null}
           resizeRegionMode={regionResizeMode}
           onResizeRegionChange={updateRegionResize}
+          onResizeRegionLimitsChange={updateRegionLimits}
           initialSnap={snapGrid}
           initialWorkspace={workspaceSettings}
           workspaceSettingsKey={projectId ?? "local-workplane"}

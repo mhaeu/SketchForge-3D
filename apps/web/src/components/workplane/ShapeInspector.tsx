@@ -843,7 +843,7 @@ export function ShapeInspector({
           <div className="property-card-header region-card-header">
             <span>Region</span>
           </div>
-          <p className="region-card-hint">The handles now resize this box. Place it here:</p>
+          <p className="region-card-hint">The handles now resize the box. Set its limits here - the box hugs whatever geometry lies within them.</p>
           <div className="property-list">
             <ShapePropertyRows
               properties={regionBoundProperties(shape, resizeRegion, onResizeRegionChange)}
