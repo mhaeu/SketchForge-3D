@@ -435,6 +435,7 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
   const aOut = [0, 0, 0];
   const bOut = [0, 0, 0];
   const same = (p: number[], q: number[]) => near(p[0], q[0]) && near(p[1], q[1]) && near(p[2], q[2]);
+  let slid = false;
   for (let e = 0; e + 2 < seams.length; e += 3) {
     const ia = seams[e];
     const ib = seams[e + 1];
@@ -449,8 +450,155 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
     const aMoved = !same(aIn, aOut);
     const bMoved = !same(bIn, bOut);
     if (!aMoved && !bMoved) continue;
-    if (bMoved) out.push(...aOut, ...bOut, ...bIn);
-    if (aMoved) out.push(...aOut, ...bIn, ...aIn);
+    // An edge that slid along its own line (the box shrinking along the
+    // edge) spans no area. Its neighbour across is then left with an edge
+    // the inside only partly walks, which the stitch below repairs; a band
+    // with area needs no such thing.
+    if (bMoved) {
+      if (collinear(aOut, bOut, bIn)) slid = true;
+      else out.push(...aOut, ...bOut, ...bIn);
+    }
+    if (aMoved) {
+      if (collinear(aOut, bIn, aIn)) slid = true;
+      else out.push(...aOut, ...bIn, ...aIn);
+    }
+  }
+  return slid ? stitchPlaneSeams(out, [...lo, ...hi, ...lo2, ...hi2].map((value, index) => ({ axis: index % 3, at: value }))) : out;
+}
+
+function collinear(a: number[], b: number[], c: number[]) {
+  const ux = b[0] - a[0];
+  const uy = b[1] - a[1];
+  const uz = b[2] - a[2];
+  const vx = c[0] - a[0];
+  const vy = c[1] - a[1];
+  const vz = c[2] - a[2];
+  const cross = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  return cross <= EDGE_EPSILON * Math.max(1, Math.hypot(ux, uy, uz));
+}
+
+/**
+ * Splits triangle edges at vertices that lie on them. A seam edge that
+ * shrinks along its own line leaves the outside neighbour with an edge that
+ * the inside now only partly walks - a T-junction, which is closed
+ * geometrically but not topologically, and the booleans downstream reject.
+ * Seams lie in the planes of the old and new box, so only edges and
+ * vertices in those planes are examined, plane by plane.
+ */
+function stitchPlaneSeams(positions: number[], planes: Array<{ axis: number; at: number }>): number[] {
+  type Vertex = { x: number; y: number; z: number };
+  const triangleCount = Math.floor(positions.length / 9);
+  const unique = planes.filter((plane, index) => planes.findIndex((other) => other.axis === plane.axis && near(other.at, plane.at)) === index);
+  const planeValues: number[][] = [[], [], []];
+  unique.forEach((plane) => planeValues[plane.axis].push(plane.at));
+
+  // One pass over the mesh: which planes each vertex lies in (a bit per
+  // plane), from which follows which triangles have an edge in one. Only
+  // those can need a split; the rest is passed through untouched.
+  const vertexPlanes = new Uint16Array(positions.length / 3);
+  for (let v = 0, i = 0; i + 2 < positions.length; v += 1, i += 3) {
+    let bits = 0;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const values = planeValues[axis];
+      for (let k = 0; k < values.length; k += 1) {
+        if (near(positions[i + axis], values[k])) bits |= 1 << unique.findIndex((plane) => plane.axis === axis && plane.at === values[k]);
+      }
+    }
+    vertexPlanes[v] = bits;
+  }
+  const out: number[] = [];
+  let triangles: number[][] = [];
+  for (let t = 0; t < triangleCount; t += 1) {
+    const a = vertexPlanes[t * 3];
+    const b = vertexPlanes[t * 3 + 1];
+    const c = vertexPlanes[t * 3 + 2];
+    if ((a & b) || (b & c) || (c & a)) triangles.push(positions.slice(t * 9, t * 9 + 9));
+    else for (let k = t * 9; k < t * 9 + 9; k += 1) out.push(positions[k]);
+  }
+  if (triangles.length === 0) return positions;
+
+  for (const plane of unique) {
+    const u = (plane.axis + 1) % 3;
+    const v = (plane.axis + 2) % 3;
+    // Vertices in this plane, sorted along u so an edge only looks at the
+    // vertices within its own u-range.
+    const bit = 1 << unique.indexOf(plane);
+    const vertexKeys = new Set<string>();
+    const vertices: Vertex[] = [];
+    for (let v = 0, t = 0; t + 2 < positions.length; v += 1, t += 3) {
+      if (!(vertexPlanes[v] & bit)) continue;
+      const key = `${positions[t]},${positions[t + 1]},${positions[t + 2]}`;
+      if (vertexKeys.has(key)) continue;
+      vertexKeys.add(key);
+      vertices.push({ x: positions[t], y: positions[t + 1], z: positions[t + 2] });
+    }
+    if (vertices.length < 3) continue;
+    const coord = (vertex: Vertex, axis: number) => (axis === 0 ? vertex.x : axis === 1 ? vertex.y : vertex.z);
+    vertices.sort((p, q) => coord(p, u) - coord(q, u));
+    const us = vertices.map((vertex) => coord(vertex, u));
+    const lowerBound = (value: number) => {
+      let low = 0;
+      let high = us.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (us[mid] < value) low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    };
+
+    const next: number[][] = [];
+    const queue = triangles;
+    while (queue.length > 0) {
+      const tri = queue.pop()!;
+      let split = false;
+      for (let e = 0; e < 3 && !split; e += 1) {
+        const ia = e * 3;
+        const ib = ((e + 1) % 3) * 3;
+        const ic = ((e + 2) % 3) * 3;
+        if (!near(tri[ia + plane.axis], plane.at) || !near(tri[ib + plane.axis], plane.at)) continue;
+        const au = tri[ia + u];
+        const av = tri[ia + v];
+        const bu = tri[ib + u];
+        const bv = tri[ib + v];
+        const du = bu - au;
+        const dv = bv - av;
+        const length2 = du * du + dv * dv;
+        if (length2 <= EDGE_EPSILON * EDGE_EPSILON) continue;
+        const uMin = Math.min(au, bu);
+        const uMax = Math.max(au, bu);
+        // The interior vertex nearest to a, so the split is done one at a
+        // time in order along the edge; the pieces are queued again.
+        let bestT = Number.POSITIVE_INFINITY;
+        let best: Vertex | null = null;
+        for (let k = lowerBound(uMin - EDGE_EPSILON); k < vertices.length && us[k] <= uMax + EDGE_EPSILON; k += 1) {
+          const pu = coord(vertices[k], u);
+          const pv = coord(vertices[k], v);
+          const cross = Math.abs(du * (pv - av) - dv * (pu - au));
+          if (cross > EDGE_EPSILON * Math.sqrt(length2)) continue;
+          const t = (du * (pu - au) + dv * (pv - av)) / length2;
+          if (t <= 1e-9 || t >= 1 - 1e-9) continue;
+          if (t < bestT) {
+            bestT = t;
+            best = vertices[k];
+          }
+        }
+        if (!best) continue;
+        const p = [best.x, best.y, best.z];
+        const a = tri.slice(ia, ia + 3);
+        const b = tri.slice(ib, ib + 3);
+        const c = tri.slice(ic, ic + 3);
+        queue.push([...a, ...p, ...c], [...p, ...b, ...c]);
+        split = true;
+      }
+      if (!split) next.push(tri);
+    }
+    triangles = next;
+  }
+
+  for (const tri of triangles) {
+    if (collinear(tri.slice(0, 3), tri.slice(3, 6), tri.slice(6, 9))) continue;
+    for (let i = 0; i < 9; i += 1) out.push(tri[i]);
   }
   return out;
 }

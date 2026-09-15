@@ -320,6 +320,32 @@ describe("region resize on a shape", () => {
     expect(tightenRegionToShape(cone, empty)).toEqual(empty);
   });
 
+  it("stays watertight across a sequence of drags", () => {
+    // Shrinking the top half in width, then in length, slides the seam on
+    // the first step's ledge along its own line - the outside edge is then
+    // only partly walked by the inside, a T-junction. Lifting afterwards
+    // must still find the seam, or the top comes away as a separate piece.
+    let block = {
+      ...shape, height: 10, size: 20,
+      importedMesh: { ...shape.importedMesh!, positions: boxSoup(-10, 10, 0, 10, -10, 10), baseHeight: 10 },
+    } as WorkplaneShape;
+    let region: ResizeRegion = { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 };
+    const steps: Array<[Partial<ResizeRegion>, "stretch" | "push"]> = [
+      [{ maxX: 8 }, "stretch"], [{ maxZ: 8 }, "stretch"], [{ minY: 8, maxY: 13 }, "push"], [{ minX: -6 }, "push"], [{ maxY: 16 }, "stretch"],
+    ];
+    for (const [change, mode] of steps) {
+      const result = regionResizedShape(block, region, { ...region, ...change }, mode)!;
+      block = { ...block, ...result.patch } as WorkplaneShape;
+      region = tightenRegionToShape(block, result.region);
+      expect(watertight(block.importedMesh!.positions), JSON.stringify(change)).toBe(true);
+    }
+    // The base still spans the full 20 x 20 (with extra vertices where the
+    // planes cut through it), the top reaches 16.
+    expect(block.height).toBe(16);
+    const base = xs(block.importedMesh!.positions, (p) => p[1] < 5 - 1e-9);
+    expect([base[0], base.at(-1)]).toEqual([-10, 10]);
+  });
+
   it("clamps a region to the shape and keeps it a box", () => {
     const clamped = clampRegionToShape({ minX: 5, maxX: -5, minY: -3, maxY: 40, minZ: 0, maxZ: 0 }, shape);
     expect(clamped.minX).toBe(-5);
