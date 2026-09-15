@@ -5,9 +5,10 @@
 .codex-remote-attachments
 node_modules
 **/node_modules
-.next
-**/.next
-**/.next-export
+# next.config.ts writes to .next, .next-dev (dev server) or .next-export.
+**/.next*
+# Staged from node_modules by the prebuild step, so the image rebuilds it.
+apps/web/public/occt
 apps/web/out
 coverage
 playwright-report
