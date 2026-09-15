@@ -8116,8 +8116,12 @@ export function SketchForgeEditor({
     (Object.keys(region) as Array<keyof ResizeRegion>).forEach((face) => {
       if (Math.abs(region[face] - current.region[face]) > 1e-9) limits[face] = region[face];
     });
-    const shape = shapesRef.current.find((entry) => entry.id === current.shapeId);
-    const next = { ...current, limits, region: shape ? tightenRegionToShape(shape, clampRegionToShape(region, shape)) : region };
+    // The reported box is exactly the one the mesh was deformed to fill, so
+    // it is taken as is. Checking it against the shape here would use
+    // shapesRef, which the batched drag updates may not have caught up with
+    // yet - a box clipped to a stale, shorter shape left the top face
+    // outside it, and the next drag moved the walls without the top.
+    const next = { ...current, limits, region };
     // At the end of a drag the history entry for it does not exist yet - it
     // is written when the interaction is finalized, and picks the box up
     // from state then. Writing onto the current entry here would put the

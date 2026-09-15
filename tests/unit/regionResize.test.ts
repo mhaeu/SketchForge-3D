@@ -332,6 +332,8 @@ describe("region resize on a shape", () => {
     let region: ResizeRegion = { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 };
     const steps: Array<[Partial<ResizeRegion>, "stretch" | "push"]> = [
       [{ maxX: 8 }, "stretch"], [{ maxZ: 8 }, "stretch"], [{ minY: 8, maxY: 13 }, "push"], [{ minX: -6 }, "push"], [{ maxY: 16 }, "stretch"],
+      // Height handle, then the lift arrow - in every combination of modes.
+      [{ maxY: 19 }, "push"], [{ minY: 10, maxY: 21 }, "push"], [{ maxY: 24 }, "stretch"], [{ minY: 12, maxY: 26 }, "stretch"],
     ];
     for (const [change, mode] of steps) {
       const result = regionResizedShape(block, region, { ...region, ...change }, mode)!;
@@ -341,7 +343,7 @@ describe("region resize on a shape", () => {
     }
     // The base still spans the full 20 x 20 (with extra vertices where the
     // planes cut through it), the top reaches 16.
-    expect(block.height).toBe(16);
+    expect(block.height).toBe(26);
     const base = xs(block.importedMesh!.positions, (p) => p[1] < 5 - 1e-9);
     expect([base[0], base.at(-1)]).toEqual([-10, 10]);
   });
