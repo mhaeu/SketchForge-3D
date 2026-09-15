@@ -92,6 +92,15 @@ function axisMaps(from: ResizeRegion, to: ResizeRegion): Record<Axis, AxisMap> {
 
 const AXIS_OFFSET: Record<Axis, number> = { X: 0, Y: 1, Z: 2 };
 
+// Vertices are matched by position, rounded to a ten-millionth of a
+// millimetre: duplicates a rounding error apart (a tessellated cylinder's
+// seam column) count as one, while anything a CAD model distinguishes stays
+// distinct.
+const KEY_SCALE = 1e7;
+function vertexKey(positions: number[], i: number) {
+  return `${Math.round(positions[i] * KEY_SCALE)},${Math.round(positions[i + 1] * KEY_SCALE)},${Math.round(positions[i + 2] * KEY_SCALE)}`;
+}
+
 function lexicallyBefore(p: number[], q: number[]) {
   return p[0] !== q[0] ? p[0] < q[0] : p[1] !== q[1] ? p[1] < q[1] : p[2] < q[2];
 }
@@ -202,7 +211,7 @@ function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, Axi
   const triCount = Math.floor(cut.length / 9);
   const lo = [from.minX, from.minY, from.minZ];
   const hi = [from.maxX, from.maxY, from.maxZ];
-  const key = (i: number) => `${cut[i]},${cut[i + 1]},${cut[i + 2]}`;
+  const key = (i: number) => vertexKey(cut, i);
   const edgeKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
   const insideVertex = (i: number) => {
     for (let c = 0; c < 3; c += 1) {
@@ -373,7 +382,7 @@ function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, Axi
 export function deformPositionsInRegion(positions: number[], from: ResizeRegion, to: ResizeRegion, mode: RegionResizeMode): number[] {
   const maps = axisMaps(from, to);
   const { cut, inside, seams, inPlane, riding, anyRiding } = prepare(positions, from, maps);
-  const key = (i: number) => `${cut[i]},${cut[i + 1]},${cut[i + 2]}`;
+  const key = (i: number) => vertexKey(cut, i);
 
   // Per-axis numbers for the hot loop, so mapping a vertex is arithmetic
   // and a key is only ever built for the few vertices whose fate depends on
@@ -398,8 +407,11 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
     if (pushes[c]) {
       if (minMoved[c] && maxMoved[c]) {
         // No fixed face to insert material at: each half follows its own
-        // face and the material goes in at the middle.
-        return value + (value < (lo[c] + hi[c]) / 2 ? shiftLo[c] : shiftHi[c]);
+        // face and the material goes in at the middle. Vertices on the
+        // middle plane all go with the upper half - meshes carry duplicate
+        // vertices a rounding error apart there (a cylinder's seam column
+        // at x = 0 and x = -2e-16), and splitting them would tear the mesh.
+        return value + (value < (lo[c] + hi[c]) / 2 - EDGE_EPSILON ? shiftLo[c] : shiftHi[c]);
       }
       if (near(value, fixedAt[c]) && inPlane[fixedFace[c]].has(key(i))) return value;
       return value + shiftLo[c] + shiftHi[c];
@@ -527,7 +539,7 @@ function stitchPlaneSeams(positions: number[], planes: Array<{ axis: number; at:
     const vertices: Vertex[] = [];
     for (let v = 0, t = 0; t + 2 < positions.length; v += 1, t += 3) {
       if (!(vertexPlanes[v] & bit)) continue;
-      const key = `${positions[t]},${positions[t + 1]},${positions[t + 2]}`;
+      const key = vertexKey(positions, t);
       if (vertexKeys.has(key)) continue;
       vertexKeys.add(key);
       vertices.push({ x: positions[t], y: positions[t + 1], z: positions[t + 2] });
