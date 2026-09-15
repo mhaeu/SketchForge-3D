@@ -19,11 +19,15 @@ export type ResizeRegion = {
 /**
  * What happens to the material inside the region when the box changes size.
  * - stretch: the inside scales with the box, so its features distort.
- * - push: the inside moves rigidly with the face being dragged, and the
- *   triangles crossing the opposite face are extruded to fill the gap - the
- *   part gets longer without changing shape.
- * Either way, nothing outside the box moves: the mesh is cut along the box
- * faces the change ends at, so the change stops exactly there.
+ * - push: the inside moves rigidly with the face being dragged; at the face
+ *   that stayed put a band of new material fills the gap, so the part gets
+ *   longer without changing shape.
+ *
+ * In both modes the mesh is first cut along the six box faces, so the change
+ * ends exactly at the box. Material outside the box keeps its shape: what
+ * lies in front of a dragged face rides along with it, everything else
+ * stays where it is, and wherever the moved inside parts from the outside
+ * that stayed, a band of new triangles closes the seam.
  */
 export type RegionResizeMode = "stretch" | "push";
 
@@ -86,45 +90,8 @@ function axisMaps(from: ResizeRegion, to: ResizeRegion): Record<Axis, AxisMap> {
   return maps;
 }
 
-/**
- * Whether a coordinate counts as inside the box for the purpose of moving.
- * A face that stayed put is where the deformation ends, so a row lying
- * exactly on it belongs to the outside; a face that moved carries its row
- * along. On axes that did not change the interval is closed - the box may
- * sit exactly on the surface there (a box around a neck), and that surface
- * has to move.
- */
-function movesAlong(value: number, map: AxisMap) {
-  const [a, b] = map.from;
-  const changed = map.minMoved || map.maxMoved;
-  const aboveMin = !changed || map.minMoved ? value >= a - EDGE_EPSILON : value > a + EDGE_EPSILON;
-  const belowMax = !changed || map.maxMoved ? value <= b + EDGE_EPSILON : value < b - EDGE_EPSILON;
-  return aboveMin && belowMax;
-}
-
-/** Strictly beyond a face the mesh was cut along - i.e. outside for good. */
-function beyondCutFace(value: number, map: AxisMap) {
-  const [a, b] = map.from;
-  return (!map.minMoved && value < a - EDGE_EPSILON) || (!map.maxMoved && value > b + EDGE_EPSILON);
-}
-
-function mapped(value: number, map: AxisMap, mode: RegionResizeMode) {
-  const [a, b] = map.from;
-  const [a2, b2] = map.to;
-  if (mode === "push") {
-    // Rigid: the inside follows the face that moved. When both faces moved
-    // (a centred resize) there is no fixed face to insert material at, so
-    // each half follows its own face and the material goes in at the middle.
-    if (map.minMoved && map.maxMoved) {
-      return value + (value < (a + b) / 2 ? a2 - a : b2 - b);
-    }
-    return value + (a2 - a) + (b2 - b);
-  }
-  const size = Math.max(EDGE_EPSILON, b - a);
-  return a2 + (value - a) * ((b2 - a2) / size);
-}
-
 const AXIS_OFFSET: Record<Axis, number> = { X: 0, Y: 1, Z: 2 };
+const near = (a: number, b: number) => Math.abs(a - b) <= EDGE_EPSILON;
 
 /**
  * Splits every triangle that crosses the plane `axis = at` into pieces that
@@ -193,78 +160,281 @@ function cutAlongPlane(positions: number[], axis: Axis, at: number, box: ResizeR
   return out;
 }
 
-// The cut depends only on the start region and on which faces are moving,
-// both constant for the length of a drag, while the deformation runs on every
-// pointer move. One remembered result turns the six passes over the mesh into
-// a lookup for all but the first move.
-let lastCut: { positions: number[]; from: ResizeRegion; faces: string; result: number[] } | null = null;
+/**
+ * Everything about a drag that does not change from one pointer move to the
+ * next: the cut mesh, which triangles are inside, the seams, and the material
+ * riding along in front of the moved faces. Keyed on the start positions, the
+ * start region and which faces are moving - all constant for a drag - so it
+ * is built once per drag.
+ */
+type Prepared = {
+  cut: number[];
+  inside: Uint8Array;
+  /** Seams as triples: two vertex indices into `cut` in the order the inside triangle walks them, and the outside triangle across the edge. */
+  seams: number[];
+  /** Per face (axis * 2 + side): keys of inside vertices with an inside triangle lying in that face's plane. */
+  inPlane: Set<string>[];
+  /** Per triangle, a bit per face (1 << (axis * 2 + side)): the triangle rides along with that moved face. */
+  riding: Uint8Array;
+  anyRiding: boolean;
+  faces: string;
+};
 
-function cutForRegion(positions: number[], from: ResizeRegion, maps: Record<Axis, AxisMap>): number[] {
-  const faces = AXES.map((axis) => `${maps[axis].minMoved ? 1 : 0}${maps[axis].maxMoved ? 1 : 0}`).join("");
-  if (lastCut && lastCut.positions === positions && lastCut.faces === faces && regionsEqual(lastCut.from, from)) {
-    return lastCut.result;
+let lastPrepared: { positions: number[]; from: ResizeRegion; faces: string; result: Prepared } | null = null;
+
+function faceKey(maps: Record<Axis, AxisMap>) {
+  return AXES.map((axis) => `${maps[axis].minMoved ? 1 : 0}${maps[axis].maxMoved ? 1 : 0}`).join("");
+}
+
+function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, AxisMap>): Prepared {
+  const faces = faceKey(maps);
+  if (lastPrepared && lastPrepared.positions === positions && lastPrepared.faces === faces && regionsEqual(lastPrepared.from, from)) {
+    return lastPrepared.result;
   }
+
   let cut = positions;
   for (const axis of AXES) {
-    const map = maps[axis];
-    if (!map.minMoved) cut = cutAlongPlane(cut, axis, map.from[0], from);
-    if (!map.maxMoved) cut = cutAlongPlane(cut, axis, map.from[1], from);
+    cut = cutAlongPlane(cut, axis, from[`min${axis}`], from);
+    cut = cutAlongPlane(cut, axis, from[`max${axis}`], from);
   }
-  lastCut = { positions, from, faces, result: cut };
-  return cut;
+  const triCount = Math.floor(cut.length / 9);
+  const lo = [from.minX, from.minY, from.minZ];
+  const hi = [from.maxX, from.maxY, from.maxZ];
+  const key = (i: number) => `${cut[i]},${cut[i + 1]},${cut[i + 2]}`;
+  const edgeKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const insideVertex = (i: number) => {
+    for (let c = 0; c < 3; c += 1) {
+      if (cut[i + c] < lo[c] - EDGE_EPSILON || cut[i + c] > hi[c] + EDGE_EPSILON) return false;
+    }
+    return true;
+  };
+  const onFace = (i: number, face: number) => near(cut[i + (face >> 1)], face & 1 ? hi[face >> 1] : lo[face >> 1]);
+
+  // After the cut every triangle is wholly inside the closed box or not.
+  const inside = new Uint8Array(triCount);
+  for (let t = 0; t < triCount; t += 1) {
+    const i = t * 9;
+    inside[t] = insideVertex(i) && insideVertex(i + 3) && insideVertex(i + 6) ? 1 : 0;
+  }
+
+  // Seams: edges an inside triangle shares with an outside one. Only an
+  // outside edge with both ends on the hull can be one, so those are the
+  // only outside edges keyed - the rest of the outside mesh stays untouched
+  // and unindexed. An edge the inside piece has to itself (an open mesh's
+  // rim) is no seam: there is nothing across it to close a gap to.
+  // Inside faces lying in a box plane are noted per face: a push keeps such
+  // a face where it is and grows the inside away from it, instead of
+  // shifting the face and leaving a step behind.
+  const outsideHullEdges = new Map<string, number>();
+  const insideEdges = new Map<string, number>();
+  const inPlane: Set<string>[] = Array.from({ length: 6 }, () => new Set<string>());
+  for (let t = 0; t < triCount; t += 1) {
+    const i = t * 9;
+    if (!inside[t]) {
+      const hull = [insideVertex(i), insideVertex(i + 3), insideVertex(i + 6)];
+      for (let e = 0; e < 3; e += 1) {
+        const f = (e + 1) % 3;
+        if (hull[e] && hull[f]) {
+          const edge = edgeKey(key(i + e * 3), key(i + f * 3));
+          if (!outsideHullEdges.has(edge)) outsideHullEdges.set(edge, t);
+        }
+      }
+      continue;
+    }
+    const keys = [key(i), key(i + 3), key(i + 6)];
+    for (let e = 0; e < 3; e += 1) {
+      const edge = edgeKey(keys[e], keys[(e + 1) % 3]);
+      insideEdges.set(edge, (insideEdges.get(edge) ?? 0) + 1);
+    }
+    for (let face = 0; face < 6; face += 1) {
+      if (onFace(i, face) && onFace(i + 3, face) && onFace(i + 6, face)) {
+        keys.forEach((k) => inPlane[face].add(k));
+      }
+    }
+  }
+  const seams: number[] = [];
+  for (let t = 0; t < triCount; t += 1) {
+    if (!inside[t]) continue;
+    const i = t * 9;
+    for (let e = 0; e < 3; e += 1) {
+      const ia = i + e * 3;
+      const ib = i + ((e + 1) % 3) * 3;
+      const edge = edgeKey(key(ia), key(ib));
+      if (insideEdges.get(edge) !== 1) continue;
+      const across = outsideHullEdges.get(edge);
+      if (across !== undefined) seams.push(ia, ib, across);
+    }
+  }
+
+  // Riding: outside material in front of a moved face. Seeded by the outside
+  // triangles across seam edges that lie in the face's plane and reach beyond
+  // it - unless the edge also lies in a face that stayed put, where the
+  // outside is the fixed neighbour, not something in front - then flooded
+  // through the outside mesh. A face that moves inwards while its opposite
+  // moves too (the box being shifted) is trailing, and nothing behind it
+  // rides; a face moving on its own drags its material either way.
+  const riding = new Uint8Array(triCount);
+  let anyRiding = false;
+  const movedFaces: number[] = [];
+  const fixedFaces: number[] = [];
+  AXES.forEach((axis, index) => {
+    const map = maps[axis];
+    const both = map.minMoved && map.maxMoved;
+    if (map.minMoved && (!both || map.to[0] < map.from[0])) movedFaces.push(index * 2);
+    if (map.maxMoved && (!both || map.to[1] > map.from[1])) movedFaces.push(index * 2 + 1);
+    if (map.minMoved !== map.maxMoved) fixedFaces.push(map.minMoved ? index * 2 + 1 : index * 2);
+  });
+  const beyondFace = (t: number, face: number) => {
+    const axis = face >> 1;
+    const i = t * 9;
+    for (let c = 0; c < 9; c += 3) {
+      const v = cut[i + c + axis];
+      if (face & 1 ? v > hi[axis] + EDGE_EPSILON : v < lo[axis] - EDGE_EPSILON) return true;
+    }
+    return false;
+  };
+  let outsideByKey: Map<string, number[]> | null = null;
+  for (const face of movedFaces) {
+    const seeds: number[] = [];
+    for (let e = 0; e + 2 < seams.length; e += 3) {
+      const ia = seams[e];
+      const ib = seams[e + 1];
+      const across = seams[e + 2];
+      if (!onFace(ia, face) || !onFace(ib, face)) continue;
+      if (fixedFaces.some((fixed) => onFace(ia, fixed) && onFace(ib, fixed))) continue;
+      if (beyondFace(across, face)) seeds.push(across);
+    }
+    if (seeds.length === 0) continue;
+    // The whole outside mesh is only indexed once something actually rides.
+    if (!outsideByKey) {
+      outsideByKey = new Map<string, number[]>();
+      for (let t = 0; t < triCount; t += 1) {
+        if (inside[t]) continue;
+        const i = t * 9;
+        for (let c = 0; c < 9; c += 3) {
+          const k = key(i + c);
+          const list = outsideByKey.get(k);
+          if (list) list.push(t);
+          else outsideByKey.set(k, [t]);
+        }
+      }
+    }
+    const bit = 1 << face;
+    const queue = seeds.filter((t) => !(riding[t] & bit) && (riding[t] |= bit));
+    anyRiding = anyRiding || queue.length > 0;
+    while (queue.length > 0) {
+      const t = queue.pop()!;
+      const i = t * 9;
+      for (let c = 0; c < 9; c += 3) {
+        for (const other of outsideByKey.get(key(i + c)) ?? []) {
+          if (!(riding[other] & bit)) {
+            riding[other] |= bit;
+            queue.push(other);
+          }
+        }
+      }
+    }
+  }
+
+  const result = { cut, inside, seams, inPlane, riding, anyRiding, faces };
+  lastPrepared = { positions, from, faces, result };
+  return result;
 }
 
 /**
- * Moves the material inside `from` so that it fills `to`, leaving everything
- * outside exactly as it was. Positions are a flat triangle soup in the
- * shape's display frame; the result is a new soup in the same frame, with
- * more triangles than before where the box cut through faces.
- *
- * The mesh is first cut along every box face the deformation ends at - the
- * faces that stayed put, and both faces of an axis that did not change - so
- * the change stops exactly at the box instead of running on to the next
- * vertex beyond it. A face that moved is not cut: whatever lies beyond it
- * stays attached through the triangles that cross it, which stretch.
- *
- * A vertex on the box hull that is shared with a triangle outside the box is
- * pinned, so the outside triangle keeps its shape; the inside triangle next
- * to it stretches instead. A hull vertex with no outside neighbour - the box
- * sits on the surface there - moves with the inside.
+ * Moves the material inside `from` so that it fills `to`. Positions are a
+ * flat triangle soup in the shape's display frame; the result is a new soup
+ * in the same frame, with more triangles than before where the box cut
+ * through faces and where seams had to be closed.
  */
 export function deformPositionsInRegion(positions: number[], from: ResizeRegion, to: ResizeRegion, mode: RegionResizeMode): number[] {
   const maps = axisMaps(from, to);
-  const cut = cutForRegion(positions, from, maps);
-
-  // Only a vertex that could move needs a pin, and only an outside triangle
-  // can pin one - so keys are built for the hull vertices of outside
-  // triangles alone, not for the whole mesh.
-  const candidate = (i: number) => movesAlong(cut[i], maps.X) && movesAlong(cut[i + 1], maps.Y) && movesAlong(cut[i + 2], maps.Z);
-  const pinned = new Set<string>();
+  const { cut, inside, seams, inPlane, riding, anyRiding } = prepare(positions, from, maps);
   const key = (i: number) => `${cut[i]},${cut[i + 1]},${cut[i + 2]}`;
-  for (let index = 0; index + 8 < cut.length; index += 9) {
-    let outside = false;
-    for (let corner = index; corner < index + 9 && !outside; corner += 3) {
-      outside = beyondCutFace(cut[corner], maps.X) || beyondCutFace(cut[corner + 1], maps.Y) || beyondCutFace(cut[corner + 2], maps.Z);
+
+  // Per-axis numbers for the hot loop, so mapping a vertex is arithmetic
+  // and a key is only ever built for the few vertices whose fate depends on
+  // their neighbours.
+  const lo = AXES.map((axis) => maps[axis].from[0]);
+  const hi = AXES.map((axis) => maps[axis].from[1]);
+  const lo2 = AXES.map((axis) => maps[axis].to[0]);
+  const hi2 = AXES.map((axis) => maps[axis].to[1]);
+  const minMoved = AXES.map((axis) => maps[axis].minMoved);
+  const maxMoved = AXES.map((axis) => maps[axis].maxMoved);
+  const changed = AXES.map((_, c) => minMoved[c] || maxMoved[c]);
+  // Shrinking has no material to insert, so a push compresses like a stretch.
+  const pushes = AXES.map((_, c) => mode === "push" && changed[c] && hi2[c] - lo2[c] >= hi[c] - lo[c] - EDGE_EPSILON);
+  const scale = AXES.map((_, c) => (hi2[c] - lo2[c]) / Math.max(EDGE_EPSILON, hi[c] - lo[c]));
+  const shiftLo = AXES.map((_, c) => lo2[c] - lo[c]);
+  const shiftHi = AXES.map((_, c) => hi2[c] - hi[c]);
+  const fixedFace = AXES.map((_, c) => c * 2 + (minMoved[c] ? 1 : 0));
+  const fixedAt = AXES.map((_, c) => (minMoved[c] ? hi[c] : lo[c]));
+
+  const insideMap = (c: number, value: number, i: number) => {
+    if (!changed[c]) return value;
+    if (pushes[c]) {
+      if (minMoved[c] && maxMoved[c]) {
+        // No fixed face to insert material at: each half follows its own
+        // face and the material goes in at the middle.
+        return value + (value < (lo[c] + hi[c]) / 2 ? shiftLo[c] : shiftHi[c]);
+      }
+      if (near(value, fixedAt[c]) && inPlane[fixedFace[c]].has(key(i))) return value;
+      return value + shiftLo[c] + shiftHi[c];
     }
-    if (!outside) continue;
-    for (let corner = index; corner < index + 9; corner += 3) {
-      if (candidate(corner)) pinned.add(key(corner));
+    return lo2[c] + (value - lo[c]) * scale[c];
+  };
+  const outsideShift = (t: number, c: number) => {
+    const mask = riding[t];
+    return (mask & (1 << (c * 2)) ? shiftLo[c] : 0) + (mask & (1 << (c * 2 + 1)) ? shiftHi[c] : 0);
+  };
+
+  const out = cut.slice();
+  for (let t = 0; t < inside.length; t += 1) {
+    const i = t * 9;
+    if (inside[t]) {
+      for (let v = i; v < i + 9; v += 3) {
+        for (let c = 0; c < 3; c += 1) out[v + c] = insideMap(c, cut[v + c], v);
+      }
+    } else if (anyRiding && riding[t]) {
+      for (let c = 0; c < 3; c += 1) {
+        const shift = outsideShift(t, c);
+        if (shift) for (let v = i; v < i + 9; v += 3) out[v + c] += shift;
+      }
     }
   }
 
-  const next = cut.slice();
-  for (let index = 0; index + 2 < cut.length; index += 3) {
-    if (!candidate(index) || (pinned.size > 0 && pinned.has(key(index)))) continue;
-    next[index] = mapped(cut[index], maps.X, mode);
-    next[index + 1] = mapped(cut[index + 1], maps.Y, mode);
-    next[index + 2] = mapped(cut[index + 2], maps.Z, mode);
+  // Seams: where the inside parted from outside that did not follow, a band
+  // sweeps the edge from its outside position to its inside one. The edge is
+  // walked the way its inside triangle walks it, which keeps the band facing
+  // outwards as long as the inside moved away from the outside.
+  const aIn = [0, 0, 0];
+  const bIn = [0, 0, 0];
+  const aOut = [0, 0, 0];
+  const bOut = [0, 0, 0];
+  const same = (p: number[], q: number[]) => near(p[0], q[0]) && near(p[1], q[1]) && near(p[2], q[2]);
+  for (let e = 0; e + 2 < seams.length; e += 3) {
+    const ia = seams[e];
+    const ib = seams[e + 1];
+    const across = seams[e + 2];
+    for (let c = 0; c < 3; c += 1) {
+      aIn[c] = insideMap(c, cut[ia + c], ia);
+      bIn[c] = insideMap(c, cut[ib + c], ib);
+      const shift = anyRiding ? outsideShift(across, c) : 0;
+      aOut[c] = cut[ia + c] + shift;
+      bOut[c] = cut[ib + c] + shift;
+    }
+    const aMoved = !same(aIn, aOut);
+    const bMoved = !same(bIn, bOut);
+    if (!aMoved && !bMoved) continue;
+    if (bMoved) out.push(...aOut, ...bOut, ...bIn);
+    if (aMoved) out.push(...aOut, ...bIn, ...aIn);
   }
-  return next;
+  return out;
 }
 
 // The start shape of a drag is one object for the whole drag, so its display
-// positions - and with them the cut, which is keyed on this array - are
-// computed once per drag rather than once per pointer move.
+// positions - and with them the prepared cut, which is keyed on this array -
+// are computed once per drag rather than once per pointer move.
 let lastDisplay: { shape: WorkplaneShape; positions: number[] } | null = null;
 
 function displayPositions(shape: WorkplaneShape) {

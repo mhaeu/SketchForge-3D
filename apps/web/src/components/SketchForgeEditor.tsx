@@ -8037,6 +8037,32 @@ export function SketchForgeEditor({
     if (!usable) setRegionResize(null);
   }, [regionResize, selectedIds, shapes]);
 
+  // The box follows the history: each history entry remembers the box that
+  // went with it, so an undo shows the box the way it was before the drag
+  // instead of leaving it at its last size around a reverted mesh.
+  const regionResizeRef = useRef(regionResize);
+  regionResizeRef.current = regionResize;
+  const regionByHistoryEntryRef = useRef(new WeakMap<object, { shapeId: string; region: ResizeRegion } | null>());
+  useEffect(() => {
+    const entry = historyRef.current[historyIndex];
+    if (!entry) return;
+    const remembered = regionByHistoryEntryRef.current;
+    if (remembered.has(entry)) {
+      setRegionResize(remembered.get(entry) ?? null);
+    } else {
+      remembered.set(entry, regionResizeRef.current);
+    }
+  }, [historyIndex]);
+  // Changes to the box that make no history entry of their own (switching it
+  // on for a shape that is already a mesh, placing it from the inspector)
+  // are written onto the entry they happened on, so a later undo and redo
+  // bring them back.
+  const setRegionResizeRemembered = useCallback((next: { shapeId: string; region: ResizeRegion } | null) => {
+    setRegionResize(next);
+    const entry = historyRef.current[historyIndexRef.current];
+    if (entry) regionByHistoryEntryRef.current.set(entry, next);
+  }, []);
+
   const regionResizeShape = regionResize ? shapes.find((shape) => shape.id === regionResize.shapeId) ?? null : null;
   // Whatever else changed the shape's size (undo, say) - the box stays inside it.
   const activeRegionResize = useMemo(
@@ -8046,7 +8072,7 @@ export function SketchForgeEditor({
 
   const toggleRegionResize = useCallback(() => {
     if (regionResize) {
-      setRegionResize(null);
+      setRegionResizeRemembered(null);
       return;
     }
     if (selectedShapes.length !== 1 || !selectedShape) {
@@ -8072,12 +8098,22 @@ export function SketchForgeEditor({
       target = baked;
       commitShapes(shapes.map((shape) => (shape.id === baked.id ? baked : shape)), [baked.id], `Converted ${selectedShape.name} to a mesh for region resize`);
     }
-    setRegionResize({ shapeId: target.id, region: fullShapeRegion(target) });
-  }, [commitShapes, regionResize, selectedShape, selectedShapes.length, shapes]);
+    setRegionResizeRemembered({ shapeId: target.id, region: fullShapeRegion(target) });
+  }, [commitShapes, regionResize, selectedShape, selectedShapes.length, setRegionResizeRemembered, shapes]);
 
   const updateRegionResize = useCallback((region: ResizeRegion) => {
-    setRegionResize((current) => (current ? { ...current, region } : current));
-  }, []);
+    const current = regionResizeRef.current;
+    if (!current) return;
+    // At the end of a drag the history entry for it does not exist yet - it
+    // is written when the interaction is finalized, and picks the box up
+    // from state then. Writing onto the current entry here would put the
+    // dragged box on the entry before the drag.
+    if (projectInteractionActiveRef.current) {
+      setRegionResize({ ...current, region });
+      return;
+    }
+    setRegionResizeRemembered({ ...current, region });
+  }, [setRegionResizeRemembered]);
 
   const separateSelectedParts = useCallback(() => {
     if (selectedShapes.length !== 1 || !selectedShape) {

@@ -3767,7 +3767,7 @@ export function WorkplaneViewport({
       if (!frame || !shape || ids.length === 0 || ids.some((id) => shapesRef.current.find((entry) => entry.id === id)?.locked)) {
         return;
       }
-      const regionResize = activeRegion && activeRegion.shapeId === shape.id && (kind === "scale" || kind === "height")
+      const regionResize = activeRegion && activeRegion.shapeId === shape.id && (kind === "scale" || kind === "height" || kind === "lift")
         ? { region: activeRegion.region, mode: resizeRegionModeRef.current, boxShape: regionBoxShape(shape, activeRegion.region), superseded: [] }
         : undefined;
 
@@ -4014,6 +4014,24 @@ export function WorkplaneViewport({
           }
           const maxSize = shapeDimensionLimit(workspaceRef.current, transform.startShape.kind, 220);
           boxPatch = resizeShapeFromFrameHandle({ ...transform, startShape: boxShape }, worldPoint, transform.handleKey, shiftKey, altKey, step, maxSize, linkedAxesRef.current);
+        } else if (transform.kind === "lift") {
+          // Lifting the box shifts what is in it (and what sits on top of it)
+          // upwards, growing the shape from underneath the box.
+          const axis = (transform.liftAxis ?? transform.selectionFrame.yAxis).clone().normalize();
+          const currentPoint = transform.liftPlane ? toRawPlanePoint(clientX, clientY, transform.liftPlane) : null;
+          const rawDelta = currentPoint && transform.liftStartPoint ? currentPoint.clone().sub(transform.liftStartPoint).dot(axis) : 0;
+          const delta = snapValue(rawDelta, step);
+          boxPatch = { elevation: (boxShape.elevation ?? 0) + delta };
+          const state = threeRef.current;
+          if (state) {
+            const readoutWorld = (transform.liftHandlePoint ?? transform.selectionFrame.center).clone().addScaledVector(axis, delta);
+            const readoutPoint = projectToScreen(readoutWorld, state);
+            setRotationReadout({
+              x: readoutPoint.x + 28,
+              y: readoutPoint.y - 30,
+              text: formatMeasure((transform.liftStartValue ?? 0) + delta, workspaceRef.current.accuracy),
+            });
+          }
         }
         if (boxPatch) {
           const next = regionResizedShape(transform.startShape, region, regionFromBoxShape(transform.startShape, { ...boxShape, ...boxPatch }), mode);
