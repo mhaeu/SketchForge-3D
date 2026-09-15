@@ -22,7 +22,8 @@ export type ResizeRegion = {
  * - push: the inside moves rigidly with the face being dragged, and the
  *   triangles crossing the opposite face are extruded to fill the gap - the
  *   part gets longer without changing shape.
- * Either way, nothing outside the box moves.
+ * Either way, nothing outside the box moves: the mesh is cut along the box
+ * faces the change ends at, so the change stops exactly there.
  */
 export type RegionResizeMode = "stretch" | "push";
 
@@ -66,12 +67,6 @@ type AxisMap = {
   to: [number, number];
   minMoved: boolean;
   maxMoved: boolean;
-  // A face that stayed put is the one material gets inserted at, so a vertex
-  // row lying exactly on it belongs to the outside and stays as well - that
-  // is what makes a push a clean extrusion when the box is snapped to an
-  // edge. Faces that moved, and axes that did not change, keep their rows.
-  minInclusive: boolean;
-  maxInclusive: boolean;
 };
 
 function axisMaps(from: ResizeRegion, to: ResizeRegion): Record<Axis, AxisMap> {
@@ -81,26 +76,36 @@ function axisMaps(from: ResizeRegion, to: ResizeRegion): Record<Axis, AxisMap> {
     const b = from[`max${axis}`];
     const a2 = to[`min${axis}`];
     const b2 = to[`max${axis}`];
-    const minMoved = Math.abs(a2 - a) > EDGE_EPSILON;
-    const maxMoved = Math.abs(b2 - b) > EDGE_EPSILON;
-    const changed = minMoved || maxMoved;
     maps[axis] = {
       from: [a, b],
       to: [a2, b2],
-      minMoved,
-      maxMoved,
-      minInclusive: !changed || minMoved,
-      maxInclusive: !changed || maxMoved,
+      minMoved: Math.abs(a2 - a) > EDGE_EPSILON,
+      maxMoved: Math.abs(b2 - b) > EDGE_EPSILON,
     };
   }
   return maps;
 }
 
-function inside(value: number, map: AxisMap) {
+/**
+ * Whether a coordinate counts as inside the box for the purpose of moving.
+ * A face that stayed put is where the deformation ends, so a row lying
+ * exactly on it belongs to the outside; a face that moved carries its row
+ * along. On axes that did not change the interval is closed - the box may
+ * sit exactly on the surface there (a box around a neck), and that surface
+ * has to move.
+ */
+function movesAlong(value: number, map: AxisMap) {
   const [a, b] = map.from;
-  const aboveMin = map.minInclusive ? value >= a - EDGE_EPSILON : value > a + EDGE_EPSILON;
-  const belowMax = map.maxInclusive ? value <= b + EDGE_EPSILON : value < b - EDGE_EPSILON;
+  const changed = map.minMoved || map.maxMoved;
+  const aboveMin = !changed || map.minMoved ? value >= a - EDGE_EPSILON : value > a + EDGE_EPSILON;
+  const belowMax = !changed || map.maxMoved ? value <= b + EDGE_EPSILON : value < b - EDGE_EPSILON;
   return aboveMin && belowMax;
+}
+
+/** Strictly beyond a face the mesh was cut along - i.e. outside for good. */
+function beyondCutFace(value: number, map: AxisMap) {
+  const [a, b] = map.from;
+  return (!map.minMoved && value < a - EDGE_EPSILON) || (!map.maxMoved && value > b + EDGE_EPSILON);
 }
 
 function mapped(value: number, map: AxisMap, mode: RegionResizeMode) {
@@ -119,29 +124,154 @@ function mapped(value: number, map: AxisMap, mode: RegionResizeMode) {
   return a2 + (value - a) * ((b2 - a2) / size);
 }
 
+const AXIS_OFFSET: Record<Axis, number> = { X: 0, Y: 1, Z: 2 };
+
 /**
- * Moves the vertices that lie inside `from` so that they fill `to`, leaving
- * every other vertex where it is. Positions are a flat triangle soup in the
- * shape's display frame; the result is a new array in the same frame.
+ * Splits every triangle that crosses the plane `axis = at` into pieces that
+ * lie on one side only. The intersection point of an edge is computed once
+ * and used by both sides, so the two halves share bit-identical vertices
+ * and the seam stays watertight.
+ */
+function cutAlongPlane(positions: number[], axis: Axis, at: number, box: ResizeRegion): number[] {
+  const offset = AXIS_OFFSET[axis];
+  const out: number[] = [];
+  const side = [0, 0, 0];
+  const lo = [box.minX, box.minY, box.minZ];
+  const hi = [box.maxX, box.maxY, box.maxZ];
+  const pushPolygon = (polygon: number[][]) => {
+    for (let i = 1; i + 1 < polygon.length; i += 1) {
+      out.push(polygon[0][0], polygon[0][1], polygon[0][2], polygon[i][0], polygon[i][1], polygon[i][2], polygon[i + 1][0], polygon[i + 1][1], polygon[i + 1][2]);
+    }
+  };
+  for (let index = 0; index + 8 < positions.length; index += 9) {
+    let positive = 0;
+    let negative = 0;
+    for (let i = 0; i < 3; i += 1) {
+      const d = positions[index + i * 3 + offset] - at;
+      side[i] = Math.abs(d) <= EDGE_EPSILON ? 0 : d;
+      if (side[i] > 0) positive += 1;
+      if (side[i] < 0) negative += 1;
+    }
+    // A triangle that never reaches the box has nothing inside it to part
+    // from, so the plane is left to run through it uncut - fewer triangles,
+    // and the same surface.
+    let touchesBox = positive > 0 && negative > 0;
+    for (let c = 0; c < 3 && touchesBox; c += 1) {
+      const v0 = positions[index + c];
+      const v1 = positions[index + 3 + c];
+      const v2 = positions[index + 6 + c];
+      touchesBox = Math.max(v0, v1, v2) >= lo[c] - EDGE_EPSILON && Math.min(v0, v1, v2) <= hi[c] + EDGE_EPSILON;
+    }
+    if (!touchesBox) {
+      for (let i = 0; i < 9; i += 1) out.push(positions[index + i]);
+      continue;
+    }
+    // Sutherland-Hodgman against both half-spaces at once, keeping the
+    // triangle's winding.
+    const tri = [positions.slice(index, index + 3), positions.slice(index + 3, index + 6), positions.slice(index + 6, index + 9)];
+    const above: number[][] = [];
+    const below: number[][] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const j = (i + 1) % 3;
+      if (side[i] >= 0) above.push(tri[i]);
+      if (side[i] <= 0) below.push(tri[i]);
+      if ((side[i] > 0 && side[j] < 0) || (side[i] < 0 && side[j] > 0)) {
+        const t = side[i] / (side[i] - side[j]);
+        const point = [
+          tri[i][0] + (tri[j][0] - tri[i][0]) * t,
+          tri[i][1] + (tri[j][1] - tri[i][1]) * t,
+          tri[i][2] + (tri[j][2] - tri[i][2]) * t,
+        ];
+        point[offset] = at;
+        above.push(point);
+        below.push(point);
+      }
+    }
+    pushPolygon(above);
+    pushPolygon(below);
+  }
+  return out;
+}
+
+// The cut depends only on the start region and on which faces are moving,
+// both constant for the length of a drag, while the deformation runs on every
+// pointer move. One remembered result turns the six passes over the mesh into
+// a lookup for all but the first move.
+let lastCut: { positions: number[]; from: ResizeRegion; faces: string; result: number[] } | null = null;
+
+function cutForRegion(positions: number[], from: ResizeRegion, maps: Record<Axis, AxisMap>): number[] {
+  const faces = AXES.map((axis) => `${maps[axis].minMoved ? 1 : 0}${maps[axis].maxMoved ? 1 : 0}`).join("");
+  if (lastCut && lastCut.positions === positions && lastCut.faces === faces && regionsEqual(lastCut.from, from)) {
+    return lastCut.result;
+  }
+  let cut = positions;
+  for (const axis of AXES) {
+    const map = maps[axis];
+    if (!map.minMoved) cut = cutAlongPlane(cut, axis, map.from[0], from);
+    if (!map.maxMoved) cut = cutAlongPlane(cut, axis, map.from[1], from);
+  }
+  lastCut = { positions, from, faces, result: cut };
+  return cut;
+}
+
+/**
+ * Moves the material inside `from` so that it fills `to`, leaving everything
+ * outside exactly as it was. Positions are a flat triangle soup in the
+ * shape's display frame; the result is a new soup in the same frame, with
+ * more triangles than before where the box cut through faces.
+ *
+ * The mesh is first cut along every box face the deformation ends at - the
+ * faces that stayed put, and both faces of an axis that did not change - so
+ * the change stops exactly at the box instead of running on to the next
+ * vertex beyond it. A face that moved is not cut: whatever lies beyond it
+ * stays attached through the triangles that cross it, which stretch.
+ *
+ * A vertex on the box hull that is shared with a triangle outside the box is
+ * pinned, so the outside triangle keeps its shape; the inside triangle next
+ * to it stretches instead. A hull vertex with no outside neighbour - the box
+ * sits on the surface there - moves with the inside.
  */
 export function deformPositionsInRegion(positions: number[], from: ResizeRegion, to: ResizeRegion, mode: RegionResizeMode): number[] {
   const maps = axisMaps(from, to);
-  const next = new Array<number>(positions.length);
-  for (let index = 0; index + 2 < positions.length; index += 3) {
-    const x = positions[index];
-    const y = positions[index + 1];
-    const z = positions[index + 2];
-    if (inside(x, maps.X) && inside(y, maps.Y) && inside(z, maps.Z)) {
-      next[index] = mapped(x, maps.X, mode);
-      next[index + 1] = mapped(y, maps.Y, mode);
-      next[index + 2] = mapped(z, maps.Z, mode);
-    } else {
-      next[index] = x;
-      next[index + 1] = y;
-      next[index + 2] = z;
+  const cut = cutForRegion(positions, from, maps);
+
+  // Only a vertex that could move needs a pin, and only an outside triangle
+  // can pin one - so keys are built for the hull vertices of outside
+  // triangles alone, not for the whole mesh.
+  const candidate = (i: number) => movesAlong(cut[i], maps.X) && movesAlong(cut[i + 1], maps.Y) && movesAlong(cut[i + 2], maps.Z);
+  const pinned = new Set<string>();
+  const key = (i: number) => `${cut[i]},${cut[i + 1]},${cut[i + 2]}`;
+  for (let index = 0; index + 8 < cut.length; index += 9) {
+    let outside = false;
+    for (let corner = index; corner < index + 9 && !outside; corner += 3) {
+      outside = beyondCutFace(cut[corner], maps.X) || beyondCutFace(cut[corner + 1], maps.Y) || beyondCutFace(cut[corner + 2], maps.Z);
+    }
+    if (!outside) continue;
+    for (let corner = index; corner < index + 9; corner += 3) {
+      if (candidate(corner)) pinned.add(key(corner));
     }
   }
+
+  const next = cut.slice();
+  for (let index = 0; index + 2 < cut.length; index += 3) {
+    if (!candidate(index) || (pinned.size > 0 && pinned.has(key(index)))) continue;
+    next[index] = mapped(cut[index], maps.X, mode);
+    next[index + 1] = mapped(cut[index + 1], maps.Y, mode);
+    next[index + 2] = mapped(cut[index + 2], maps.Z, mode);
+  }
   return next;
+}
+
+// The start shape of a drag is one object for the whole drag, so its display
+// positions - and with them the cut, which is keyed on this array - are
+// computed once per drag rather than once per pointer move.
+let lastDisplay: { shape: WorkplaneShape; positions: number[] } | null = null;
+
+function displayPositions(shape: WorkplaneShape) {
+  if (lastDisplay?.shape !== shape) {
+    lastDisplay = { shape, positions: resizedImportedMeshPositions(shape) };
+  }
+  return lastDisplay.positions;
 }
 
 export type RegionResizeResult = {
@@ -161,7 +291,7 @@ export function regionResizedShape(shape: WorkplaneShape, from: ResizeRegion, to
   const mesh = shape.importedMesh;
   if (!mesh || mesh.positions.length < 9) return null;
 
-  const positions = deformPositionsInRegion(resizedImportedMeshPositions(shape), from, to, mode);
+  const positions = deformPositionsInRegion(displayPositions(shape), from, to, mode);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let minZ = Number.POSITIVE_INFINITY;

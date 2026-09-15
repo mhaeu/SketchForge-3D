@@ -21,23 +21,32 @@ const neckUpper = boxSoup(-3, 3, 15, 20, -3, 3);
 const bottle = [...body, ...neckLower, ...neckUpper];
 const neck: ResizeRegion = { minX: -3, maxX: 3, minY: 10, maxY: 20, minZ: -3, maxZ: 3 };
 
-const ys = (positions: number[]) => [...new Set(Array.from({ length: positions.length / 3 }, (_, i) => positions[i * 3 + 1]))].sort((a, b) => a - b);
-const xs = (positions: number[]) => [...new Set(Array.from({ length: positions.length / 3 }, (_, i) => positions[i * 3]))].sort((a, b) => a - b);
+type P = [number, number, number];
+const points = (positions: number[]): P[] => Array.from({ length: positions.length / 3 }, (_, i) => [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]);
+const unique = (values: number[]) => [...new Set(values.map((v) => Number(v.toFixed(9))))].sort((a, b) => a - b);
+const ys = (positions: number[], keep: (p: P) => boolean = () => true) => unique(points(positions).filter(keep).map((p) => p[1]));
+const xs = (positions: number[], keep: (p: P) => boolean = () => true) => unique(points(positions).filter(keep).map((p) => p[0]));
+const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+// Cutting adds vertices on the body's faces; the surface itself must not move.
+const onBodySurface = (p: P) => Math.abs(p[0]) <= 10 && Math.abs(p[2]) <= 10 && p[1] >= 0 && p[1] <= 10
+  && (near(Math.abs(p[0]), 10) || near(Math.abs(p[2]), 10) || near(p[1], 0) || near(p[1], 10));
+const inNeck = (p: P) => Math.abs(p[0]) <= 3 + 1e-9 && Math.abs(p[2]) <= 3 + 1e-9 && p[1] >= 10 - 1e-9;
+const bodyIntact = (positions: number[]) => points(positions).filter((p) => p[1] <= 10 + 1e-9).every(onBodySurface);
 
 describe("region deformation", () => {
   it("stretch scales the rows inside the box and leaves the rest alone", () => {
     const result = deformPositionsInRegion(bottle, neck, { ...neck, maxY: 25 }, "stretch");
-    // Body rows 0 and 10 untouched; the neck's 15 row scales to 17.5, its top to 25.
-    expect(ys(result)).toEqual([0, 10, 17.5, 25]);
-    expect(result.slice(0, body.length)).toEqual(body);
+    // The neck's 15 row scales to 17.5, its top to 25; the body is untouched.
+    expect(ys(result, inNeck)).toEqual([10, 17.5, 25]);
+    expect(bodyIntact(result)).toBe(true);
   });
 
   it("push moves the inside rigidly and extrudes the band at the fixed face", () => {
     const result = deformPositionsInRegion(bottle, neck, { ...neck, maxY: 25 }, "push");
     // The row on the fixed face (10) stays; every row above shifts by 5, so
     // the neck keeps its shape and the wall between 10 and 20 fills the gap.
-    expect(ys(result)).toEqual([0, 10, 20, 25]);
-    expect(result.slice(0, body.length)).toEqual(body);
+    expect(ys(result, inNeck)).toEqual([10, 20, 25]);
+    expect(bodyIntact(result)).toBe(true);
   });
 
   it("pushing a foot downwards keeps the joint row and extrudes below it", () => {
@@ -51,8 +60,8 @@ describe("region deformation", () => {
 
   it("widening the neck does not touch the body, even where their rows share a height", () => {
     const result = deformPositionsInRegion(bottle, neck, { ...neck, minX: -6, maxX: 6 }, "stretch");
-    expect(xs(result)).toEqual([-10, -6, 6, 10]);
-    expect(result.slice(0, body.length)).toEqual(body);
+    expect(xs(result, (p) => p[1] > 10 + 1e-9)).toEqual([-6, 6]);
+    expect(bodyIntact(result)).toBe(true);
   });
 
   it("a centred push splits the inside so the material goes in at the middle", () => {
@@ -61,6 +70,46 @@ describe("region deformation", () => {
     const result = deformPositionsInRegion(tower, region, { minX: -3, maxX: 3, minY: -4, maxY: 19, minZ: -3, maxZ: 3 }, "push");
     // Rows below the middle follow the bottom face, rows above follow the top.
     expect(ys(result)).toEqual([-4, 1, 14, 19]);
+  });
+});
+
+describe("region deformation ends at the box", () => {
+  // A pyramid: apex at (0, 10, 0) over a 20 x 20 base. Its side faces run
+  // from the base straight to the apex with no vertex in between, so without
+  // a cut a region around the tip would drag the whole face.
+  const apex: P = [0, 10, 0];
+  const corners: P[] = [[-10, 0, -10], [10, 0, -10], [10, 0, 10], [-10, 0, 10]];
+  const pyramid = [
+    ...corners.flatMap((corner, i) => [...corner, ...corners[(i + 1) % 4], ...apex]),
+    ...corners[0], ...corners[2], ...corners[1],
+    ...corners[0], ...corners[3], ...corners[2],
+  ];
+
+  it("cuts new vertices where the box meets the faces, so only the top moves", () => {
+    const top: ResizeRegion = { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 };
+    const result = deformPositionsInRegion(pyramid, top, { ...top, maxY: 15 }, "stretch");
+    // A ring of new vertices at y = 5 stays; the apex alone goes to 15.
+    expect(ys(result)).toEqual([0, 5, 15]);
+    // Below the ring the faces are exactly the old ones: the slope of a
+    // side face is unchanged, so at y = 5 the pyramid is still 10 wide.
+    expect(xs(result, (p) => near(p[1], 5))).toEqual([-5, 5]);
+  });
+
+  it("pins hull vertices shared with the outside, so a narrow box moves just the tip", () => {
+    const tip: ResizeRegion = { minX: -2, maxX: 2, minY: 5, maxY: 10, minZ: -2, maxZ: 2 };
+    const result = deformPositionsInRegion(pyramid, tip, { ...tip, maxY: 15 }, "stretch");
+    // The side walls of the box cut the faces at y = 8 (x = 2 on the edge
+    // from the apex to a corner); those vertices belong to the outside as
+    // well and stay. Everything at |x| >= 2 is untouched.
+    expect(Math.max(...ys(result, (p) => Math.abs(p[0]) >= 2 - 1e-9 || Math.abs(p[2]) >= 2 - 1e-9))).toBe(8);
+    expect(ys(result).at(-1)).toBe(15);
+  });
+
+  it("push keeps the top rigid and extrudes the ring at the fixed face", () => {
+    const top: ResizeRegion = { minX: -10, maxX: 10, minY: 5, maxY: 10, minZ: -10, maxZ: 10 };
+    const result = deformPositionsInRegion(pyramid, top, { ...top, maxY: 15 }, "push");
+    expect(ys(result)).toEqual([0, 5, 15]);
+    expect(xs(result, (p) => near(p[1], 5))).toEqual([-5, 5]);
   });
 });
 
@@ -82,7 +131,7 @@ describe("region resize on a shape", () => {
     expect(patch.z).toBe(-2);
     expect(patch.elevation).toBe(1);
     expect(patch.importedMesh?.baseHeight).toBe(25);
-    expect(ys(patch.importedMesh!.positions)).toEqual([0, 10, 20, 25]);
+    expect(ys(patch.importedMesh!.positions, inNeck)).toEqual([10, 20, 25]);
     expect(region).toEqual({ ...neck, maxY: 25 });
     // Anything that described the old surface is gone.
     expect(patch.cadBrep).toBeUndefined();
@@ -100,7 +149,8 @@ describe("region resize on a shape", () => {
     // Bounds went from [-10, 10] to [-10, 20]: 30 wide, centre 5 further along x.
     expect(patch.width).toBe(30);
     expect(patch.x).toBe(4 + 5);
-    expect(xs(patch.importedMesh!.positions)).toEqual([-15, 15]);
+    // The cut at the fixed face x = 0 left a row there, now at -5.
+    expect(xs(patch.importedMesh!.positions)).toEqual([-15, -5, 15]);
     // The region follows the re-centring so the next drag starts from it.
     expect(region.minX).toBe(-5);
     expect(region.maxX).toBe(15);
