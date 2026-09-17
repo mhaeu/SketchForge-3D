@@ -17,3 +17,7 @@ tests
 docs
 *.log
 *.tsbuildinfo
+# Exported images (docker save) and other archives dropped into the tree
+*.tar
+*.tar.gz
+*.tgz
