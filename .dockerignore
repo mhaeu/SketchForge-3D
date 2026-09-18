@@ -1,3 +1,5 @@
+# Note: the image build (-f deploy/docker/Dockerfile) uses the file next to that
+# Dockerfile, deploy/docker/Dockerfile.dockerignore, not this one. Keep both in step.
 .git
 .github
 .codex

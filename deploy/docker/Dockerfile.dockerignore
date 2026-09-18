@@ -5,15 +5,25 @@
 
 node_modules
 **/node_modules
-**/.next
+# next.config.ts writes to .next, .next-dev (dev server) or .next-export.
+**/.next*
 **/out
 build
 dist
+# Staged from node_modules by the prebuild step, so the image rebuilds it.
+apps/web/public/occt
+# Exported images (docker save) and other archives dropped into the tree
+*.tar
+*.tar.gz
+*.tgz
 
 coverage
 test-results
 playwright-report
 .playwright-cli
+
+tests
+docs
 
 .env
 .env*.local
