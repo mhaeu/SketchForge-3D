@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cuboid, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction, type WheelEvent as ReactWheelEvent } from "react";
 import * as THREE from "three";
 import { Brush, Evaluator, HOLLOW_INTERSECTION } from "three-bvh-csg";
@@ -5232,12 +5232,16 @@ export function WorkplaneViewport({
     state.needsRender = true;
   }, []);
 
+  // Mirrors the camera's projection for the toolbar button; the camera object
+  // itself is swapped inside toggleCameraProjection.
+  const [orthographic, setOrthographic] = useState(false);
   const toggleProjection = useCallback(() => {
     const state = threeRef.current;
     if (!state) {
       return;
     }
     toggleCameraProjection(state);
+    setOrthographic(state.camera instanceof THREE.OrthographicCamera);
   }, []);
 
   const togglePlacementWorkplane = useCallback(() => {
@@ -5506,6 +5510,15 @@ export function WorkplaneViewport({
             </button>
             <button aria-label="Zoom out" onClick={() => zoomCamera(1.35)}>
               <Minus size={28} strokeWidth={2.15} />
+            </button>
+            <button
+              className={orthographic ? "active" : ""}
+              aria-label="Orthographic view"
+              title={orthographic ? "Back to perspective view (O)" : "Orthographic view - no perspective, parallel edges stay parallel (O)"}
+              aria-pressed={orthographic}
+              onClick={toggleProjection}
+            >
+              <Cuboid size={25} strokeWidth={2.1} aria-hidden="true" />
             </button>
             <div className="workplane-control-group">
               <button
