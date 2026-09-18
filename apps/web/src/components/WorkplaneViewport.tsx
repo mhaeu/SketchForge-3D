@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Cuboid, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction, type WheelEvent as ReactWheelEvent } from "react";
 import * as THREE from "three";
 import { Brush, Evaluator, HOLLOW_INTERSECTION } from "three-bvh-csg";
@@ -48,6 +48,7 @@ import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { createTransparentSurfaceSort } from "@/lib/transparentSort";
+import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
@@ -5232,6 +5233,40 @@ export function WorkplaneViewport({
     state.needsRender = true;
   }, []);
 
+  // Frames the selection - or, with nothing selected, everything - in the
+  // viewport: the camera keeps its direction and moves so the selection's
+  // bounding sphere fills the view.
+  const frameSelection = useCallback(() => {
+    const state = threeRef.current;
+    if (!state) {
+      return;
+    }
+    const shapes = shapesRef.current.filter((shape) => !shape.hidden);
+    const selected = selectedIdsRef.current.filter((id) => shapes.some((shape) => shape.id === id));
+    const ids = selected.length > 0 ? selected : shapes.map((shape) => shape.id);
+    const frame = selectionFrameForShapes(shapes, ids);
+    if (!frame) {
+      return;
+    }
+    const corners = selectionFrameCorners(frame);
+    const radius = Math.max(MIN_SHAPE_SIZE, ...corners.map((corner) => corner.distanceTo(frame.center)));
+    const canvas = state.renderer.domElement;
+    const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+    const offset = state.camera.position.clone().sub(state.controls.target);
+    if (offset.lengthSq() === 0) offset.copy(CAMERA_HOME).sub(CAMERA_TARGET);
+    if (state.camera instanceof THREE.OrthographicCamera) {
+      const zoom = orthographicFramingZoom(radius, Math.max(0.001, (state.camera.top - state.camera.bottom) / 2), aspect);
+      if (zoom !== null) state.camera.zoom = clamp(zoom, 0.02, 100);
+    } else {
+      offset.setLength(clamp(perspectiveFramingDistance(radius, CAMERA_FOV, aspect), 22, 4200));
+    }
+    state.controls.target.copy(frame.center);
+    state.camera.position.copy(frame.center).add(offset);
+    state.camera.updateProjectionMatrix();
+    state.controls.update();
+    state.needsRender = true;
+  }, []);
+
   // Mirrors the camera's projection for the toolbar button; the camera object
   // itself is swapped inside toggleCameraProjection.
   const [orthographic, setOrthographic] = useState(false);
@@ -5460,6 +5495,9 @@ export function WorkplaneViewport({
         if (!event.shiftKey || !setPlacementWorkplaneAtSelection()) {
           togglePlacementWorkplane();
         }
+      } else if (key === "f" && event.shiftKey) {
+        event.preventDefault();
+        frameSelection();
       } else if (key === "f" || event.key === "Home") {
         event.preventDefault();
         resetView();
@@ -5477,7 +5515,7 @@ export function WorkplaneViewport({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onWorkplaneModeChange, resetView, rulerToolsOpen, setPlacementWorkplaneAtSelection, setRulerActive, setViewCubeFace, togglePlacementWorkplane, toggleProjection, zoomCamera]);
+  }, [frameSelection, onWorkplaneModeChange, resetView, rulerToolsOpen, setPlacementWorkplaneAtSelection, setRulerActive, setViewCubeFace, togglePlacementWorkplane, toggleProjection, zoomCamera]);
 
   return (
     <main className={`workplane-stage ${challengeTutorial ? `key-tag-tutorial-active ${challengeTutorialCollapsed ? "key-tag-tutorial-collapsed" : ""}` : ""}`}>
@@ -5502,8 +5540,11 @@ export function WorkplaneViewport({
             <button className="camera-controls-toggle" aria-label="Hide camera controls" title="Hide controls" aria-expanded={true} onClick={collapseCameraControls}>
               <ChevronLeft size={24} strokeWidth={2.25} aria-hidden="true" />
             </button>
-            <button aria-label="Home" onClick={resetView}>
+            <button aria-label="Home" title="Home view (F)" onClick={resetView}>
               <Home size={24} strokeWidth={2.25} />
+            </button>
+            <button aria-label="Frame selection" title="Frame the selection - or everything, with nothing selected (Shift+F)" onClick={frameSelection}>
+              <Focus size={24} strokeWidth={2.2} aria-hidden="true" />
             </button>
             <button aria-label="Zoom in" onClick={() => zoomCamera(0.7)}>
               <Plus size={28} strokeWidth={2.15} />
