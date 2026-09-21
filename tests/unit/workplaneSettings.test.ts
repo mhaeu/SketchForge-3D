@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import { toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, normalizeScaleForUnits, parseMeasurementInput, scaleOptionsForUnits } from "@/lib/measurementUnits";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 
@@ -159,5 +160,46 @@ describe("workplane settings helpers", () => {
     expect(hydratedCommit).toEqual({ shouldSync: false, pendingFingerprint: null });
 
     expect(workspaceHydrationSyncDecision(hydratedCommit.pendingFingerprint, projectTwo).shouldSync).toBe(true);
+  });
+});
+
+/**
+ * Die Vorgaben, die im Einstellungsfenster stehen, muessen das Speichern
+ * ueberstehen. Fehlt eine Art in der Liste der anpassbaren Arten, wirft das
+ * Normalisieren ihre Werte stillschweigend weg.
+ */
+describe("customizations for the shapes in the palette", () => {
+  it("keeps a default for every kind the palette offers", () => {
+    const customizations = Object.fromEntries(
+      toolbarShapeAssets.map((asset) => [asset.kind, { maxDimension: 123 }]),
+    );
+    const normalized = normalizeWorkspaceSettings({ ...DEFAULT_WORKPLANE_WORKSPACE, shapeCustomizations: customizations });
+    toolbarShapeAssets.forEach((asset) => {
+      expect(normalized.shapeCustomizations[asset.kind]?.maxDimension, asset.id).toBe(123);
+    });
+  });
+
+  it("keeps the thread and spring settings the dialog writes", () => {
+    const normalized = normalizeWorkspaceSettings({
+      ...DEFAULT_WORKPLANE_WORKSPACE,
+      shapeCustomizations: {
+        thread: { threadRole: "screw", threadHead: "countersunk", threadDrive: "torx", threadDiameter: 8, threadPitch: 1.25 },
+        spring: { springTurns: 9, springWire: 2.5 },
+      },
+    });
+    expect(normalized.shapeCustomizations.thread).toMatchObject({
+      threadRole: "screw",
+      threadHead: "countersunk",
+      threadDrive: "torx",
+      threadDiameter: 8,
+      threadPitch: 1.25,
+    });
+    expect(normalized.shapeCustomizations.spring).toMatchObject({ springTurns: 9, springWire: 2.5 });
+    // Und ein Unsinnswert faellt weiterhin heraus.
+    const bogus = normalizeWorkspaceSettings({
+      ...DEFAULT_WORKPLANE_WORKSPACE,
+      shapeCustomizations: { thread: { threadDrive: "gibberish" } },
+    });
+    expect(bogus.shapeCustomizations.thread?.threadDrive).toBeUndefined();
   });
 });

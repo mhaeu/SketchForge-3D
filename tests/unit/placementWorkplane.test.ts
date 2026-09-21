@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   horizontalPlacementWorkplane,
+  normalizePlacementWorkplane,
   placementPatchForNewShape,
   placementWorkplaneCoordinates,
   placementWorkplaneFromSurface,
@@ -106,5 +107,44 @@ describe("placement workplanes", () => {
     ]);
 
     expect(translation).toEqual({ x: 0, y: -5, z: 0 });
+  });
+});
+
+/**
+ * Die Projektliste der Startseite wird gelesen, gemischt, geschrieben und als
+ * neuer Zustand uebernommen - in einer einzigen Wirkung. Ein Wert, der sich
+ * bei jedem Normalisieren aendert, kommt dort nie zur Ruhe; die Seite lief mit
+ * einer gekippten Arbeitsebene im Projekt in "maximum update depth exceeded".
+ */
+describe("normalizePlacementWorkplane kommt zur Ruhe", () => {
+  const tilted = placementWorkplaneFromSurface({ x: 3, y: 7, z: -2 }, { x: 0.3, y: 0.8, z: -0.51 }, { x: 1, y: 0.2, z: 0.4 });
+
+  it("liefert ab dem zweiten Durchlauf denselben Wert", () => {
+    const once = normalizePlacementWorkplane(tilted, 0);
+    const twice = normalizePlacementWorkplane(once, 0);
+    const thrice = normalizePlacementWorkplane(twice, 0);
+    const fourth = normalizePlacementWorkplane(thrice, 0);
+    expect(JSON.stringify(thrice)).toBe(JSON.stringify(twice));
+    expect(JSON.stringify(fourth)).toBe(JSON.stringify(twice));
+  });
+
+  it("haelt die Achsen auf neun Nachkommastellen", () => {
+    const stored = normalizePlacementWorkplane(tilted, 0);
+    const coordinates = [stored.normal, stored.xAxis, stored.zAxis].flatMap((axis) => [axis.x, axis.y, axis.z]);
+    coordinates.forEach((value) => {
+      expect(Number(value.toFixed(9))).toBe(value);
+    });
+    // Und bleibt dabei eine Ebene: die Achsen stehen weiter senkrecht
+    // aufeinander und sind einen Millimeter lang.
+    const dot = (a: typeof stored.normal, b: typeof stored.normal) => a.x * b.x + a.y * b.y + a.z * b.z;
+    expect(dot(stored.normal, stored.xAxis)).toBeCloseTo(0, 8);
+    expect(dot(stored.normal, stored.zAxis)).toBeCloseTo(0, 8);
+    expect(dot(stored.xAxis, stored.zAxis)).toBeCloseTo(0, 8);
+    expect(dot(stored.normal, stored.normal)).toBeCloseTo(1, 8);
+  });
+
+  it("laesst eine waagerechte Ebene unangetastet", () => {
+    const flat = normalizePlacementWorkplane(horizontalPlacementWorkplane(12), 0);
+    expect(JSON.stringify(flat)).toBe(JSON.stringify(horizontalPlacementWorkplane(12)));
   });
 });

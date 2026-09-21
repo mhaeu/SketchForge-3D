@@ -24,6 +24,42 @@ function point(value: THREE.Vector3): PlacementPoint {
   };
 }
 
+/**
+ * Wie viele Nachkommastellen eine gespeicherte Achse behaelt.
+ *
+ * Normalisieren heisst hier: aus Ursprung, Normale und Laengsachse die Ebene
+ * neu aufbauen. Das projiziert, normiert und kreuzt - und jedes Mal wandert
+ * das letzte Bit. Der Aufbau ist damit kein Festpunkt: aus demselben Wert
+ * wird beim naechsten Durchlauf ein minimal anderer.
+ *
+ * Fuer die Geometrie ist das nichts, fuer die Verwaltung schon: die
+ * Startseite liest die Projektliste, mischt sie, schreibt sie und nimmt das
+ * Ergebnis als neuen Zustand - alles in einer Wirkung. Ein Wert, der sich bei
+ * jedem Durchlauf aendert, kommt dort nie zur Ruhe, und React haelt die Seite
+ * mit "maximum update depth exceeded" an. Neun Stellen liegen weit unter
+ * allem, was man an einer Ebene messen kann, und machen den Aufbau zum
+ * Festpunkt.
+ */
+const STORED_AXIS_DECIMALS = 9;
+
+function steadyCoordinate(value: number) {
+  const rounded = Number(value.toFixed(STORED_AXIS_DECIMALS));
+  return rounded === 0 ? 0 : rounded;
+}
+
+function steadyPoint(value: PlacementPoint): PlacementPoint {
+  return { x: steadyCoordinate(value.x), y: steadyCoordinate(value.y), z: steadyCoordinate(value.z) };
+}
+
+function steadyWorkplane(workplane: PlacementWorkplane): PlacementWorkplane {
+  return {
+    origin: steadyPoint(workplane.origin),
+    normal: steadyPoint(workplane.normal),
+    xAxis: steadyPoint(workplane.xAxis),
+    zAxis: steadyPoint(workplane.zAxis),
+  };
+}
+
 function clean(value: number) {
   const rounded = Number(value.toFixed(6));
   return Math.abs(rounded) < 1e-6 ? 0 : rounded;
@@ -56,7 +92,7 @@ export function normalizePlacementWorkplane(value: unknown, fallbackElevation = 
   if (!origin || !normal || !xAxis || vector(normal).lengthSq() < EPSILON || vector(xAxis).lengthSq() < EPSILON) {
     return horizontalPlacementWorkplane(fallbackElevation);
   }
-  return placementWorkplaneFromSurface(origin, normal, xAxis);
+  return steadyWorkplane(placementWorkplaneFromSurface(origin, normal, xAxis));
 }
 
 export function placementWorkplaneFingerprint(workplane: PlacementWorkplane) {

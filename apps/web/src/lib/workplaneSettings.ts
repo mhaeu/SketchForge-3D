@@ -45,9 +45,13 @@ export const DEFAULT_WORKPLANE_WORKSPACE: WorkplaneWorkspaceSettings = {
 };
 
 const snapGridOptions: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 mm", "2.0 mm", "5.0 mm", "Brick"];
+// Jede Art, deren Vorgaben sich in den Einstellungen setzen lassen. Fehlt eine
+// hier, wirft das Normalisieren ihre gespeicherten Vorgaben beim naechsten
+// Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
 const customizableShapeKinds: ShapeKind[] = [
-  "box", "cylinder", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "ring", "wedge", "polygon", "icosahedron", "mesh",
+  "box", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
+  "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
+  "mesh", "loft",
 ];
 
 function numberOrDefault(value: unknown, fallback: number) {

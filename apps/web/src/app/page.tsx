@@ -22,6 +22,13 @@ import { importExtensionSupported } from "@/lib/importExtensions";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, workplaneSettingsFingerprint } from "@/lib/workplaneSettings";
 import type { GridSize, ProjectAsset, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { detectLanguage, setLanguage, t } from "@/lib/i18n";
+import {
+  mergeProjectsForStorage,
+  parseStoredProjects,
+  PROJECT_ACCENTS,
+  PROJECTS_STORAGE_KEY,
+  type DashboardProject,
+} from "@/lib/dashboardProjects";
 import { useLanguage } from "@/lib/useLanguage";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 
@@ -30,24 +37,6 @@ type ViewMode = "grid" | "list";
 type DashboardSection = "home" | "shared" | "challenges" | "customization";
 type DownloadMode = "browser" | "folder";
 
-type DashboardProject = {
-  id: string;
-  name: string;
-  createdAt: number;
-  updatedAt: number;
-  shapes: number;
-  accent: "cyan" | "green" | "gold" | "red";
-  thumbnailUrl?: string | null;
-  thumbnailVersion?: number;
-  revision?: number;
-  workspace?: WorkplaneWorkspaceSettings;
-  snapGrid?: GridSize;
-  placementElevation?: number;
-  placementWorkplane?: PlacementWorkplane;
-  sketchPlacementWorkplane?: PlacementWorkplane;
-  sharedProject?: { fileName: string; revision: string };
-};
-
 type SharedProject = {
   fileName: string;
   name: string;
@@ -55,10 +44,6 @@ type SharedProject = {
   size: number;
   revision: string;
   thumbnailUrl?: string;
-};
-
-type StoredDashboardProject = Partial<DashboardProject> & {
-  designShapes?: unknown;
 };
 
 type ProjectShapeCacheEntry = {
@@ -108,7 +93,6 @@ type ProjectShapeResourceRecord =
       asset: ProjectAsset;
     };
 
-const PROJECTS_STORAGE_KEY = "sketchForge.projects";
 const PROJECT_SHAPES_DB_NAME = "sketchForge.projectShapes";
 const PROJECT_SHAPES_STORE_NAME = "projectShapes";
 const PROJECT_SHAPE_RESOURCES_STORE_NAME = "projectShapeResources";
@@ -117,7 +101,6 @@ const DOWNLOAD_FOLDER_STORAGE_KEY = "sketchForge.downloadFolder";
 const PROJECT_NAME_TOOLBAR_STORAGE_KEY = "sketchForge.showProjectNameInToolbar";
 const ACTIVE_CHALLENGE_TUTORIAL_STORAGE_KEY = "sketchForge.activeChallengeTutorial";
 const DISMISSED_UPDATE_VERSION_STORAGE_KEY = "sketchForge.dismissedUpdateVersion";
-const PROJECT_ACCENTS: DashboardProject["accent"][] = ["cyan", "green", "gold", "red"];
 const STATIC_EXPORT_BUILD = process.env.NEXT_PUBLIC_STATIC_EXPORT === "true";
 const SOURCE_CODE_URL = process.env.NEXT_PUBLIC_SOURCE_CODE_URL?.trim() || "https://github.com/Formsmith746/SketchForge-3D";
 const EDITOR_SKELETON_MIN_DURATION_MS = 320;
@@ -380,100 +363,27 @@ async function deleteProjectShapes(projectId: string) {
   });
 }
 
+/**
+ * The stored list, plus the shapes that very old records still carried inline.
+ * Parsing and merging live in lib/dashboardProjects.ts, where they can be
+ * tested without a browser.
+ */
 function readStoredProjects() {
+  const parsed = parseStoredProjects(typeof window === "undefined" ? null : window.localStorage.getItem(PROJECTS_STORAGE_KEY));
   const legacyShapes: Record<string, ProjectShapeCacheEntry> = {};
-  if (typeof window === "undefined") return { projects: [] as DashboardProject[], legacyShapes };
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PROJECTS_STORAGE_KEY) ?? "[]") as StoredDashboardProject[];
-    const projects = parsed
-      .filter((project) => typeof project.id === "string" && typeof project.name === "string")
-      .map((project, index) => {
-        const id = project.id as string;
-        const updatedAt = typeof project.updatedAt === "number" ? project.updatedAt : Date.now();
-        const revision = typeof project.revision === "number" ? project.revision : updatedAt;
-        const designShapes = Array.isArray(project.designShapes) ? (project.designShapes as WorkplaneShape[]) : null;
-        if (designShapes) {
-          legacyShapes[id] = projectShapeCacheEntry(revision, designShapes);
-        }
-        return {
-          id,
-          name: project.name as string,
-          createdAt: typeof project.createdAt === "number" ? project.createdAt : Date.now(),
-          updatedAt,
-          shapes: typeof project.shapes === "number" ? project.shapes : (designShapes?.length ?? 0),
-          accent: PROJECT_ACCENTS.includes(project.accent as DashboardProject["accent"]) ? (project.accent as DashboardProject["accent"]) : PROJECT_ACCENTS[index % PROJECT_ACCENTS.length],
-          thumbnailUrl: typeof project.thumbnailUrl === "string" ? project.thumbnailUrl : null,
-          thumbnailVersion: typeof project.thumbnailVersion === "number" ? project.thumbnailVersion : undefined,
-          revision,
-          workspace: normalizeWorkspaceSettings(project.workspace),
-          snapGrid: normalizeSnapGrid(project.snapGrid),
-          placementElevation: typeof project.placementElevation === "number" && Number.isFinite(project.placementElevation) ? project.placementElevation : 0,
-          placementWorkplane: normalizePlacementWorkplane(project.placementWorkplane, project.placementElevation),
-          sketchPlacementWorkplane: normalizePlacementWorkplane(project.sketchPlacementWorkplane),
-          sharedProject: typeof project.sharedProject?.fileName === "string" && typeof project.sharedProject.revision === "string"
-            ? { fileName: project.sharedProject.fileName, revision: project.sharedProject.revision }
-            : undefined,
-        };
-      });
-    return { projects, legacyShapes };
-  } catch {
-    return { projects: [], legacyShapes };
-  }
+  Object.entries(parsed.legacyShapes).forEach(([id, shapes]) => {
+    const project = parsed.projects.find((candidate) => candidate.id === id);
+    legacyShapes[id] = projectShapeCacheEntry(project?.revision ?? 0, shapes);
+  });
+  return { projects: parsed.projects, legacyShapes };
 }
 
 function readProjects() {
   return readStoredProjects().projects;
 }
 
-function mergeProjectForStorage(project: DashboardProject, storedProject?: DashboardProject) {
-  if (!storedProject) {
-    return project;
-  }
-  const projectRevision = project.revision ?? 0;
-  const storedRevision = storedProject.revision ?? 0;
-  if (storedRevision <= projectRevision) {
-    return project;
-  }
-  return {
-    ...project,
-    revision: storedProject.revision,
-    shapes: storedProject.shapes || project.shapes,
-    thumbnailUrl: project.thumbnailUrl ?? storedProject.thumbnailUrl,
-    thumbnailVersion: project.thumbnailVersion ?? storedProject.thumbnailVersion,
-    updatedAt: Math.max(project.updatedAt, storedProject.updatedAt),
-    workspace: storedProject.workspace ?? project.workspace,
-    snapGrid: storedProject.snapGrid ?? project.snapGrid,
-    placementElevation: storedProject.placementElevation ?? project.placementElevation,
-    placementWorkplane: storedProject.placementWorkplane ?? project.placementWorkplane,
-    sketchPlacementWorkplane: storedProject.sketchPlacementWorkplane ?? project.sketchPlacementWorkplane,
-    sharedProject: project.sharedProject ?? storedProject.sharedProject,
-  };
-}
-
-function projectForStorage(project: DashboardProject): DashboardProject {
-  return {
-    id: project.id,
-    name: project.name,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt,
-    shapes: project.shapes,
-    accent: project.accent,
-    thumbnailUrl: project.thumbnailUrl ?? null,
-    thumbnailVersion: project.thumbnailVersion,
-    revision: project.revision,
-    workspace: normalizeWorkspaceSettings(project.workspace),
-    snapGrid: normalizeSnapGrid(project.snapGrid),
-    placementElevation: typeof project.placementElevation === "number" && Number.isFinite(project.placementElevation) ? project.placementElevation : 0,
-    placementWorkplane: normalizePlacementWorkplane(project.placementWorkplane, project.placementElevation),
-    sketchPlacementWorkplane: normalizePlacementWorkplane(project.sketchPlacementWorkplane),
-    sharedProject: project.sharedProject,
-  };
-}
-
-function mergeProjectsForStorage(projects: DashboardProject[]) {
-  const storedProjects = readProjects();
-  const storedById = new Map(storedProjects.map((project) => [project.id, project]));
-  return projects.map((project) => projectForStorage(mergeProjectForStorage(project, storedById.get(project.id))));
+function storageProjectsFor(projects: DashboardProject[]) {
+  return mergeProjectsForStorage(projects, readProjects());
 }
 
 function newProject(name: string, index: number, shapeCount = 0): DashboardProject {
@@ -618,7 +528,7 @@ export default function Home() {
   useEffect(() => {
     if (!mounted) return;
     const localSerialized = JSON.stringify(projects);
-    const storageProjects = mergeProjectsForStorage(projects);
+    const storageProjects = storageProjectsFor(projects);
     const serialized = JSON.stringify(storageProjects);
     if (projectsJsonRef.current === serialized) return;
     try {
@@ -947,7 +857,7 @@ export default function Home() {
       });
       if (!changed) return current;
       try {
-        const storageProjects = mergeProjectsForStorage(next);
+        const storageProjects = storageProjectsFor(next);
         const serialized = JSON.stringify(storageProjects);
         window.localStorage.setItem(PROJECTS_STORAGE_KEY, serialized);
         projectsJsonRef.current = serialized;
