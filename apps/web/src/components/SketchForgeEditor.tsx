@@ -10130,7 +10130,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.mirror"), icon: ToolbarMirrorIcon, action: onMirror, enabled: hasSelection, active: mirrorMode },
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.chamfer"), icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
-    { label: t("editor.tool.fillet"), icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },
+    { id: "fillet", label: t("editor.tool.fillet"), icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },
     { label: t("editor.tool.variableFillet"), icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
   ];
   const arrangeTools = [
@@ -10140,11 +10140,13 @@ function SecondaryToolbar({
   const renderToolButton = (tool: (typeof leftTools)[number] | (typeof visibilityTools)[number] | (typeof combineTools)[number] | (typeof modifyTools)[number] | (typeof arrangeTools)[number]) => {
     const { icon: Icon, action, enabled, label } = tool;
     const active = "active" in tool && Boolean(tool.active);
+    // The tutorial points at this button by its id - the label is translated.
+    const toolId = "id" in tool ? tool.id : undefined;
     return (
       <button
         className={`toolbar-icon ${enabled ? "" : "disabled"} ${active ? "active" : ""}`}
         key={label}
-        data-sketchforge-tool={label === "Fillet" ? "fillet" : undefined}
+        data-sketchforge-tool={toolId}
         aria-label={label}
         title={label}
         onClick={action}

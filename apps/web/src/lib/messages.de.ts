@@ -1302,4 +1302,9 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "account.menuOpened": "Kontomenü geöffnet",
   "account.dashboardOpened": "Übersicht geöffnet",
   "account.signOutSelected": "Abmelden gewählt",
+  "loft.oval": "Oval",
+  "loft.rectangle": "Rechteck",
+  "loft.triangle": "Dreieck",
+  "loft.pentagon": "Fünfeck",
+  "loft.hexagon": "Sechseck",
 };

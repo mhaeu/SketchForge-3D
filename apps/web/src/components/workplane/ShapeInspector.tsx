@@ -210,6 +210,21 @@ function formatPropertyNumber(value: number, accuracy: MeasurementAccuracy, step
   return formatMeasurementNumber(value, accuracy, step);
 }
 
+/**
+ * A loft profile is stored by its English name; this is what the select shows.
+ */
+const LOFT_SHAPE_KEYS: Record<LoftProfileShape, MessageKey> = {
+  Oval: "loft.oval",
+  Rectangle: "loft.rectangle",
+  Triangle: "loft.triangle",
+  Pentagon: "loft.pentagon",
+  Hexagon: "loft.hexagon",
+};
+
+function loftShapeOptions(): SelectPropertyOption[] {
+  return LOFT_PROFILE_SHAPES.map((shape) => ({ value: shape, label: t(LOFT_SHAPE_KEYS[shape]) }));
+}
+
 function propertyUsesLengthUnit(id: string) {
   // The region bounds ("lengthFrom" ...) are lengths as well.
   if (/^(length|width|height)(From|To)$/.test(id)) return true;
@@ -946,7 +961,7 @@ function getShapePropertiesWithAppLimits(
       setAxis(axis, (axis === "width" ? width : depth) * factor);
     };
     const properties: ShapePropertyConfig[] = [
-      { type: "select", id: "topShape", label: t("prop.topShape"), value: settings.topShape, options: LOFT_PROFILE_SHAPES, onChange: (value) => onUpdate({ loftTopShape: value as LoftProfileShape }) },
+      { type: "select", id: "topShape", label: t("prop.topShape"), value: settings.topShape, options: loftShapeOptions(), onChange: (value) => onUpdate({ loftTopShape: value as LoftProfileShape }) },
     ];
     if (!isPolygonLoftShape(settings.topShape)) {
       properties.push({ id: "topLength", label: t("prop.topLength"), value: topDepth, min: MIN_SHAPE_SIZE, max: 160, onChange: (value) => setLoftTop("depth", value) });
@@ -954,7 +969,7 @@ function getShapePropertiesWithAppLimits(
     properties.push(
       { id: "topWidth", label: t("prop.topWidth"), value: topWidth, min: MIN_SHAPE_SIZE, max: 160, onChange: (value) => setLoftTop("width", value) },
       { id: "topRotation", label: t("prop.topRotation"), value: settings.topRotation, min: 0, max: 359, step: 1, onChange: (value) => onUpdate({ loftTopRotation: value }) },
-      { type: "select", id: "bottomShape", label: t("prop.bottomShape"), value: settings.bottomShape, options: LOFT_PROFILE_SHAPES, onChange: (value) => onUpdate({ loftBottomShape: value as LoftProfileShape }) },
+      { type: "select", id: "bottomShape", label: t("prop.bottomShape"), value: settings.bottomShape, options: loftShapeOptions(), onChange: (value) => onUpdate({ loftBottomShape: value as LoftProfileShape }) },
     );
     if (!isPolygonLoftShape(settings.bottomShape)) {
       properties.push({ id: "bottomLength", label: t("prop.bottomLength"), value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth });

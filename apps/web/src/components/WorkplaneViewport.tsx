@@ -5584,10 +5584,10 @@ export function WorkplaneViewport({
             <button aria-label={t("camera.frameSelection")} title={t("camera.shortcut", { label: t("camera.frameSelectionHint"), keys: "Shift+F" })} onClick={frameSelection}>
               <Focus size={24} strokeWidth={2.2} aria-hidden="true" />
             </button>
-            <button aria-label={t("sketch.zoomIn")} onClick={() => zoomCamera(0.7)}>
+            <button aria-label={t("camera.zoomIn")} onClick={() => zoomCamera(0.7)}>
               <Plus size={28} strokeWidth={2.15} />
             </button>
-            <button aria-label={t("sketch.zoomOut")} onClick={() => zoomCamera(1.35)}>
+            <button aria-label={t("camera.zoomOut")} onClick={() => zoomCamera(1.35)}>
               <Minus size={28} strokeWidth={2.15} />
             </button>
             <button

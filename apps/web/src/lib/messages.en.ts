@@ -1303,6 +1303,11 @@ export const MESSAGES_EN = {
   "account.menuOpened": "Account menu opened",
   "account.dashboardOpened": "Dashboard opened",
   "account.signOutSelected": "Sign out selected",
+  "loft.oval": "Oval",
+  "loft.rectangle": "Rectangle",
+  "loft.triangle": "Triangle",
+  "loft.pentagon": "Pentagon",
+  "loft.hexagon": "Hexagon",
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_EN;

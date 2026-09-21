@@ -107,9 +107,9 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "gear", name: "Gear", src: "assets/sketchforge/gear-types/spur.png", menuIcon: "assets/sketchforge/gear-types/spur.png", kind: "gear", color: "#6f7f8d" },
   { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
 
-  // Threads reuse the mesh path; geometry comes from lib/threadGenerator.ts
-  { id: "thread-external", name: "Thread", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "mesh", color: "#c07a2a" },
-  { id: "thread-internal", name: "Tapped hole", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "mesh", color: "#8c8c8c", hole: true },
+  // The two generated-mesh threads are gone from the palette: the parametric
+  // "thread" above does everything they did and more. Their code path stays -
+  // projects saved with one still open, and the inspector still edits it.
 ];
 
 /** Feste Kreuzausdehnung und Dicke des Lineals - nur die Laenge ist einstellbar. */
