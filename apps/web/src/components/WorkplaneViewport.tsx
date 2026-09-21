@@ -50,6 +50,8 @@ import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { createTransparentSurfaceSort } from "@/lib/transparentSort";
+import { t } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
@@ -1597,7 +1599,7 @@ function RulerOverlay({
   onSegmentPointerDown: (event: ReactPointerEvent<SVGElement>, segmentId: string) => void;
 }) {
   return (
-    <div className={`ruler-overlay ${active ? "active" : ""} ${deleteMode ? "delete-mode" : ""} ${moveMode ? "move-mode" : ""}`} aria-label="Ruler measurements">
+    <div className={`ruler-overlay ${active ? "active" : ""} ${deleteMode ? "delete-mode" : ""} ${moveMode ? "move-mode" : ""}`} aria-label={t("aria.tapeMeasurements")}>
       <svg className="ruler-guides" width="100%" height="100%" aria-hidden="true">
         {overlay.segments.map((segment) => (
           <g key={segment.id} className="ruler-segment-group">
@@ -2785,6 +2787,8 @@ export function WorkplaneViewport({
   const moveDimensionOverlayRef = useRef<MoveDimensionOverlayState | null>(null);
   const moveDimensionsEnabledRef = useRef(true);
   const marqueeRef = useRef<MarqueeState | null>(null);
+  // Redraws the buttons and overlay labels when the language changes.
+  useLanguage();
   const transformRef = useRef<TransformDragState | null>(null);
   const lastResizeAnchorRef = useRef<ResizeAnchorMemory | null>(null);
   const suppressNextLiftEditRef = useRef(false);
@@ -5553,43 +5557,43 @@ export function WorkplaneViewport({
 
   return (
     <main className={`workplane-stage ${challengeTutorial ? `key-tag-tutorial-active ${challengeTutorialCollapsed ? "key-tag-tutorial-collapsed" : ""}` : ""}`}>
-      <div className="view-cube" aria-label="View orientation cube" onPointerDown={(event) => event.stopPropagation()}>
+      <div className="view-cube" aria-label={t("view.cube")} onPointerDown={(event) => event.stopPropagation()}>
         <div className="view-cube-inner" ref={viewCubeRef}>
-          <button type="button" className="cube-face cube-top" aria-label="Bottom view" aria-keyshortcuts="6" title="Bottom view (6)" onClick={() => setViewCubeFace("bottom")}>BOTTOM</button>
-          <button type="button" className="cube-face cube-bottom" aria-label="Top view" aria-keyshortcuts="5" title="Top view (5)" onClick={() => setViewCubeFace("top")}>TOP</button>
-          <button type="button" className="cube-face cube-front" aria-label="Front view" aria-keyshortcuts="1" title="Front view (1)" onClick={() => setViewCubeFace("front")}>FRONT</button>
-          <button type="button" className="cube-face cube-back" aria-label="Back view" aria-keyshortcuts="2" title="Back view (2)" onClick={() => setViewCubeFace("back")}>BACK</button>
-          <button type="button" className="cube-face cube-right" aria-label="Right view" aria-keyshortcuts="4" title="Right view (4)" onClick={() => setViewCubeFace("right")}>RIGHT</button>
-          <button type="button" className="cube-face cube-left" aria-label="Left view" aria-keyshortcuts="3" title="Left view (3)" onClick={() => setViewCubeFace("left")}>LEFT</button>
+          <button type="button" className="cube-face cube-top" aria-label={t("view.bottom")} aria-keyshortcuts="6" title={t("camera.shortcut", { label: t("view.bottom"), keys: "6" })} onClick={() => setViewCubeFace("bottom")}>{t("view.bottomShort")}</button>
+          <button type="button" className="cube-face cube-bottom" aria-label={t("view.top")} aria-keyshortcuts="5" title={t("camera.shortcut", { label: t("view.top"), keys: "5" })} onClick={() => setViewCubeFace("top")}>{t("view.topShort")}</button>
+          <button type="button" className="cube-face cube-front" aria-label={t("view.front")} aria-keyshortcuts="1" title={t("camera.shortcut", { label: t("view.front"), keys: "1" })} onClick={() => setViewCubeFace("front")}>{t("view.frontShort")}</button>
+          <button type="button" className="cube-face cube-back" aria-label={t("view.back")} aria-keyshortcuts="2" title={t("camera.shortcut", { label: t("view.back"), keys: "2" })} onClick={() => setViewCubeFace("back")}>{t("view.backShort")}</button>
+          <button type="button" className="cube-face cube-right" aria-label={t("view.right")} aria-keyshortcuts="4" title={t("camera.shortcut", { label: t("view.right"), keys: "4" })} onClick={() => setViewCubeFace("right")}>{t("view.rightShort")}</button>
+          <button type="button" className="cube-face cube-left" aria-label={t("view.left")} aria-keyshortcuts="3" title={t("camera.shortcut", { label: t("view.left"), keys: "3" })} onClick={() => setViewCubeFace("left")}>{t("view.leftShort")}</button>
         </div>
       </div>
 
-      <div className={`camera-controls ${cameraControlsCollapsed ? "collapsed" : ""}`} aria-label="Camera controls">
+      <div className={`camera-controls ${cameraControlsCollapsed ? "collapsed" : ""}`} aria-label={t("camera.controls")}>
         {cameraControlsCollapsed ? (
-          <button className="camera-controls-toggle" aria-label="Show camera controls" title="Show controls" aria-expanded={false} onClick={() => setCameraControlsCollapsed(false)}>
+          <button className="camera-controls-toggle" aria-label={t("camera.show")} title={t("camera.showShort")} aria-expanded={false} onClick={() => setCameraControlsCollapsed(false)}>
             <ChevronRight size={24} strokeWidth={2.25} aria-hidden="true" />
           </button>
         ) : (
           <>
-            <button className="camera-controls-toggle" aria-label="Hide camera controls" title="Hide controls" aria-expanded={true} onClick={collapseCameraControls}>
+            <button className="camera-controls-toggle" aria-label={t("camera.hide")} title={t("camera.hideShort")} aria-expanded={true} onClick={collapseCameraControls}>
               <ChevronLeft size={24} strokeWidth={2.25} aria-hidden="true" />
             </button>
-            <button aria-label="Home" title="Home view (F)" onClick={resetView}>
+            <button aria-label={t("camera.home")} title={t("camera.shortcut", { label: t("camera.home"), keys: "F" })} onClick={resetView}>
               <Home size={24} strokeWidth={2.25} />
             </button>
-            <button aria-label="Frame selection" title="Frame the selection - or everything, with nothing selected (Shift+F)" onClick={frameSelection}>
+            <button aria-label={t("camera.frameSelection")} title={t("camera.shortcut", { label: t("camera.frameSelectionHint"), keys: "Shift+F" })} onClick={frameSelection}>
               <Focus size={24} strokeWidth={2.2} aria-hidden="true" />
             </button>
-            <button aria-label="Zoom in" onClick={() => zoomCamera(0.7)}>
+            <button aria-label={t("sketch.zoomIn")} onClick={() => zoomCamera(0.7)}>
               <Plus size={28} strokeWidth={2.15} />
             </button>
-            <button aria-label="Zoom out" onClick={() => zoomCamera(1.35)}>
+            <button aria-label={t("sketch.zoomOut")} onClick={() => zoomCamera(1.35)}>
               <Minus size={28} strokeWidth={2.15} />
             </button>
             <button
               className={orthographic ? "active" : ""}
-              aria-label="Orthographic view"
-              title={orthographic ? "Back to perspective view (O)" : "Orthographic view - no perspective, parallel edges stay parallel (O)"}
+              aria-label={t("camera.orthographic")}
+              title={t("camera.shortcut", { label: orthographic ? t("camera.perspective") : t("camera.orthographicHint"), keys: "O" })}
               aria-pressed={orthographic}
               onClick={toggleProjection}
             >
@@ -5598,8 +5602,8 @@ export function WorkplaneViewport({
             <div className="workplane-control-group">
               <button
                 className={workplaneMode ? "active" : ""}
-                aria-label="Place workplane"
-                title="Place workplane (W)"
+                aria-label={t("camera.placeWorkplane")}
+                title={t("camera.shortcut", { label: t("camera.placeWorkplane"), keys: "W" })}
                 aria-pressed={workplaneMode}
                 onClick={togglePlacementWorkplane}
               >
@@ -5609,8 +5613,8 @@ export function WorkplaneViewport({
             <div className="ruler-control-group">
               <button
                 className={`ruler-trigger ${rulerToolsOpen ? "active" : ""}`}
-                aria-label="Ruler tools"
-                title="Ruler tools"
+                aria-label={t("camera.tapeTools")}
+                title={t("camera.tapeTools")}
                 aria-expanded={rulerToolsOpen}
                 aria-controls="ruler-tool-popover"
                 onClick={toggleRulerTools}
@@ -5618,14 +5622,14 @@ export function WorkplaneViewport({
                 <Ruler size={26} strokeWidth={2.2} aria-hidden="true" />
               </button>
               {rulerToolsOpen ? (
-                <div id="ruler-tool-popover" className="ruler-tool-popover" aria-label="Ruler actions">
-                  <button className={rulerMode ? "active" : ""} aria-label="Add measurement" title="Add measurement" aria-pressed={rulerMode} onClick={activateRulerAdd}>
+                <div id="ruler-tool-popover" className="ruler-tool-popover" aria-label={t("camera.tapeActions")}>
+                  <button className={rulerMode ? "active" : ""} aria-label={t("camera.addMeasurement")} title={t("camera.addMeasurement")} aria-pressed={rulerMode} onClick={activateRulerAdd}>
                     <Plus size={21} strokeWidth={2.4} aria-hidden="true" />
                   </button>
-                  <button className={rulerMoveMode ? "active" : ""} aria-label="Move measurement points" title="Move measurement points" aria-pressed={rulerMoveMode} onClick={activateRulerMove}>
+                  <button className={rulerMoveMode ? "active" : ""} aria-label={t("camera.moveMeasurement")} title={t("camera.moveMeasurement")} aria-pressed={rulerMoveMode} onClick={activateRulerMove}>
                     <MousePointer2 size={20} strokeWidth={2.25} aria-hidden="true" />
                   </button>
-                  <button className={`ruler-delete-button ${rulerDeleteMode ? "active" : ""}`} aria-label="Delete measurement part" title="Delete measurement part" aria-pressed={rulerDeleteMode} onClick={activateRulerDelete}>
+                  <button className={`ruler-delete-button ${rulerDeleteMode ? "active" : ""}`} aria-label={t("camera.deleteMeasurement")} title={t("camera.deleteMeasurement")} aria-pressed={rulerDeleteMode} onClick={activateRulerDelete}>
                     <X size={20} strokeWidth={2.4} aria-hidden="true" />
                   </button>
                 </div>
@@ -5635,7 +5639,7 @@ export function WorkplaneViewport({
         )}
       </div>
 
-      <section className={`workplane-wrap ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label="Workplane">
+      <section className={`workplane-wrap ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
         <div className="workplane-plane">
           <div
             className="three-workplane-host"

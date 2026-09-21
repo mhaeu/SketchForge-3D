@@ -21,6 +21,9 @@ import { exportSkfProject, importSkfProject, SKF_CREATED_WITH_VERSION } from "@/
 import { importExtensionSupported } from "@/lib/importExtensions";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, workplaneSettingsFingerprint } from "@/lib/workplaneSettings";
 import type { GridSize, ProjectAsset, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import { detectLanguage, setLanguage, t } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
+import { LanguageSwitch } from "@/components/LanguageSwitch";
 
 type AppView = "dashboard" | "editor";
 type ViewMode = "grid" | "list";
@@ -186,7 +189,7 @@ function projectShapeSaveContext(project: Pick<DashboardProject, "name" | "creat
 function openProjectShapesDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     if (typeof window === "undefined" || !window.indexedDB) {
-      reject(new Error("Project shape storage is unavailable"));
+      reject(new Error(t("notice.shapeStorageUnavailable")));
       return;
     }
 
@@ -200,7 +203,7 @@ function openProjectShapesDb() {
         database.createObjectStore(PROJECT_SHAPE_RESOURCES_STORE_NAME, { keyPath: "id" });
       }
     };
-    request.onerror = () => reject(request.error ?? new Error("Could not open project shape storage"));
+    request.onerror = () => reject(request.error ?? new Error(t("notice.shapeStorageOpenFailed")));
     request.onsuccess = () => resolve(request.result);
   });
 }
@@ -218,9 +221,9 @@ async function loadProjectShapes(projectId: string) {
   const record = await new Promise<ProjectShapeRecord | null>((resolve, reject) => {
     const transaction = database.transaction(PROJECT_SHAPES_STORE_NAME, "readonly");
     const request = transaction.objectStore(PROJECT_SHAPES_STORE_NAME).get(projectId);
-    request.onerror = () => reject(request.error ?? new Error("Could not load project shapes"));
+    request.onerror = () => reject(request.error ?? new Error(t("notice.projectShapesLoadFailed")));
     request.onsuccess = () => resolve((request.result as ProjectShapeRecord | undefined) ?? null);
-    transaction.onerror = () => reject(transaction.error ?? new Error("Could not load project shapes"));
+    transaction.onerror = () => reject(transaction.error ?? new Error(t("notice.projectShapesLoadFailed")));
   });
   if (!record) {
     database.close();
@@ -265,8 +268,8 @@ async function loadProjectShapes(projectId: string) {
       };
     });
     transaction.oncomplete = () => resolve(records);
-    transaction.onerror = () => reject(transaction.error ?? new Error("Could not load project shape resources"));
-    transaction.onabort = () => reject(transaction.error ?? new Error("Could not load project shape resources"));
+    transaction.onerror = () => reject(transaction.error ?? new Error(t("notice.shapeResourcesLoadFailed")));
+    transaction.onabort = () => reject(transaction.error ?? new Error(t("notice.shapeResourcesLoadFailed")));
   });
   database.close();
 
@@ -277,7 +280,7 @@ async function loadProjectShapes(projectId: string) {
     else assets.push(resource.asset);
   });
   if (meshResources.size !== meshResourceIds.length || assets.length !== assetResourceIds.length) {
-    throw new Error("Project shape resources are incomplete");
+    throw new Error(t("notice.shapeResourcesIncomplete"));
   }
   knownProjectResourceKeys.set(projectId, new Set([
     ...meshResourceIds.map((resourceId) => projectResourceKey("mesh", resourceId)),
@@ -335,11 +338,11 @@ async function saveProjectShapes(projectId: string, entry: ProjectShapeCacheEntr
     };
     transaction.onerror = () => {
       database.close();
-      reject(transaction.error ?? new Error("Could not save project shapes"));
+      reject(transaction.error ?? new Error(t("notice.projectShapesSaveFailed")));
     };
     transaction.onabort = () => {
       database.close();
-      reject(transaction.error ?? new Error("Could not save project shapes"));
+      reject(transaction.error ?? new Error(t("notice.projectShapesSaveFailed")));
     };
   });
 }
@@ -372,7 +375,7 @@ async function deleteProjectShapes(projectId: string) {
     };
     transaction.onerror = () => {
       database.close();
-      reject(transaction.error ?? new Error("Could not delete project shapes"));
+      reject(transaction.error ?? new Error(t("notice.shapeDeleteFailed")));
     };
   });
 }
@@ -496,6 +499,9 @@ function projectNameFromFileName(fileName: string) {
 }
 
 export default function Home() {
+  // The server and the first client render both answer English, so hydration
+  // matches; the stored choice is applied in an effect right afterwards.
+  useLanguage();
   const [mounted, setMounted] = useState(false);
   const [view, setView] = useState<AppView>("dashboard");
   const [editorStarted, setEditorStarted] = useState(false);
@@ -537,7 +543,7 @@ export default function Home() {
       const payload = await response.json() as { enabled?: boolean; projects?: SharedProject[]; error?: string };
       setSharedProjectsEnabled(Boolean(payload.enabled));
       setSharedProjects(Array.isArray(payload.projects) ? payload.projects : []);
-      if (!response.ok && payload.enabled) setDashboardNotice(payload.error ?? "Could not load shared projects");
+      if (!response.ok && payload.enabled) setDashboardNotice(payload.error ?? t("notice.sharedLoadFailedShort"));
     } catch {
       setSharedProjectsEnabled(false);
       setSharedProjects([]);
@@ -560,7 +566,7 @@ export default function Home() {
         const project = storedProjects.find((candidate) => candidate.id === projectId);
         if (!project) return;
         void saveProjectShapes(projectId, entry, projectShapeSaveContext(project)).catch(() => {
-          setDashboardNotice("Could not migrate project shapes to larger storage");
+          setDashboardNotice(t("notice.projectShapesMigrateFailed"));
         });
       });
     }
@@ -586,6 +592,7 @@ export default function Home() {
       setEditorStarted(true);
       setView("editor");
     }
+    setLanguage(detectLanguage(), false);
     setMounted(true);
   }, [startEditorTransition]);
 
@@ -621,7 +628,7 @@ export default function Home() {
         window.localStorage.removeItem(PROJECTS_STORAGE_KEY);
         window.localStorage.setItem(PROJECTS_STORAGE_KEY, serialized);
       } catch {
-        setDashboardNotice(error instanceof Error ? error.message : "Could not save project list");
+        setDashboardNotice(error instanceof Error ? error.message : t("notice.projectListSaveFailed"));
         return;
       }
     }
@@ -690,7 +697,7 @@ export default function Home() {
       })
       .catch((error) => {
         if (!canceled) {
-          setDashboardNotice(error instanceof Error ? error.message : "Could not load project shapes");
+          setDashboardNotice(error instanceof Error ? error.message : t("notice.projectShapesLoadFailed"));
           setProjectShapesById((current) => {
             // A failed background read must not erase a project that has already
             // received live editor changes while the read was pending.
@@ -788,7 +795,7 @@ export default function Home() {
 
   const updateProjectSnapshot = useCallback(async (snapshot: { image: string; projectId: string; shapes: number }, signal?: AbortSignal) => {
     const version = Date.now();
-    if (signal?.aborted) throw new DOMException("Thumbnail upload aborted", "AbortError");
+    if (signal?.aborted) throw new DOMException(t("notice.thumbnailAborted"), "AbortError");
     if (STATIC_EXPORT_BUILD) {
       setProjects((current) =>
         current.map((project) =>
@@ -812,10 +819,10 @@ export default function Home() {
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(payload?.error ?? "Could not save project thumbnail");
+        throw new Error(payload?.error ?? t("notice.thumbnailSaveFailed"));
       }
       const payload = await response.json() as { version?: number };
-      if (signal?.aborted) throw new DOMException("Thumbnail upload aborted", "AbortError");
+      if (signal?.aborted) throw new DOMException(t("notice.thumbnailAborted"), "AbortError");
       const nextVersion = payload?.version ?? Date.now();
       const thumbnailUrl = `/api/project-thumbnail?projectId=${encodeURIComponent(snapshot.projectId)}&v=${nextVersion}`;
       setProjects((current) =>
@@ -887,7 +894,7 @@ export default function Home() {
       })
       .catch((error) => {
         if (projectShapeSaveQueuesRef.current[snapshot.projectId] === queuedSave) {
-          setDashboardNotice(error instanceof Error ? error.message : "Could not save project shapes");
+          setDashboardNotice(error instanceof Error ? error.message : t("notice.projectShapesSaveFailed"));
         }
       })
       .finally(() => {
@@ -962,7 +969,7 @@ export default function Home() {
       projectShapeCacheEntry(project.revision ?? project.updatedAt, []),
       projectShapeSaveContext(project),
     ).catch(() => {
-      setDashboardNotice("Could not prepare project shape storage");
+      setDashboardNotice(t("notice.projectShapesPrepareFailed"));
     });
     setProjects((current) => [project, ...current]);
     openEditor(project.id, { allowMissingFromStorage: true, challengeTutorial });
@@ -993,7 +1000,7 @@ export default function Home() {
       openEditor(project.id, { allowMissingFromStorage: true });
       return { ok: true, message: sharedProject ? `Opened shared project ${sharedProject.name}` : `Opened ${file.name} as a new editable local project` };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not open SketchForge project";
+      const message = error instanceof Error ? error.message : t("notice.projectOpenFailed");
       setDashboardNotice(message);
       return { ok: false, message };
     }
@@ -1005,13 +1012,13 @@ export default function Home() {
       const response = await fetch(`/api/shared-projects?fileName=${encodeURIComponent(sharedProject.fileName)}`, { cache: "no-store" });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error ?? "Could not download shared project");
+        throw new Error(payload.error ?? t("notice.sharedDownloadFailed"));
       }
       const revision = response.headers.get("etag")?.replace(/^W\//, "").replace(/^"|"$/g, "") || sharedProject.revision;
       const file = new File([await response.blob()], sharedProject.fileName, { type: "application/vnd.sketchforge.project+zip" });
       await openSkfProjectFromFile(file, { ...sharedProject, revision });
     } catch (error) {
-      setDashboardNotice(error instanceof Error ? error.message : "Could not open shared project");
+      setDashboardNotice(error instanceof Error ? error.message : t("notice.sharedOpenFailed"));
     }
   }, [openSkfProjectFromFile]);
 
@@ -1024,19 +1031,19 @@ export default function Home() {
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error ?? "Could not delete shared project");
+        throw new Error(payload.error ?? t("notice.sharedDeleteFailed"));
       }
       setSharedProjects((current) => current.filter((project) => project.fileName !== sharedProject.fileName));
       setDashboardNotice(`Deleted shared project ${sharedProject.name}`);
     } catch (error) {
-      setDashboardNotice(error instanceof Error ? error.message : "Could not delete shared project");
+      setDashboardNotice(error instanceof Error ? error.message : t("notice.sharedDeleteFailed"));
       await refreshSharedProjects();
     }
   }, [refreshSharedProjects]);
 
   const saveActiveProjectToShared = useCallback(async ({ exportName, bytes, thumbnailDataUrl }: { exportName: string; bytes: Uint8Array; thumbnailDataUrl: string }) => {
     const activeProject = projects.find((project) => project.id === activeProjectId);
-    if (!activeProject) throw new Error("Open a local project before saving it to the shared space");
+    if (!activeProject) throw new Error(t("notice.openBeforeShare"));
     const normalizedExportName = exportName.trim() || activeProject.name;
     const saveBackToSource = Boolean(activeProject.sharedProject && normalizedExportName === activeProject.name);
     const fileName = saveBackToSource && activeProject.sharedProject
@@ -1048,13 +1055,13 @@ export default function Home() {
     const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     const thumbnailResponse = await fetch(thumbnailDataUrl);
     const thumbnail = await thumbnailResponse.blob();
-    if (thumbnail.type !== "image/png" || thumbnail.size === 0) throw new Error("Could not prepare the shared project thumbnail");
+    if (thumbnail.type !== "image/png" || thumbnail.size === 0) throw new Error(t("notice.sharedThumbnailFailed"));
     const formData = new FormData();
     formData.append("project", new Blob([body], { type: "application/vnd.sketchforge.project+zip" }), fileName);
     formData.append("thumbnail", thumbnail, `${fileName}.png`);
     const response = await fetch(`/api/shared-projects?fileName=${encodeURIComponent(fileName)}`, { method: "POST", headers, body: formData });
     const payload = await response.json().catch(() => ({})) as { error?: string; project?: SharedProject };
-    if (!response.ok || !payload.project) throw new Error(payload.error ?? "Could not save the shared project");
+    if (!response.ok || !payload.project) throw new Error(payload.error ?? t("notice.sharedSaveFailed"));
     const savedProject = payload.project;
     setProjects((current) => current.map((project) => project.id === activeProject.id
       ? { ...project, sharedProject: { fileName: savedProject.fileName, revision: savedProject.revision } }
@@ -1069,7 +1076,7 @@ export default function Home() {
       const projectFiles = files.filter((file) => /\.skf$/i.test(file.name));
       if (projectFiles.length) {
         if (files.length !== 1) {
-          setDashboardNotice("Open one .skf project at a time; import STL, OBJ, STEP, and SVG geometry separately");
+          setDashboardNotice(t("status.oneProjectAtATime"));
           return;
         }
         await openSkfProjectFromFile(projectFiles[0]);
@@ -1087,7 +1094,7 @@ export default function Home() {
         const isSvg = sourceFormat === "svg";
         const isStep = sourceFormat === "step";
         if (!sourceFormat || (!isSvg && !isStep && !importExtensionSupported(file.name))) {
-          failures.push({ fileName: file.name, reason: "Unsupported file type" });
+          failures.push({ fileName: file.name, reason: t("notice.unsupportedFileType") });
           continue;
         }
 
@@ -1109,7 +1116,7 @@ export default function Home() {
         } catch (error) {
           failures.push({
             fileName: file.name,
-            reason: error instanceof Error ? error.message : "Could not read file",
+            reason: error instanceof Error ? error.message : t("notice.readFileFailed"),
           });
         }
       }
@@ -1147,7 +1154,7 @@ export default function Home() {
         setProjects((current) => [project, ...current]);
         openEditor(project.id, { allowMissingFromStorage: true });
       } catch (error) {
-        setDashboardNotice(error instanceof Error ? error.message : "Could not create a project for the imported files");
+        setDashboardNotice(error instanceof Error ? error.message : t("notice.importProjectFailed"));
       }
     },
     [openSkfProjectFromFile, projects.length],
@@ -1189,7 +1196,7 @@ export default function Home() {
       void fetch(`/api/project-thumbnail?projectId=${encodeURIComponent(projectId)}`, { method: "DELETE" });
     }
     void deleteProjectShapes(projectId).catch(() => {
-      setDashboardNotice("Could not delete project shapes from local storage");
+      setDashboardNotice(t("notice.projectShapesDeleteFailed"));
     });
   };
 
@@ -1356,7 +1363,7 @@ function EditorLoadingSkeleton() {
   );
 
   return (
-    <div className="editor-loading-screen" role="status" aria-label="Loading editor" aria-live="polite">
+    <div className="editor-loading-screen" role="status" aria-label={t("editor.loading")} aria-live="polite">
       <div className="editor-loading-toolbar">
         <div className="editor-loading-tabs">
           <span className="editor-skeleton-shimmer" />
@@ -1565,14 +1572,14 @@ function Dashboard({
               : `SketchForge ${result.latestVersion} is available. Press Update to download, install, and restart.`,
           );
         } else if (alwaysPrompt) {
-          setUpdateMessage("SketchForge is up to date.");
+          setUpdateMessage(t("updates.upToDateNotice"));
         }
         return;
       }
 
       const response = await fetch(`/api/app-update${force ? "?force=1" : ""}`, { cache: "no-store" });
       const payload = await response.json() as AppUpdateStatus & { error?: string };
-      if (!response.ok) throw new Error(payload.error || "Could not check for updates");
+      if (!response.ok) throw new Error(payload.error || t("updates.checkFailed"));
       setUpdateStatus(payload);
       if (payload.updateAvailable && payload.latestVersion) {
         const dismissedVersion = window.localStorage.getItem(DISMISSED_UPDATE_VERSION_STORAGE_KEY);
@@ -1581,10 +1588,10 @@ function Dashboard({
           setUpdatePromptOpen(true);
         }
       } else if (alwaysPrompt && !payload.checkError) {
-        setUpdateMessage("SketchForge is up to date.");
+        setUpdateMessage(t("updates.upToDateNotice"));
       }
     } catch (error) {
-      setUpdateMessage(error instanceof Error ? error.message : "Could not check for updates");
+      setUpdateMessage(error instanceof Error ? error.message : t("updates.checkFailed"));
     } finally {
       setUpdateChecking(false);
     }
@@ -1626,12 +1633,12 @@ function Dashboard({
             requiresUpdateKey: false,
             updateMode: "desktop",
           });
-          setUpdateMessage("SketchForge is already up to date.");
+          setUpdateMessage(t("updates.alreadyUpToDate"));
         } else {
-          setUpdateMessage("Update downloaded. SketchForge is restarting to install it…");
+          setUpdateMessage(t("updates.downloadedRestarting"));
         }
       } catch (error) {
-        setUpdateMessage(error instanceof Error ? error.message : "Could not install the update");
+        setUpdateMessage(error instanceof Error ? error.message : t("updates.installFailed"));
       } finally {
         setUpdateStarting(false);
       }
@@ -1644,7 +1651,7 @@ function Dashboard({
       return;
     }
     if (updateStatus.requiresUpdateKey && !updateKey.trim()) {
-      setUpdateMessage("Enter the server update key to continue.");
+      setUpdateMessage(t("updates.enterServerKey"));
       return;
     }
 
@@ -1656,14 +1663,14 @@ function Dashboard({
         headers: { "x-sketchforge-update-key": updateKey.trim() },
       });
       const payload = await response.json() as { accepted?: boolean; error?: string; updateUrl?: string; updateMode?: "local" | "server"; restartRequired?: boolean };
-      if (!response.ok || !payload.accepted) throw new Error(payload.error || "Could not start the update");
+      if (!response.ok || !payload.accepted) throw new Error(payload.error || t("updates.startFailed"));
       if (updateStatus.latestVersion) {
         window.localStorage.setItem(DISMISSED_UPDATE_VERSION_STORAGE_KEY, updateStatus.latestVersion);
       }
       setUpdateKey("");
       if (payload.updateMode === "local" || updateStatus.updateMode === "local") {
         const expectedVersion = updateStatus.latestVersion;
-        setUpdateMessage("Update installed. Restarting local SketchForge…");
+        setUpdateMessage(t("updates.installedRestarting"));
         await new Promise((resolve) => window.setTimeout(resolve, 1800));
         for (let attempt = 0; attempt < 60; attempt += 1) {
           try {
@@ -1680,12 +1687,12 @@ function Dashboard({
           }
           await new Promise((resolve) => window.setTimeout(resolve, 500));
         }
-        setUpdateMessage("Update installed. Reload this page once local SketchForge finishes restarting.");
+        setUpdateMessage(t("updates.installedReload"));
       } else {
-        setUpdateMessage("Update started. The server may briefly go offline; reopen this page after it restarts.");
+        setUpdateMessage(t("updates.startedOffline"));
       }
     } catch (error) {
-      setUpdateMessage(error instanceof Error ? error.message : "Could not start the update");
+      setUpdateMessage(error instanceof Error ? error.message : t("updates.startFailed"));
     } finally {
       setUpdateStarting(false);
     }
@@ -1694,68 +1701,72 @@ function Dashboard({
   return (
     <main className="dashboard-shell">
       <header className="dashboard-topbar">
-        <a className="dashboard-brand" href="./" aria-label="SketchForge home">
+        <a className="dashboard-brand" href="./" aria-label={t("brand.home")}>
           <img src="/assets/sketchforge/sketchforge-logo-white.png" alt="" />
           <span>SketchForge</span>
         </a>
         <div className="dashboard-search">
           <Search size={18} strokeWidth={2.4} />
-          <input value={query} onChange={(event) => onQueryChange(event.currentTarget.value)} placeholder="Search projects" aria-label="Search projects" />
+          <input value={query} onChange={(event) => onQueryChange(event.currentTarget.value)} placeholder={t("dashboard.searchPlaceholder")} aria-label={t("dashboard.searchPlaceholder")} />
         </div>
-        <button className="dashboard-primary" type="button" onClick={onCreate}>
-          <Plus size={20} strokeWidth={2.6} />
-          <span>Create</span>
-        </button>
+        <div className="dashboard-topbar-actions">
+          <button className="dashboard-primary" type="button" onClick={onCreate}>
+            <Plus size={20} strokeWidth={2.6} />
+            <span>{t("shared.createFolder")}</span>
+          </button>
+          {/* Top right, where web pages keep their language choice. */}
+          <LanguageSwitch />
+        </div>
       </header>
 
       <div className="dashboard-layout">
         <aside className="dashboard-sidebar">
           <div className="dashboard-nav-stack">
-            <button className={`dashboard-nav-item ${dashboardSection === "home" ? "active" : ""}`} type="button" aria-label="Home" title="Home" onClick={onDashboardHome}>
+            <button className={`dashboard-nav-item ${dashboardSection === "home" ? "active" : ""}`} type="button" aria-label={t("editor.group.home")} title={t("editor.group.home")} onClick={onDashboardHome}>
               <HomeIcon size={20} />
-              <span>Home</span>
+              <span>{t("editor.group.home")}</span>
             </button>
             {sharedProjectsEnabled ? (
-              <button className={`dashboard-nav-item ${dashboardSection === "shared" ? "active" : ""}`} type="button" aria-label="Shared projects" title="Shared projects" onClick={onSharedProjects}>
+              <button className={`dashboard-nav-item ${dashboardSection === "shared" ? "active" : ""}`} type="button" aria-label={t("dashboard.sharedProjects")} title={t("dashboard.sharedProjects")} onClick={onSharedProjects}>
                 <FolderKanban size={20} />
-                <span>Shared</span>
+                <span>{t("dashboard.shared")}</span>
               </button>
             ) : null}
-            <button className={`dashboard-nav-item ${dashboardSection === "challenges" ? "active" : ""}`} type="button" aria-label="Challenges" title="Challenges" onClick={onChallenges}>
+            <button className={`dashboard-nav-item ${dashboardSection === "challenges" ? "active" : ""}`} type="button" aria-label={t("dashboard.challenges")} title={t("dashboard.challenges")} onClick={onChallenges}>
               <SlidersHorizontal size={20} />
-              <span>Challenges</span>
+              <span>{t("dashboard.challenges")}</span>
             </button>
-            <button className={`dashboard-nav-item ${dashboardSection === "customization" ? "active" : ""}`} type="button" aria-label="Customization" title="Customization" onClick={onCustomization}>
+            <button className={`dashboard-nav-item ${dashboardSection === "customization" ? "active" : ""}`} type="button" aria-label={t("dashboard.customization")} title={t("dashboard.customization")} onClick={onCustomization}>
               <Palette size={20} />
-              <span>Customization</span>
+              <span>{t("dashboard.customization")}</span>
             </button>
           </div>
           <div className="dashboard-sidebar-footer">
-            <button className="dashboard-nav-item dashboard-settings-button" type="button" aria-label="Settings" title="Settings" onClick={onOpenSettings}>
+            <button className="dashboard-nav-item dashboard-settings-button" type="button" aria-label={t("guide.group.settings")} title={t("guide.group.settings")} onClick={onOpenSettings}>
               <Settings size={20} />
-              <span>Settings</span>
+              <span>{t("guide.group.settings")}</span>
             </button>
           </div>
         </aside>
 
-        <section className="dashboard-main" aria-label={dashboardSection === "challenges" ? "Challenges" : dashboardSection === "shared" ? "Shared projects" : dashboardSection === "customization" ? "Customization" : "Dashboard"}>
+        <section className="dashboard-main" aria-label={dashboardSection === "challenges" ? t("dashboard.challenges") : dashboardSection === "shared" ? t("dashboard.sharedProjects") : dashboardSection === "customization" ? t("dashboard.customization") : t("account.dashboard")}>
           {dashboardSection === "challenges" ? (
             <ChallengesDashboard onStartChallenge={onStartChallenge} />
           ) : dashboardSection === "customization" ? (
             <div className="dashboard-coming-soon" role="status">
-              <strong>Coming soon</strong>
+              <strong>{t("dashboard.comingSoon")}</strong>
             </div>
           ) : dashboardSection === "shared" ? (
             <>
               {dashboardNotice ? <div className="dashboard-import-notice" role="status">{dashboardNotice}</div> : null}
               <div className="dashboard-section-header shared-projects-header">
                 <div>
-                  <h1>Shared projects</h1>
+                  <h1>{t("dashboard.sharedProjects")}</h1>
                   <span>{sharedProjects.length} available from Docker storage</span>
                 </div>
                 <button className="shared-projects-refresh" type="button" onClick={onRefreshSharedProjects} disabled={sharedProjectsLoading}>
                   <RefreshCw size={16} className={sharedProjectsLoading ? "spinning" : undefined} />
-                  <span>Refresh</span>
+                  <span>{t("shared.refresh")}</span>
                 </button>
               </div>
               {sharedProjects.length > 0 ? (
@@ -1767,13 +1778,13 @@ function Dashboard({
                         <span className="project-card-title">{project.name}</span>
                         <span className="project-card-meta">{formatUpdated(project.updatedAt)} - {formatFileSize(project.size)}</span>
                       </button>
-                      <span className="shared-project-badge">Shared</span>
+                      <span className="shared-project-badge">{t("dashboard.shared")}</span>
                       <button
                         className="project-menu-trigger"
                         type="button"
                         aria-label={`Shared project options for ${project.name}`}
                         aria-expanded={openSharedProjectMenuFileName === project.fileName}
-                        title="Shared project options"
+                        title={t("dashboard.sharedOptions")}
                         onClick={() => {
                           setOpenProjectMenuId(null);
                           setOpenSharedProjectMenuFileName((current) => (current === project.fileName ? null : project.fileName));
@@ -1793,7 +1804,7 @@ function Dashboard({
                             }}
                           >
                             <Trash2 size={16} />
-                            <span>Delete</span>
+                            <span>{t("common.delete")}</span>
                           </button>
                         </div>
                       ) : null}
@@ -1802,7 +1813,7 @@ function Dashboard({
                 </div>
               ) : (
                 <div className="project-empty">
-                  <strong>{sharedProjectsLoading ? "Loading shared projects" : "No shared projects yet"}</strong>
+                  <strong>{sharedProjectsLoading ? t("shared.loading") : t("shared.none")}</strong>
                   <span>Save an SKF project to the shared space from the Export window.</span>
                 </div>
               )}
@@ -1814,19 +1825,19 @@ function Dashboard({
                   <span className="dashboard-action-icon">
                     <Plus size={25} strokeWidth={2.8} />
                   </span>
-                  <span>Create new 3D design</span>
+                  <span>{t("dashboard.createProject")}</span>
                 </button>
                 <button className="dashboard-action-tile" type="button" onClick={onImportFile}>
                   <span className="dashboard-action-icon">
                     <FileUp size={24} strokeWidth={2.4} />
                   </span>
-                  <span>Open SKF or import geometry</span>
+                  <span>{t("dashboard.openOrImport")}</span>
                 </button>
                 <button className="dashboard-action-tile" type="button" onClick={onWorkspace}>
                   <span className="dashboard-action-icon">
                     <Clock3 size={24} strokeWidth={2.4} />
                   </span>
-                  <span>Continue workplane</span>
+                  <span>{t("dashboard.continueWorkplane")}</span>
                 </button>
               </div>
               {dashboardNotice ? (
@@ -1837,22 +1848,22 @@ function Dashboard({
 
               <div className="dashboard-section-header">
                 <div>
-                  <h1>Projects</h1>
+                  <h1>{t("dashboard.projects")}</h1>
                   <span>{projects.length} visible</span>
                 </div>
                 <div className="dashboard-controls">
                   <label className="dashboard-select">
                     <SlidersHorizontal size={17} />
-                    <select value={sortMode} onChange={(event) => onSortModeChange(event.currentTarget.value)} aria-label="Sort projects">
-                      <option value="recent">Recent</option>
-                      <option value="name">Name</option>
+                    <select value={sortMode} onChange={(event) => onSortModeChange(event.currentTarget.value)} aria-label={t("dashboard.sortLabel")}>
+                      <option value="recent">{t("dashboard.sortRecent")}</option>
+                      <option value="name">{t("dashboard.sortName")}</option>
                     </select>
                   </label>
-                  <div className="dashboard-segmented" aria-label="Project view">
-                    <button className={viewMode === "grid" ? "active" : ""} type="button" aria-label="Grid view" onClick={() => onViewModeChange("grid")}>
+                  <div className="dashboard-segmented" aria-label={t("dashboard.viewLabel")}>
+                    <button className={viewMode === "grid" ? "active" : ""} type="button" aria-label={t("dashboard.viewGrid")} onClick={() => onViewModeChange("grid")}>
                       <Grid3X3 size={17} />
                     </button>
-                    <button className={viewMode === "list" ? "active" : ""} type="button" aria-label="List view" onClick={() => onViewModeChange("list")}>
+                    <button className={viewMode === "list" ? "active" : ""} type="button" aria-label={t("dashboard.viewList")} onClick={() => onViewModeChange("list")}>
                       <List size={18} />
                     </button>
                   </div>
@@ -1875,7 +1886,7 @@ function Dashboard({
                         type="button"
                         aria-label={`Project options for ${project.name}`}
                         aria-expanded={openProjectMenuId === project.id}
-                        title="Project options"
+                        title={t("dashboard.projectOptions")}
                         onClick={() => {
                           setOpenSharedProjectMenuFileName(null);
                           setOpenProjectMenuId((current) => (current === project.id ? null : project.id));
@@ -1887,7 +1898,7 @@ function Dashboard({
                         <div className="project-card-menu" role="menu" aria-label={`Options for ${project.name}`}>
                           <button type="button" role="menuitem" onClick={() => startProjectRename(project)}>
                             <Pencil size={16} />
-                            <span>Rename</span>
+                            <span>{t("common.rename")}</span>
                           </button>
                           <button
                             className="delete"
@@ -1899,7 +1910,7 @@ function Dashboard({
                             }}
                           >
                             <Trash2 size={16} />
-                            <span>Delete</span>
+                            <span>{t("common.delete")}</span>
                           </button>
                         </div>
                       ) : null}
@@ -1908,8 +1919,8 @@ function Dashboard({
                 </div>
               ) : (
                 <div className="project-empty">
-                  <strong>No projects yet</strong>
-                  <span>Create a 3D design and it will appear here.</span>
+                  <strong>{t("dashboard.emptyTitle")}</strong>
+                  <span>{t("dashboard.emptyHintSkf")}</span>
                 </div>
               )}
             </>
@@ -1922,7 +1933,7 @@ function Dashboard({
           <div className="dashboard-confirm-dialog">
             <header>
               <strong id="delete-project-title">Delete project?</strong>
-              <button type="button" aria-label="Cancel project deletion" onClick={() => setProjectPendingDeleteId(null)}>
+              <button type="button" aria-label={t("confirm.deleteProjectCancel")} onClick={() => setProjectPendingDeleteId(null)}>
                 <X size={18} />
               </button>
             </header>
@@ -1930,12 +1941,8 @@ function Dashboard({
               Do you actually want the project <span>{projectPendingDelete.name}</span> to be deleted?
             </p>
             <div className="dashboard-confirm-actions">
-              <button className="dashboard-confirm-cancel" type="button" onClick={() => setProjectPendingDeleteId(null)}>
-                Cancel
-              </button>
-              <button className="dashboard-confirm-delete" type="button" onClick={confirmProjectDelete}>
-                Delete
-              </button>
+              <button className="dashboard-confirm-cancel" type="button" onClick={() => setProjectPendingDeleteId(null)}>{t("common.cancel")}</button>
+              <button className="dashboard-confirm-delete" type="button" onClick={confirmProjectDelete}>{t("common.delete")}</button>
             </div>
           </div>
         </section>
@@ -1946,7 +1953,7 @@ function Dashboard({
           <div className="dashboard-confirm-dialog">
             <header>
               <strong id="delete-shared-project-title">Delete shared project?</strong>
-              <button type="button" aria-label="Cancel shared project deletion" onClick={() => setSharedProjectPendingDeleteFileName(null)}>
+              <button type="button" aria-label={t("dashboard.cancelSharedDelete")} onClick={() => setSharedProjectPendingDeleteFileName(null)}>
                 <X size={18} />
               </button>
             </header>
@@ -1954,12 +1961,8 @@ function Dashboard({
               Delete <span>{sharedProjectPendingDelete.name}</span> from shared storage? This removes it for everyone using this shared space.
             </p>
             <div className="dashboard-confirm-actions">
-              <button className="dashboard-confirm-cancel" type="button" onClick={() => setSharedProjectPendingDeleteFileName(null)}>
-                Cancel
-              </button>
-              <button className="dashboard-confirm-delete" type="button" onClick={confirmSharedProjectDelete}>
-                Delete
-              </button>
+              <button className="dashboard-confirm-cancel" type="button" onClick={() => setSharedProjectPendingDeleteFileName(null)}>{t("common.cancel")}</button>
+              <button className="dashboard-confirm-delete" type="button" onClick={confirmSharedProjectDelete}>{t("common.delete")}</button>
             </div>
           </div>
         </section>
@@ -1975,28 +1978,24 @@ function Dashboard({
             }}
           >
             <header>
-              <strong id="rename-project-title">Rename project</strong>
-              <button type="button" aria-label="Cancel project rename" onClick={closeProjectRename}>
+              <strong id="rename-project-title">{t("confirm.renameTitle")}</strong>
+              <button type="button" aria-label={t("confirm.renameCancel")} onClick={closeProjectRename}>
                 <X size={18} />
               </button>
             </header>
             <label>
-              <span>Project name</span>
+              <span>{t("confirm.projectName")}</span>
               <input
                 autoFocus
                 maxLength={80}
                 value={projectNameDraft}
                 onChange={(event) => setProjectNameDraft(event.currentTarget.value)}
-                aria-label="Project name"
+                aria-label={t("confirm.projectName")}
               />
             </label>
             <div className="dashboard-confirm-actions">
-              <button className="dashboard-confirm-cancel" type="button" onClick={closeProjectRename}>
-                Cancel
-              </button>
-              <button className="dashboard-confirm-save" type="submit" disabled={!projectNameDraft.trim()}>
-                Save
-              </button>
+              <button className="dashboard-confirm-cancel" type="button" onClick={closeProjectRename}>{t("common.cancel")}</button>
+              <button className="dashboard-confirm-save" type="submit" disabled={!projectNameDraft.trim()}>{t("common.save")}</button>
             </div>
           </form>
         </section>
@@ -2007,7 +2006,7 @@ function Dashboard({
           <div className="dashboard-confirm-dialog dashboard-update-dialog">
             <header>
               <strong id="app-update-title">SketchForge {updateStatus.latestVersion} is available</strong>
-              <button type="button" aria-label="Dismiss update" onClick={dismissUpdate} disabled={updateStarting}>
+              <button type="button" aria-label={t("updates.dismiss")} onClick={dismissUpdate} disabled={updateStarting}>
                 <X size={18} />
               </button>
             </header>
@@ -2025,7 +2024,7 @@ function Dashboard({
               ) : null}
               {updateStatus.requiresUpdateKey ? (
                 <label className="dashboard-update-key">
-                  <span>Server update key</span>
+                  <span>{t("updates.serverKey")}</span>
                   <input
                     type="password"
                     autoComplete="off"
@@ -2038,11 +2037,9 @@ function Dashboard({
               {updateMessage ? <div className="dashboard-update-message" role="status">{updateMessage}</div> : null}
             </div>
             <div className="dashboard-confirm-actions">
-              <button className="dashboard-confirm-cancel" type="button" onClick={dismissUpdate} disabled={updateStarting}>
-                Not now
-              </button>
+              <button className="dashboard-confirm-cancel" type="button" onClick={dismissUpdate} disabled={updateStarting}>{t("updates.notNow")}</button>
               <button className="dashboard-confirm-save" type="button" onClick={() => void requestUpdate()} disabled={updateStarting}>
-                {updateStarting ? "Starting…" : updateStatus.installationReady ? "Update" : "Open update guide"}
+                {updateStarting ? "Starting…" : updateStatus.installationReady ? "Update" : t("updates.openGuide")}
               </button>
             </div>
           </div>
@@ -2050,25 +2047,25 @@ function Dashboard({
       ) : null}
 
       {settingsOpen ? (
-        <section className="dashboard-settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
+        <section className="dashboard-settings-panel" role="dialog" aria-modal="true" aria-label={t("guide.group.settings")}>
           <header>
-            <strong>Settings</strong>
-            <button type="button" aria-label="Close settings" onClick={onCloseSettings}>
+            <strong>{t("guide.group.settings")}</strong>
+            <button type="button" aria-label={t("workspace.close")} onClick={onCloseSettings}>
               <X size={18} />
             </button>
           </header>
           <label className="dashboard-setting-row">
-            <span>Save method</span>
+            <span>{t("settings.saveMethod")}</span>
             <select
               value={downloadMode}
               onChange={(event) => onDownloadModeChange(!staticExportBuild && event.currentTarget.value === "folder" ? "folder" : "browser")}
             >
-              <option value="browser">Browser downloads</option>
-              {!staticExportBuild ? <option value="folder">Save to folder</option> : null}
+              <option value="browser">{t("settings.browserDownloads")}</option>
+              {!staticExportBuild ? <option value="folder">{t("settings.saveToFolder")}</option> : null}
             </select>
           </label>
           <label className="dashboard-setting-row">
-            <span>Folder path</span>
+            <span>{t("settings.folderPath")}</span>
             <input
               disabled={staticExportBuild || downloadMode !== "folder"}
               value={downloadFolder}
@@ -2077,16 +2074,16 @@ function Dashboard({
             />
           </label>
           <div className="dashboard-version-row">
-            <span>SketchForge version</span>
+            <span>{t("updates.version")}</span>
             <strong>{desktopAppVersion ?? updateStatus?.currentVersion ?? SKF_CREATED_WITH_VERSION}</strong>
           </div>
-          <section className="dashboard-update-settings" aria-label="Software updates">
+          <section className="dashboard-update-settings" aria-label={t("updates.title")}>
             <div>
-              <strong>Software updates</strong>
+              <strong>{t("updates.title")}</strong>
               <span>Updates are checked automatically but are never installed without your approval.</span>
             </div>
             {staticExportBuild ? (
-              <span className="dashboard-update-status">Managed by the website owner</span>
+              <span className="dashboard-update-status">{t("updates.managedByOwner")}</span>
             ) : updateStatus?.checkError ? (
               <span className="dashboard-update-status error">{updateStatus.checkError}</span>
             ) : desktopUpdaterConnected && updateStatus?.updateAvailable && updateStatus.latestVersion ? (
@@ -2096,7 +2093,7 @@ function Dashboard({
                 onClick={() => void requestUpdate()}
                 disabled={updateStarting}
               >
-                {updateStarting ? "Downloading update…" : `Update to ${updateStatus.latestVersion}`}
+                {updateStarting ? t("updates.downloading") : `Update to ${updateStatus.latestVersion}`}
               </button>
             ) : updateStatus?.updateAvailable && updateStatus.latestVersion ? (
               <button
@@ -2111,23 +2108,23 @@ function Dashboard({
                 Update to {updateStatus.latestVersion}
               </button>
             ) : updateStatus ? (
-              <span className="dashboard-update-status ready">Up to date</span>
+              <span className="dashboard-update-status ready">{t("updates.upToDate")}</span>
             ) : null}
             {!staticExportBuild ? (
               <button className="dashboard-check-update" type="button" onClick={() => void checkForUpdates(true, true)} disabled={updateChecking}>
                 <RefreshCw size={15} className={updateChecking ? "spin" : ""} />
-                <span>{updateChecking ? "Checking…" : "Check for updates"}</span>
+                <span>{updateChecking ? "Checking…" : t("updates.check")}</span>
               </button>
             ) : null}
             {updateMessage && settingsOpen ? <span className="dashboard-update-status" role="status">{updateMessage}</span> : null}
           </section>
           <div className="dashboard-version-row">
-            <span>License</span>
+            <span>{t("about.license")}</span>
             <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noreferrer">AGPLv3</a>
           </div>
           <div className="dashboard-version-row">
-            <span>Corresponding source</span>
-            <a href={SOURCE_CODE_URL} target="_blank" rel="noreferrer">View source</a>
+            <span>{t("about.correspondingSource")}</span>
+            <a href={SOURCE_CODE_URL} target="_blank" rel="noreferrer">{t("about.viewSource")}</a>
           </div>
         </section>
       ) : null}
@@ -2150,7 +2147,7 @@ function ProjectPreview({ accent, thumbnailUrl }: { accent: DashboardProject["ac
       ) : (
         <>
           <span className="preview-grid" />
-          <span className="preview-empty-mark">No snapshot yet</span>
+          <span className="preview-empty-mark">{t("dashboard.noSnapshot")}</span>
         </>
       )}
     </span>

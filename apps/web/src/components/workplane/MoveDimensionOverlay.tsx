@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import type { MoveDimensionAxis, MoveDimensionOverlayData } from "@/lib/moveDimensionLines";
+import { t } from "@/lib/i18n";
 
 export function MoveDimensionOverlay({
   overlay,
@@ -50,7 +51,7 @@ export function MoveDimensionOverlay({
   }) as CSSProperties;
 
   return (
-    <div className={`move-dimension-overlay ${active ? "active" : "settled"}`} aria-label="Movement dimensions">
+    <div className={`move-dimension-overlay ${active ? "active" : "settled"}`} aria-label={t("aria.moveDimensions")}>
       {overlay.lines.map((line) => {
         if (editing?.axis === line.axis) {
           return (

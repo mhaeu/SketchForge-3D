@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { AlignAxis, AlignHandleStatus, AlignTarget } from "@/types/sketchforge";
+import { t } from "@/lib/i18n";
 
 export type AlignOverlayState = {
   guides: Array<{ key: string; x1: number; y1: number; x2: number; y2: number }>;
@@ -23,7 +24,7 @@ export function AlignOverlay({
   onPreviewClear: () => void;
 }) {
   return (
-    <div className="align-overlay" aria-label="Alignment handles">
+    <div className="align-overlay" aria-label={t("aria.alignmentHandles")}>
       <svg className="align-guides" width="100%" height="100%" aria-hidden="true">
         {overlay.guides.map((guide) => (
           <line key={guide.key} x1={guide.x1} y1={guide.y1} x2={guide.x2} y2={guide.y2} />
@@ -72,7 +73,7 @@ export function MirrorOverlay({
   onPreviewClear: () => void;
 }) {
   return (
-    <div className="mirror-overlay" aria-label="Mirror handles">
+    <div className="mirror-overlay" aria-label={t("aria.mirrorHandles")}>
       <svg className="mirror-guides" width="100%" height="100%" aria-hidden="true">
         {overlay.guides.map((guide) => (
           <line key={guide.key} x1={guide.x1} y1={guide.y1} x2={guide.x2} y2={guide.y2} />

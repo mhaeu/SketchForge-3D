@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import * as THREE from "three";
+import { t } from "@/lib/i18n";
 import {
   measureKeyForHandle,
   type TransformOverlayProps,
@@ -259,7 +260,7 @@ export function TransformOverlay({
             "--rotate-plane-c": handle.plane.c,
             "--rotate-plane-d": handle.plane.d,
           } as CSSProperties}
-          title="Rotate"
+          title={t("transform.rotate")}
           onPointerDown={(event) => {
             if (event.button === 0) {
               onBeginTransform("rotate", handle.key, event);

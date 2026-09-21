@@ -1,4 +1,5 @@
 import type { MeasurementAccuracy, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import { t, type MessageKey } from "@/lib/i18n";
 
 const MILLIMETERS_PER_INCH = 25.4;
 const MILLIMETERS_PER_FOOT = 304.8;
@@ -24,6 +25,32 @@ const IMPERIAL_SCALE_OPTIONS: WorkspaceScaleOption[] = [
 const BRICK_SCALE_OPTIONS: WorkspaceScaleOption[] = [
   { label: "1:1 (studs)", displayLabel: "stud", millimetersPerDisplayUnit: MILLIMETERS_PER_STUD },
 ];
+
+
+/**
+ * Unit, scale and grid names are stored in the project and compared by value,
+ * so the English wording stays put. This maps a stored value to what a person
+ * reads.
+ */
+const OPTION_LABEL_KEYS: Record<string, MessageKey> = {
+  "Metric (Default)": "units.metric",
+  Imperial: "units.imperial",
+  Bricks: "units.bricks",
+  "1:1 (millimeters)": "scale.millimeters",
+  "1:10 (centimeters)": "scale.centimeters",
+  "1:1000 (meters)": "scale.meters",
+  "1:1 (inches)": "scale.inches",
+  "1:1 (feet)": "scale.feet",
+  "1:1 (studs)": "scale.studs",
+  Off: "grid.off",
+  Brick: "grid.brick",
+  Custom: "inspector.custom",
+};
+
+export function measurementOptionLabel(option: string): string {
+  const key = OPTION_LABEL_KEYS[option];
+  return key ? t(key) : option;
+}
 
 export const WORKSPACE_UNIT_OPTIONS = ["Metric (Default)", "Imperial", "Bricks"] as const;
 

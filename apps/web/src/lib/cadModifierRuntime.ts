@@ -1,4 +1,5 @@
 import type { CadModifierEdge } from "@/lib/cadModifierTypes";
+import { t } from "@/lib/i18n";
 
 export const CAD_MODIFIER_RUNTIME_BASE = "/occt";
 export const CAD_MODIFIER_REQUEST_TIMEOUT_MS = 30_000;
@@ -60,7 +61,9 @@ export function selectableCadModifierEdge(
 }
 
 export function edgeModifierSelectionStatus(prepared: boolean, selectedCount: number, availableCount: number) {
-  return prepared ? `${selectedCount} of ${availableCount} sharp edges selected` : "Preparing edges\u2026";
+  return prepared
+    ? t("edge.selectionStatus", { selected: selectedCount, available: availableCount })
+    : t("edge.preparing");
 }
 
 export function cadModifierPrepareTimeoutMs(meshTriangleCount: number) {
