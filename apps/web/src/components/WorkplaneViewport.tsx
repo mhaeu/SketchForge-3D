@@ -2226,6 +2226,12 @@ function patchWithResizeAnchor(
     return patchWithPreservedWorldYEdge(shape, patch, anchor?.shapeId === shape.id && anchor.pressedY === "bottom" ? "top" : "bottom");
   }
 
+  // A patch that sets the elevation itself (the inspector's Y field) is a
+  // move, not a resize: pinning the underside would cancel it.
+  if (patch.elevation !== undefined) {
+    return patch;
+  }
+
   if (axis !== "width" && axis !== "depth") {
     return patchWithPreservedWorldBottom(shape, patch);
   }
