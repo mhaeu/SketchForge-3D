@@ -36,8 +36,10 @@ import {
   normalizeLoftTopSize,
 } from "@/lib/loftGeometry";
 import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
+import { workplaneCenteringOffset } from "@/lib/workplaneCentering";
 import {
   ToolbarAlignIcon,
+  ToolbarCenterOnWorkplaneIcon,
   ToolbarChamferIcon,
   ToolbarCaretDownIcon,
   ToolbarCopyIcon,
@@ -7962,6 +7964,43 @@ export function SketchForgeEditor({
     );
   }, [commitShapes, hasSelection, placementWorkplane, selectedIds, shapes]);
 
+  /**
+   * Moves the selection to the middle of the build plate, without changing its
+   * height. Locked objects stay where they are - and must not widen the
+   * bounding box either, or the ones that do move end up off-centre.
+   */
+  const centerSelectionOnWorkplane = useCallback(() => {
+    if (!hasSelection) {
+      setNotice("Select a shape first");
+      return;
+    }
+    const selected = new Set(selectedIds);
+    const movable = shapes.filter((shape) => selected.has(shape.id) && !shape.locked);
+    if (movable.length === 0) {
+      setNotice("Unlock the selection before centering it");
+      return;
+    }
+    const offset = workplaneCenteringOffset(boundsForShapes(movable));
+    if (!offset) {
+      setNotice("Nothing measurable in the selection");
+      return;
+    }
+    const offsetX = cleanNearZero(offset.x);
+    const offsetZ = cleanNearZero(offset.z);
+    if (offsetX === 0 && offsetZ === 0) {
+      setNotice("Already centered on the workplane");
+      return;
+    }
+    const movableIds = new Set(movable.map((shape) => shape.id));
+    commitShapes(
+      shapes.map((shape) => (movableIds.has(shape.id)
+        ? { ...shape, x: cleanNearZero(shape.x + offsetX), z: cleanNearZero(shape.z + offsetZ) }
+        : shape)),
+      selectedIds,
+      movable.length === 1 ? "Centered selection on the workplane" : `Centered ${movable.length} objects on the workplane`,
+    );
+  }, [commitShapes, hasSelection, selectedIds, shapes]);
+
   const activateWorkplaneTool = useCallback(() => {
     setWorkplaneMode((active) => {
       const next = !active;
@@ -9482,6 +9521,7 @@ export function SketchForgeEditor({
         onDelete={deleteSelected}
         onDuplicate={duplicateSelected}
         onDropToWorkplane={dropSelectedToWorkplane}
+        onCenterOnWorkplane={centerSelectionOnWorkplane}
         onGroup={groupSelected}
         onIntersect={intersectSelected}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
@@ -9833,6 +9873,7 @@ function SecondaryToolbar({
   onDelete,
   onDuplicate,
   onDropToWorkplane,
+  onCenterOnWorkplane,
   onGroup,
   onIntersect,
   onFillet,
@@ -9898,6 +9939,7 @@ function SecondaryToolbar({
   onDelete: () => void;
   onDuplicate: () => void;
   onDropToWorkplane: () => void;
+  onCenterOnWorkplane: () => void;
   onGroup: () => void;
   onIntersect: () => void;
   onFillet: () => void;
@@ -10080,6 +10122,7 @@ function SecondaryToolbar({
   ];
   const arrangeTools = [
     { label: "Drop to workplane", icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
+    { label: "Center on workplane", icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
   ];
   const renderToolButton = (tool: (typeof leftTools)[number] | (typeof visibilityTools)[number] | (typeof combineTools)[number] | (typeof modifyTools)[number] | (typeof arrangeTools)[number]) => {
     const { icon: Icon, action, enabled, label } = tool;

@@ -196,3 +196,19 @@ export function ToolbarWorkplaneIcon() {
 export function ToolbarDropToWorkplaneIcon() {
   return <ToolbarCommandImage file="toolbar-drop-workplane.png" className="toolbar-user-art-icon" />;
 }
+
+/**
+ * Centre on the workplane: the plate with the object in its middle, and four
+ * arrows pushing it there from every side. Drawn rather than taken from the
+ * sprite sheet - the sheet has no such icon, and one drawn in the sprite's
+ * proportions sits beside the others without standing out.
+ */
+export function ToolbarCenterOnWorkplaneIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" {...props}>
+      <rect x="5" y="5" width="38" height="38" rx="4" />
+      <rect x="18" y="18" width="12" height="12" rx="2" fill="currentColor" stroke="none" />
+      <path d="M20 9h8l-4 5Z M20 39h8l-4-5Z M9 20v8l5-4Z M39 20v8l-5-4Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
