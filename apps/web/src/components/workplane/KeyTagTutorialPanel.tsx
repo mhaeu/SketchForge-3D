@@ -2,104 +2,108 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { t, type MessageKey } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const KEY_TAG_STEP_STORAGE_KEY = "sketchforge:key-tag-tutorial-step";
 
 type TutorialDimension = {
-  label: "Length" | "Width" | "Height";
+  label: MessageKey;
   value: string;
   slider: number;
 };
 
+// The wording lives in the catalogues; the steps hold keys, because this list
+// is built when the module loads and the language is chosen later.
 type TutorialStep = {
-  eyebrow: string;
-  title: string;
-  body: string;
+  eyebrow: MessageKey;
+  title: MessageKey;
+  body: MessageKey;
   image: string;
-  alt: string;
+  alt: MessageKey;
   dimensions?: TutorialDimension[];
   snapGrid?: string;
 };
 
 const STEPS: TutorialStep[] = [
   {
-    eyebrow: "Before you start",
-    title: "Build a Key Tag",
-    body: "Set Snap Grid to 0.5 mm, then build the Key Tag from simple shapes.",
+    eyebrow: "keytag.step0.eyebrow",
+    title: "keytag.step0.title",
+    body: "keytag.step0.body",
     image: "/assets/challenges/key-tag/01-finished-target.png",
-    alt: "Finished Key Tag shown in the SketchForge workplane",
+    alt: "keytag.step0.alt",
     snapGrid: "0.5 mm",
   },
   {
-    eyebrow: "Step 1",
-    title: "Make the middle",
-    body: "Add a Box, then set its size in the shape panel.",
+    eyebrow: "keytag.step1.eyebrow",
+    title: "keytag.step1.title",
+    body: "keytag.step1.body",
     image: "/assets/challenges/key-tag/02-middle-box.png",
-    alt: "The middle box of the Key Tag in SketchForge",
+    alt: "keytag.step1.alt",
     dimensions: [
-      { label: "Length", value: "25.50 mm", slider: 38 },
-      { label: "Width", value: "11.50 mm", slider: 20 },
-      { label: "Height", value: "1.00 mm", slider: 5 },
+      { label: "prop.length", value: "25.50 mm", slider: 38 },
+      { label: "prop.width", value: "11.50 mm", slider: 20 },
+      { label: "prop.height", value: "1.00 mm", slider: 5 },
     ],
   },
   {
-    eyebrow: "Step 2",
-    title: "Add the left round end",
-    body: "Add a solid Cylinder and place half of it over the left end of the box.",
+    eyebrow: "keytag.step2.eyebrow",
+    title: "keytag.step2.title",
+    body: "keytag.step2.body",
     image: "/assets/challenges/key-tag/03-left-round-end.png",
-    alt: "A solid cylinder added to the left end of the Key Tag",
+    alt: "keytag.step2.alt",
     dimensions: [
-      { label: "Length", value: "11.50 mm", slider: 20 },
-      { label: "Width", value: "11.50 mm", slider: 20 },
-      { label: "Height", value: "1.00 mm", slider: 5 },
+      { label: "prop.length", value: "11.50 mm", slider: 20 },
+      { label: "prop.width", value: "11.50 mm", slider: 20 },
+      { label: "prop.height", value: "1.00 mm", slider: 5 },
     ],
   },
   {
-    eyebrow: "Step 3",
-    title: "Make the other end",
-    body: "Duplicate the solid cylinder and place the copy on the right end.",
+    eyebrow: "keytag.step3.eyebrow",
+    title: "keytag.step3.title",
+    body: "keytag.step3.body",
     image: "/assets/challenges/key-tag/04-right-round-end.png",
-    alt: "Two solid cylinders forming both rounded ends of the Key Tag",
+    alt: "keytag.step3.alt",
   },
   {
-    eyebrow: "Step 4",
-    title: "Lock the left circle",
-    body: "Select the left solid cylinder and press Lock. It will be the alignment reference.",
+    eyebrow: "keytag.step4.eyebrow",
+    title: "keytag.step4.title",
+    body: "keytag.step4.body",
     image: "/assets/challenges/key-tag/05-select-left-circle.png",
-    alt: "The left solid cylinder selected in the SketchForge workplane",
+    alt: "keytag.step4.alt",
   },
   {
-    eyebrow: "Step 5",
-    title: "Create the hole",
-    body: "Add another Cylinder, set its size, then change it from Solid to Hole.",
+    eyebrow: "keytag.step5.eyebrow",
+    title: "keytag.step5.title",
+    body: "keytag.step5.body",
     image: "/assets/challenges/key-tag/06-hole-cylinder.png",
-    alt: "The small hole cylinder added near the left end of the Key Tag",
+    alt: "keytag.step5.alt",
     dimensions: [
-      { label: "Length", value: "3.00 mm", slider: 8 },
-      { label: "Width", value: "3.00 mm", slider: 8 },
-      { label: "Height", value: "2.00 mm", slider: 7 },
+      { label: "prop.length", value: "3.00 mm", slider: 8 },
+      { label: "prop.width", value: "3.00 mm", slider: 8 },
+      { label: "prop.height", value: "2.00 mm", slider: 7 },
     ],
   },
   {
-    eyebrow: "Step 6",
-    title: "Align the hole",
-    body: "Select the hole and the locked left circle. Press Align and choose the middle on both horizontal axes.",
+    eyebrow: "keytag.step6.eyebrow",
+    title: "keytag.step6.title",
+    body: "keytag.step6.body",
     image: "/assets/challenges/key-tag/07-align-hole.png",
-    alt: "The hole aligned to the center of the left solid cylinder",
+    alt: "keytag.step6.alt",
   },
   {
-    eyebrow: "Step 7",
-    title: "Unlock the circle",
-    body: "Select the left solid circle again and press Unlock.",
+    eyebrow: "keytag.step7.eyebrow",
+    title: "keytag.step7.title",
+    body: "keytag.step7.body",
     image: "/assets/challenges/key-tag/08-unlock-left-circle.png",
-    alt: "The left solid cylinder selected again after the hole has been aligned",
+    alt: "keytag.step7.alt",
   },
   {
-    eyebrow: "Step 8",
-    title: "Group the Key Tag",
-    body: "Select the box, both solid circles, and the hole. Press Group.",
+    eyebrow: "keytag.step8.eyebrow",
+    title: "keytag.step8.title",
+    body: "keytag.step8.body",
     image: "/assets/challenges/key-tag/09-grouped-key-tag.png",
-    alt: "The finished grouped Key Tag selected in SketchForge",
+    alt: "keytag.step8.alt",
   },
 ];
 
@@ -118,6 +122,7 @@ export function KeyTagTutorialPanel({
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
+  useLanguage();
   const [stepIndex, setStepIndex] = useState(storedStepIndex);
   const step = STEPS[stepIndex];
   const first = stepIndex === 0;
@@ -131,17 +136,17 @@ export function KeyTagTutorialPanel({
 
   if (collapsed) {
     return (
-      <aside className="key-tag-tutorial-panel key-tag-tutorial-panel-collapsed" aria-label="Key Tag challenge instructions">
+      <aside className="key-tag-tutorial-panel key-tag-tutorial-panel-collapsed" aria-label={t("keytag.panel")}>
         <button
           type="button"
           className="key-tag-tutorial-expand"
-          title="Expand challenge instructions"
-          aria-label="Expand challenge instructions"
+          title={t("tutorial.expand")}
+          aria-label={t("tutorial.expand")}
           onClick={() => onCollapsedChange?.(false)}
         >
           <ChevronLeft size={19} />
         </button>
-        <span className="key-tag-tutorial-collapsed-label">Key Tag</span>
+        <span className="key-tag-tutorial-collapsed-label">{t("keytag.name")}</span>
         <span className="key-tag-tutorial-collapsed-count">{stepIndex + 1}/{STEPS.length}</span>
       </aside>
     );
@@ -150,22 +155,22 @@ export function KeyTagTutorialPanel({
   return (
     <aside
       className="key-tag-tutorial-panel"
-      aria-label="Key Tag challenge instructions"
+      aria-label={t("keytag.panel")}
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
       <header className="key-tag-tutorial-header">
         <div>
-          <span>Challenge 1</span>
-          <strong>Key Tag</strong>
+          <span>{t("keytag.challenge")}</span>
+          <strong>{t("keytag.name")}</strong>
         </div>
         <div className="key-tag-tutorial-header-actions">
           <span className="key-tag-tutorial-count">{stepIndex + 1} / {STEPS.length}</span>
           <button
             type="button"
             className="key-tag-tutorial-collapse"
-            title="Minimize challenge instructions"
-            aria-label="Minimize challenge instructions"
+            title={t("tutorial.collapse")}
+            aria-label={t("tutorial.collapse")}
             onClick={() => onCollapsedChange?.(true)}
           >
             <ChevronRight size={18} />
@@ -175,23 +180,23 @@ export function KeyTagTutorialPanel({
 
       <div className="key-tag-tutorial-body">
         <div className="key-tag-tutorial-copy">
-          <span className="key-tag-tutorial-eyebrow">{step.eyebrow}</span>
-          <h2>{step.title}</h2>
-          <p>{step.body}</p>
+          <span className="key-tag-tutorial-eyebrow">{t(step.eyebrow)}</span>
+          <h2>{t(step.title)}</h2>
+          <p>{t(step.body)}</p>
 
           {step.snapGrid ? (
-            <div className="key-tag-snap-row" aria-label={`Snap Grid ${step.snapGrid}`}>
-              <span>Snap Grid</span>
+            <div className="key-tag-snap-row" aria-label={`${t("inspector.snapGrid")} ${step.snapGrid}`}>
+              <span>{t("inspector.snapGrid")}</span>
               <strong>{step.snapGrid}</strong>
             </div>
           ) : null}
 
           {step.dimensions ? (
-            <div className="key-tag-tutorial-dimensions" aria-label="Required dimensions">
+            <div className="key-tag-tutorial-dimensions" aria-label={t("tutorial.requiredDimensions")}>
               {step.dimensions.map((dimension) => (
                 <div className="key-tag-tutorial-dimension-control" key={dimension.label}>
                   <div className="key-tag-tutorial-dimension-heading">
-                    <span>{dimension.label}</span>
+                    <span>{t(dimension.label)}</span>
                     <strong>{dimension.value}</strong>
                   </div>
                   <div className="key-tag-tutorial-slider" aria-hidden="true">
@@ -211,7 +216,7 @@ export function KeyTagTutorialPanel({
 
       <footer className="key-tag-tutorial-footer">
         <button type="button" className="secondary" disabled={first} onClick={() => goToStep(stepIndex - 1)}>
-          <ChevronLeft size={17} /> Previous
+          <ChevronLeft size={17} /> {t("tutorial.previous")}
         </button>
         <button
           type="button"
@@ -225,7 +230,7 @@ export function KeyTagTutorialPanel({
             goToStep(stepIndex + 1);
           }}
         >
-          {last ? "Finish" : "Next"} {!last ? <ChevronRight size={17} /> : null}
+          {last ? t("tutorial.finish") : t("tutorial.next")} {!last ? <ChevronRight size={17} /> : null}
         </button>
       </footer>
     </aside>

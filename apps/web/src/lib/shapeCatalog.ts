@@ -1,4 +1,5 @@
 import { canonicalizeShape } from "@/lib/workplaneShapes";
+import { t, type MessageKey } from "@/lib/i18n";
 import { createLocalId } from "@/lib/localIds";
 import {
   DEFAULT_GEAR_CENTER_HOLE_SIZE,
@@ -50,6 +51,39 @@ import {
 import { regularPolygonAspect } from "@/lib/regularPolygonFootprint";
 import type { ShapeAsset, ShapeCustomization, ShapeKind, WorkplaneShape } from "@/types/sketchforge";
 import { DEFAULT_LOFT_BOTTOM_SHAPE, DEFAULT_LOFT_LAYERS, DEFAULT_LOFT_SEGMENTS, DEFAULT_LOFT_TOP_SHAPE } from "@/lib/loftGeometry";
+
+/**
+ * The palette's wording. The catalogue keeps the English name as the stable
+ * identity used by tests and by projects saved before translation; this is what
+ * a person reads, and what a new object is named after.
+ */
+const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
+  box: "shape.box",
+  cylinder: "shape.cylinder",
+  ellipse: "shape.ellipse",
+  polygon: "shape.polygon",
+  sphere: "shape.sphere",
+  cone: "shape.cone",
+  pyramid: "shape.pyramid",
+  wedge: "shape.wedge",
+  text: "shape.text",
+  "round-roof": "shape.roundRoof",
+  "half-sphere": "shape.halfSphere",
+  torus: "shape.torus",
+  tube: "shape.tube",
+  thread: "shape.thread",
+  spring: "shape.spring",
+  ruler: "shape.ruler",
+  gear: "shape.gear",
+  loft: "shape.loft",
+  "thread-external": "shape.threadExternal",
+  "thread-internal": "shape.threadInternal",
+};
+
+export function shapeAssetLabel(asset: Pick<ShapeAsset, "id" | "name">): string {
+  const key = SHAPE_LABEL_KEYS[asset.id];
+  return key ? t(key) : asset.name;
+}
 
 export type ToolbarShapeAsset = ShapeAsset & { menuIcon: string };
 
@@ -257,7 +291,7 @@ export function makeShapeFromAsset(
     const preset = THREAD_ASSET_PRESETS[asset.id];
     return {
       id: createLocalId(asset.id),
-      name: asset.name,
+      name: shapeAssetLabel(asset),
       color: asset.color,
       hole: asset.hole ?? preset.kind === "internal",
       x: point?.x ?? 0,
@@ -299,7 +333,7 @@ export function makeShapeFromAsset(
 
   return {
     id: createLocalId(asset.id),
-    name: asset.name,
+    name: shapeAssetLabel(asset),
     kind: asset.kind,
     color: asset.color,
     hole: asset.hole,

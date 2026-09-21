@@ -418,7 +418,7 @@ function threadProperties(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate)
   if (rimChamferLimits.max > 0) {
     properties.push({
       id: "headChamfer",
-      label: settings.role === "nut" ? "Rim Chamfer" : "Head Chamfer",
+      label: settings.role === "nut" ? t("prop.rimChamfer") : t("prop.headChamfer"),
       value: settings.headChamfer,
       min: rimChamferLimits.min,
       max: rimChamferLimits.max,
@@ -615,9 +615,9 @@ function getShapePropertiesWithAppLimits(
         type: "select",
         id: "type",
         label: t("inspector.threadRole"),
-        value: params.kind === "internal" ? "Internal thread (tapped hole)" : "External thread (bolt)",
-        options: ["External thread (bolt)", "Internal thread (tapped hole)"],
-        onChange: (mode) => rebuild({ kind: mode.startsWith("Internal") ? "internal" : "external" }),
+        value: params.kind,
+        options: [{ value: "external", label: t("thread.externalMesh") }, { value: "internal", label: t("thread.internalMesh") }],
+        onChange: (mode) => rebuild({ kind: mode === "internal" ? "internal" : "external" }),
       },
       { id: "diameter", label: t("prop.diameter"), value: params.diameter, min: 0.1, max: 80, onChange: (diameter) => rebuild({ diameter }) },
       { id: "pitch", label: t("prop.pitch"), value: params.pitch, min: 0.05, max: 8, step: 0.05, onChange: (pitch) => rebuild({ pitch }) },
@@ -1192,11 +1192,11 @@ export function ShapeInspector({
   }, [isSketchRevolve, shape.id]);
 
   return (
-    <aside ref={inspectorRef} className={`shape-inspector ${isSketchRevolve ? "sketch-revolve-inspector" : ""} ${shape.kind === "gear" ? "gear-inspector" : ""} ${minimized ? "minimized" : ""}`} aria-label={`${shape.name} shape settings`} onPointerDown={(event) => event.stopPropagation()}>
+    <aside ref={inspectorRef} className={`shape-inspector ${isSketchRevolve ? "sketch-revolve-inspector" : ""} ${shape.kind === "gear" ? "gear-inspector" : ""} ${minimized ? "minimized" : ""}`} aria-label={t("inspector.shapeSettings", { name: shape.name })} onPointerDown={(event) => event.stopPropagation()}>
       <div className="shape-inspector-header">
         <button
           className="inspector-header-icon"
-          aria-label={minimized ? "Expand shape settings" : "Minimize shape settings"}
+          aria-label={minimized ? t("inspector.expand") : t("inspector.minimize")}
           aria-expanded={!minimized}
           onClick={() => setMinimized((current) => !current)}
         >
@@ -1204,10 +1204,10 @@ export function ShapeInspector({
         </button>
         <strong>{shape.name}</strong>
         <div className="inspector-header-actions">
-          <button className={locked ? "inspector-header-icon active" : "inspector-header-icon"} aria-label={locked ? "Unlock shape" : "Lock shape"} onClick={() => onUpdate({ locked: !locked })}>
+          <button className={locked ? "inspector-header-icon active" : "inspector-header-icon"} aria-label={locked ? t("inspector.unlockShape") : t("inspector.lockShape")} onClick={() => onUpdate({ locked: !locked })}>
             {locked ? <LockKeyhole size={31} strokeWidth={2.4} /> : <LockKeyholeOpen size={31} strokeWidth={2.4} />}
           </button>
-          <button className={shape.hidden ? "inspector-header-icon active" : "inspector-header-icon"} aria-label={shape.hidden ? "Show shape" : "Hide shape"} onClick={() => onUpdate({ hidden: !shape.hidden })}>
+          <button className={shape.hidden ? "inspector-header-icon active" : "inspector-header-icon"} aria-label={shape.hidden ? t("inspector.showShape") : t("inspector.hideShape")} onClick={() => onUpdate({ hidden: !shape.hidden })}>
             <ToolbarHideSelectedIcon />
           </button>
         </div>
@@ -1627,10 +1627,10 @@ function RangeProperty({
               className={`axis-link${link.linked ? " on" : ""}${link.active ? " active" : ""}`}
               disabled={disabled}
               title={link.active
-                ? "Linked: this axis keeps its ratio with the other linked axes"
+                ? t("inspector.linkPaired")
                 : link.linked
-                  ? "Linked, but on its own - check a second axis to keep a ratio"
-                  : "Link this axis so it scales in proportion with the others"}
+                  ? t("inspector.linkAlone")
+                  : t("inspector.linkHint")}
               aria-pressed={link.linked}
               onClick={(event) => {
                 event.preventDefault();

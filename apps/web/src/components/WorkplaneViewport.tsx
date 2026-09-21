@@ -7490,7 +7490,7 @@ function syncMirrorOverlay(
         x: xScreen.x,
         y: xScreen.y,
         angle: screenAngle(xWorld.clone().add(new THREE.Vector3(-step, 0, 0)), xWorld.clone().add(new THREE.Vector3(step, 0, 0))),
-        title: "Mirror left-right",
+        title: t("mirror.leftRightAction"),
       },
       {
         axis: "z" as const,
@@ -7498,7 +7498,7 @@ function syncMirrorOverlay(
         x: zScreen.x,
         y: zScreen.y,
         angle: screenAngle(zWorld.clone().add(new THREE.Vector3(0, 0, -step)), zWorld.clone().add(new THREE.Vector3(0, 0, step))),
-        title: "Mirror front-back",
+        title: t("mirror.frontBackAction"),
       },
       {
         axis: "y" as const,
@@ -7506,7 +7506,7 @@ function syncMirrorOverlay(
         x: yScreen.x,
         y: yScreen.y,
         angle: screenAngle(yWorld.clone().add(new THREE.Vector3(0, -step, 0)), yWorld.clone().add(new THREE.Vector3(0, step, 0))),
-        title: "Mirror top-bottom",
+        title: t("mirror.topBottomAction"),
       },
     ],
   };

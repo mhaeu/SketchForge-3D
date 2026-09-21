@@ -2,8 +2,11 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { t } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 export function SketchRevolvePreview({ positions }: { positions: number[] | null }) {
+  useLanguage();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -64,7 +67,7 @@ export function SketchRevolvePreview({ positions }: { positions: number[] | null
   }, [positions]);
 
   return (
-    <aside className="sketch-revolve-preview" aria-label="Revolve 3D preview">
+    <aside className="sketch-revolve-preview" aria-label={t("sketch.revolvePreview")}>
       <div className="sketch-revolve-preview-title">3D preview</div>
       {positions?.length ? <canvas ref={canvasRef} /> : <div className="sketch-revolve-preview-empty">Draw a closed profile left of the axis</div>}
     </aside>

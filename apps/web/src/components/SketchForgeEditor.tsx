@@ -126,7 +126,7 @@ import { findSketchOutlineIntersection } from "@/lib/sketchProfileValidation";
 import { addLineIntersectionPoints, splitSketchSegment } from "@/lib/sketchPointRefinement";
 import { buildSketchRevolveMesh, DEFAULT_SKETCH_REVOLVE_SETTINGS, normalizeSketchRevolveSettings, type SketchRevolveMesh } from "@/lib/sketchRevolve";
 import { exportSkfProject, SKF_MEDIA_TYPE } from "@/lib/skfProject";
-import { makeShapeFromAsset, sceneShape, toolbarShapeAssets, type ToolbarShapeAsset } from "@/lib/shapeCatalog";
+import { makeShapeFromAsset, sceneShape, shapeAssetLabel, toolbarShapeAssets, type ToolbarShapeAsset } from "@/lib/shapeCatalog";
 import { ensureReferencePoint, isReferencePoint, referencePointPosition, REFERENCE_POINT_ID } from "@/lib/referencePoint";
 import { importExtensionSupported } from "@/lib/importExtensions";
 import { importedShapeFromStl } from "@/lib/stlImport";
@@ -386,12 +386,12 @@ async function shapeFromResolvedSketchProfile(
     );
     const simplified = section.simplify(Math.max(1e-7, coordinateScale * 1e-8));
     disposable.push(simplified);
-    if (simplified.toPolygons().length === 0) throw new Error("The sketch has no filled area after resolving its crossings");
+    if (simplified.toPolygons().length === 0) throw new Error(t("status.sketchNoArea"));
 
     const solid = simplified.extrude(height);
     disposable.push(solid);
     if (solid.status() !== "NoError" || solid.numTri() < 1) {
-      throw new Error("The crossing sketch could not be converted into a valid solid");
+      throw new Error(t("status.sketchNotSolid"));
     }
 
     const manifoldPositions = manifoldMeshToPositions(solid.getMesh());
@@ -422,7 +422,7 @@ async function shapeFromResolvedSketchProfile(
     const meshDepth = Math.max(0.01, maxZ - minZ);
     return canonicalizeShape({
       id: existing?.id ?? createLocalId("sketch-extrusion"),
-      name: existing?.name ?? "Sketch extrusion",
+      name: existing?.name ?? t("shape.sketchExtrusion"),
       kind: "mesh",
       color: existing?.color ?? "#d41721",
       hole: existing?.hole,
@@ -538,7 +538,7 @@ async function shapeFromSketchProfile(profile: SketchProfile, height: number, ex
   geometry.dispose();
   return canonicalizeShape({
     id: existing?.id ?? createLocalId("sketch-extrusion"),
-    name: existing?.name ?? "Sketch extrusion",
+    name: existing?.name ?? t("shape.sketchExtrusion"),
     kind: "mesh",
     color: existing?.color ?? "#d41721",
     hole: existing?.hole,
@@ -585,7 +585,7 @@ function ensureSketchCadWorker() {
   worker.onerror = () => {
     sketchCadPending.forEach((pending) => {
       window.clearTimeout(pending.timer);
-      pending.reject(new Error("The OpenCascade sketch worker failed to start"));
+      pending.reject(new Error(t("status.sketchWorkerFailed")));
     });
     sketchCadPending.clear();
     worker.terminate();
@@ -602,7 +602,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
   const response = await new Promise<SketchCadBuildResponse>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       sketchCadPending.delete(requestId);
-      reject(new Error("OpenCascade timed out while building the sketch"));
+      reject(new Error(t("status.sketchWorkerTimeout")));
     }, 30_000);
     sketchCadPending.set(requestId, { resolve, reject, timer });
     worker.postMessage({ type: "build", requestId, profile: cloneSketchProfile(profile), height: safeHeight });
@@ -611,7 +611,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
   const source = canonicalizeShape({
     ...(existing ?? {
       id: createLocalId("sketch-extrusion"),
-      name: "Sketch extrusion",
+      name: t("shape.sketchExtrusion"),
       kind: "mesh" as const,
       color: "#d41721",
       x: 0,
@@ -630,7 +630,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
     cadDisplayEdgesVersion: undefined,
   });
   const shape = shapeFromCadMesh(source, response.positions, response.normals, response.indices, response.brep);
-  if (!shape) throw new Error("OpenCascade returned an empty sketch solid");
+  if (!shape) throw new Error(t("status.sketchWorkerEmpty"));
   return { ...shape, sketchProfile: cloneSketchProfile(profile), sketchOperation: "extrude" as const };
 }
 
@@ -644,7 +644,7 @@ async function shapeFromRevolvedSketchProfile(
   const mesh = buildSketchRevolveMesh(runtime, profile, normalizedSettings);
   return canonicalizeShape({
     id: existing?.id ?? createLocalId("sketch-revolve"),
-    name: existing?.name ?? "Sketch revolve",
+    name: existing?.name ?? t("shape.sketchRevolve"),
     kind: "mesh",
     color: existing?.color ?? "#78b96b",
     hole: existing?.hole,
@@ -1306,22 +1306,22 @@ function booleanAutomationScene(caseId: string): { label: string; shapes: Workpl
 
 function makeHouseScene(): WorkplaneShape[] {
   return [
-    sceneShape({ name: "Grass base", kind: "box", color: "#4f9b58", x: 0, z: 0, width: 118, depth: 92, height: 1 }),
-    sceneShape({ name: "House body", kind: "box", color: "#e7c49a", x: 0, z: 2, width: 52, depth: 42, height: 34, elevation: 1 }),
-    sceneShape({ name: "Gable roof", kind: "roof", color: "#a83c32", x: 0, z: 2, width: 66, depth: 54, height: 23, elevation: 35 }),
-    sceneShape({ name: "Chimney", kind: "box", color: "#7f3328", x: 17, z: -9, width: 8, depth: 8, height: 18, elevation: 45 }),
-    sceneShape({ name: "Front door", kind: "box", color: "#6d4427", x: 0, z: -20.4, width: 12, depth: 1.4, height: 19, elevation: 1.5 }),
-    sceneShape({ name: "Door knob", kind: "sphere", color: "#e0b23f", x: 4.2, z: -21.6, width: 2.2, depth: 2.2, height: 2.2, elevation: 11 }),
-    sceneShape({ name: "Left front window", kind: "box", color: "#6fc8e8", x: -16, z: -20.7, width: 10, depth: 1.2, height: 8, elevation: 18 }),
-    sceneShape({ name: "Right front window", kind: "box", color: "#6fc8e8", x: 16, z: -20.7, width: 10, depth: 1.2, height: 8, elevation: 18 }),
-    sceneShape({ name: "Left side window", kind: "box", color: "#6fc8e8", x: -26.2, z: 8, width: 10, depth: 1.2, height: 8, elevation: 18, rotation: 90 }),
-    sceneShape({ name: "Right side window", kind: "box", color: "#6fc8e8", x: 26.2, z: 8, width: 10, depth: 1.2, height: 8, elevation: 18, rotation: 90 }),
-    sceneShape({ name: "Porch step", kind: "box", color: "#9d9b91", x: 0, z: -28, width: 24, depth: 10, height: 2, elevation: 1 }),
-    sceneShape({ name: "Walkway", kind: "box", color: "#b8b4a8", x: 0, z: -50, width: 12, depth: 36, height: 0.8, elevation: 0.2 }),
-    sceneShape({ name: "Tree trunk", kind: "cylinder", color: "#7b4a2b", x: -42, z: 22, width: 7, depth: 7, height: 18, elevation: 1, sides: 18 }),
-    sceneShape({ name: "Tree crown", kind: "sphere", color: "#2f8e45", x: -42, z: 22, width: 24, depth: 24, height: 22, elevation: 18 }),
-    sceneShape({ name: "Mailbox post", kind: "box", color: "#5a4b3d", x: 32, z: -42, width: 3, depth: 3, height: 12, elevation: 1 }),
-    sceneShape({ name: "Mailbox", kind: "roundRoof", color: "#2e6ca8", x: 32, z: -42, width: 13, depth: 8, height: 7, elevation: 13, rotation: 90 }),
+    sceneShape({ name: t("house.grass"), kind: "box", color: "#4f9b58", x: 0, z: 0, width: 118, depth: 92, height: 1 }),
+    sceneShape({ name: t("house.body"), kind: "box", color: "#e7c49a", x: 0, z: 2, width: 52, depth: 42, height: 34, elevation: 1 }),
+    sceneShape({ name: t("house.roof"), kind: "roof", color: "#a83c32", x: 0, z: 2, width: 66, depth: 54, height: 23, elevation: 35 }),
+    sceneShape({ name: t("house.chimney"), kind: "box", color: "#7f3328", x: 17, z: -9, width: 8, depth: 8, height: 18, elevation: 45 }),
+    sceneShape({ name: t("house.door"), kind: "box", color: "#6d4427", x: 0, z: -20.4, width: 12, depth: 1.4, height: 19, elevation: 1.5 }),
+    sceneShape({ name: t("house.knob"), kind: "sphere", color: "#e0b23f", x: 4.2, z: -21.6, width: 2.2, depth: 2.2, height: 2.2, elevation: 11 }),
+    sceneShape({ name: t("house.windowFrontLeft"), kind: "box", color: "#6fc8e8", x: -16, z: -20.7, width: 10, depth: 1.2, height: 8, elevation: 18 }),
+    sceneShape({ name: t("house.windowFrontRight"), kind: "box", color: "#6fc8e8", x: 16, z: -20.7, width: 10, depth: 1.2, height: 8, elevation: 18 }),
+    sceneShape({ name: t("house.windowSideLeft"), kind: "box", color: "#6fc8e8", x: -26.2, z: 8, width: 10, depth: 1.2, height: 8, elevation: 18, rotation: 90 }),
+    sceneShape({ name: t("house.windowSideRight"), kind: "box", color: "#6fc8e8", x: 26.2, z: 8, width: 10, depth: 1.2, height: 8, elevation: 18, rotation: 90 }),
+    sceneShape({ name: t("house.step"), kind: "box", color: "#9d9b91", x: 0, z: -28, width: 24, depth: 10, height: 2, elevation: 1 }),
+    sceneShape({ name: t("house.walkway"), kind: "box", color: "#b8b4a8", x: 0, z: -50, width: 12, depth: 36, height: 0.8, elevation: 0.2 }),
+    sceneShape({ name: t("house.trunk"), kind: "cylinder", color: "#7b4a2b", x: -42, z: 22, width: 7, depth: 7, height: 18, elevation: 1, sides: 18 }),
+    sceneShape({ name: t("house.crown"), kind: "sphere", color: "#2f8e45", x: -42, z: 22, width: 24, depth: 24, height: 22, elevation: 18 }),
+    sceneShape({ name: t("house.mailboxPost"), kind: "box", color: "#5a4b3d", x: 32, z: -42, width: 3, depth: 3, height: 12, elevation: 1 }),
+    sceneShape({ name: t("house.mailbox"), kind: "roundRoof", color: "#2e6ca8", x: 32, z: -42, width: 13, depth: 8, height: 7, elevation: 13, rotation: 90 }),
   ];
 }
 
@@ -2564,10 +2564,10 @@ function readFileAsDataUrl(file: File) {
       if (typeof reader.result === "string") {
         resolve(reader.result);
       } else {
-        reject(new Error("Image could not be read"));
+        reject(new Error(t("status.imageReadFailed")));
       }
     });
-    reader.addEventListener("error", () => reject(new Error("Image could not be read")));
+    reader.addEventListener("error", () => reject(new Error(t("status.imageReadFailed"))));
     reader.readAsDataURL(file);
   });
 }
@@ -2576,7 +2576,7 @@ function loadImageElement(dataUrl: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     image.addEventListener("load", () => resolve(image));
-    image.addEventListener("error", () => reject(new Error("Image could not be decoded")));
+    image.addEventListener("error", () => reject(new Error(t("status.imageDecodeFailed"))));
     image.src = dataUrl;
   });
 }
@@ -2588,7 +2588,7 @@ async function prepareImportedImage(file: File) {
   const pixelHeight = image.naturalHeight || image.height;
 
   if (!pixelWidth || !pixelHeight) {
-    throw new Error("Image has no readable dimensions");
+    throw new Error(t("status.imageNoSize"));
   }
 
   const maxTextureSide = 2048;
@@ -2607,7 +2607,7 @@ async function prepareImportedImage(file: File) {
   canvas.height = Math.max(1, Math.round(pixelHeight * textureScale));
   const context = canvas.getContext("2d");
   if (!context) {
-    throw new Error("Image could not be prepared");
+    throw new Error(t("status.imagePrepareFailed"));
   }
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   const mimeType = file.type === "image/jpeg" || file.type === "image/webp" ? file.type : "image/png";
@@ -2653,7 +2653,7 @@ async function importedShapeFromImage(file: File): Promise<WorkplaneShape> {
   const dimensions = imagePlateDimensions(imagePlate.pixelWidth, imagePlate.pixelHeight);
   return {
     id: createLocalId("uploaded-image"),
-    name: file.name.replace(/\.[^.]+$/, "") || "Imported Image",
+    name: file.name.replace(/\.[^.]+$/, "") || t("shape.importedImage"),
     kind: "box",
     color: "#f4f7f9",
     x: 10,
@@ -2728,7 +2728,7 @@ async function downloadTextFile(filename: string, content: string, type: string)
     });
     const payload = (await response.json().catch(() => null)) as { error?: string; path?: string } | null;
     if (!response.ok || !payload?.path) {
-      throw new Error(payload?.error ?? "Could not save export");
+      throw new Error(payload?.error ?? t("status.saveExportFailed"));
     }
     return { mode: "folder", path: payload.path };
   }
@@ -2747,7 +2747,7 @@ async function downloadBlobFile(filename: string, blob: Blob): Promise<DownloadR
     formData.set("folder", folder);
     const response = await fetch("/api/local-download", { method: "POST", body: formData });
     const payload = (await response.json().catch(() => null)) as { error?: string; path?: string } | null;
-    if (!response.ok || !payload?.path) throw new Error(payload?.error ?? "Could not save export");
+    if (!response.ok || !payload?.path) throw new Error(payload?.error ?? t("status.saveExportFailed"));
     return { mode: "folder", path: payload.path };
   }
   const url = URL.createObjectURL(blob);
@@ -4550,7 +4550,7 @@ async function manifoldUnionMeshShape(selection: WorkplaneShape[]): Promise<Work
 function asIntersectionGroup(group: WorkplaneShape): WorkplaneShape {
   return {
     ...group,
-    name: "Intersection",
+    name: t("shape.intersection"),
     hole: false,
   };
 }
@@ -4683,7 +4683,7 @@ async function buildIntersectionShapeFromSelection(groupable: WorkplaneShape[]):
   return {
     group: null,
     empty: false,
-    failureNotice: "Could not calculate this Intersection cleanly",
+    failureNotice: t("status.intersectFailed"),
   };
 }
 
@@ -5322,7 +5322,7 @@ async function buildGroupedShapeFromSelection(groupable: WorkplaneShape[]): Prom
     hasHole,
     hasImportedMesh,
     consumed,
-    failureNotice: hasImportedMesh && hasSolid && hasHole ? "Could not cut this imported mesh cleanly" : hasSolid && hasHole ? "Could not cut this selection" : "Could not group this selection",
+    failureNotice: hasImportedMesh && hasSolid && hasHole ? t("status.cutMeshFailed") : hasSolid && hasHole ? t("status.cutFailed") : t("status.groupFailed"),
   };
 }
 
@@ -5601,7 +5601,7 @@ export function SketchForgeEditor({
   const [alignPreview, setAlignPreview] = useState<{ axis: AlignAxis; target: AlignTarget } | null>(null);
   const [mirrorMode, setMirrorMode] = useState(false);
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
-  const [activeMode, setActiveMode] = useState("3D Design");
+  const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const projectFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -5732,7 +5732,7 @@ export function SketchForgeEditor({
       clearCadModifierWatchdog();
       worker?.terminate();
       cadModifierWorkerRef.current = null;
-      rejectPendingRequests("The CAD worker could not start");
+      rejectPendingRequests(t("status.cadWorkerFailed"));
       const requestId = cadModifierRequestRef.current + 1;
       cadModifierRequestRef.current = requestId;
       cadModifierPrepareRef.current = requestId;
@@ -5785,7 +5785,7 @@ export function SketchForgeEditor({
           prepared: true,
           preview: null,
           componentPreviews: [],
-          error: message.selectableEdgeIds.length ? null : "No sharp manifold edges were found at this threshold",
+          error: message.selectableEdgeIds.length ? null : t("status.noManifoldEdges"),
         } : current);
         if (message.selectableEdgeIds.length) setNotice(t("status.selectHighlightedEdges"));
         return;
@@ -5806,7 +5806,7 @@ export function SketchForgeEditor({
           preview,
           componentPreviews,
           busy: false,
-          error: preview ? null : "The CAD kernel returned an empty edge treatment",
+          error: preview ? null : t("status.emptyEdgeResult"),
         } : current);
         if (preview) setNotice(t("status.edgePreviewReady"));
         return;
@@ -5835,7 +5835,7 @@ export function SketchForgeEditor({
       disposed = true;
       clearCadModifierWatchdog();
       cadModifierWorkerRestartRef.current = () => null;
-      rejectPendingRequests("The CAD worker was closed");
+      rejectPendingRequests(t("status.cadWorkerClosed"));
       cadModifierWorkerRef.current?.terminate();
       cadModifierWorkerRef.current = null;
     };
@@ -6040,7 +6040,7 @@ export function SketchForgeEditor({
       const next = new Set(current.selectedEdgeIds);
       const remove = ids.every((edgeId) => next.has(edgeId));
       ids.forEach((edgeId) => remove ? next.delete(edgeId) : next.add(edgeId));
-      return { ...current, selectedEdgeIds: [...next], preview: null, busy: next.size > 0, error: next.size ? null : "Select at least one highlighted edge" };
+      return { ...current, selectedEdgeIds: [...next], preview: null, busy: next.size > 0, error: next.size ? null : t("status.selectHighlightedEdge") };
     });
   }, []);
   const exportableShapeCount = useMemo(() => (hasSelection ? selectedShapes : shapes).filter((shape) => !shape.hole).length, [hasSelection, selectedShapes, shapes]);
@@ -6604,7 +6604,7 @@ export function SketchForgeEditor({
           };
       const smoothed = sketchTool === "smooth" ? withSmoothSketchHandles(next) : next;
       const closed = orderedSketchPaths(smoothed).some((path) => path.closed && path.steps.some((step) => step.segment.startId === sketchActivePointId || step.segment.endId === sketchActivePointId));
-      if (!duplicate) commitSketchProfile(smoothed, closed ? "Profile closed—edit the path or finish the sketch" : "Sketch segment added");
+      if (!duplicate) commitSketchProfile(smoothed, closed ? t("status.profileClosed") : t("status.sketchSegmentAdded"));
       setSketchActivePointId(closed ? null : pointId);
       setSketchSelection({ kind: "point", id: pointId });
       if (closed) setSketchTool("select");
@@ -6637,7 +6637,7 @@ export function SketchForgeEditor({
         next.segments = [...next.segments, { id: createLocalId("sketch-segment"), startId: sketchActivePointId, endId: point.id, kind: curveKind }];
       }
       const prepared = sketchTool === "smooth" ? withSmoothSketchHandles(next) : next;
-      commitSketchProfile(prepared, sketchActivePointId ? "Sketch point and segment added" : "Sketch point added");
+      commitSketchProfile(prepared, sketchActivePointId ? t("status.sketchPointSegmentAdded") : t("status.sketchPointAdded"));
       setSketchActivePointId(point.id);
       setSketchSelection({ kind: "point", id: point.id });
     },
@@ -6771,7 +6771,7 @@ export function SketchForgeEditor({
         points: sketchProfile.points.filter((point) => point.id !== id),
         segments: remainingSegments,
       };
-      commitSketchProfile(next.segments.some((segment) => segment.kind === "smooth") ? withSmoothSketchHandles(next) : next, "Sketch point removed");
+      commitSketchProfile(next.segments.some((segment) => segment.kind === "smooth") ? withSmoothSketchHandles(next) : next, t("status.sketchPointRemoved"));
       if (sketchActivePointId === id) setSketchActivePointId(null);
       setSketchSelection(null);
     },
@@ -6780,14 +6780,14 @@ export function SketchForgeEditor({
 
   const deleteSketchSegment = useCallback(
     (id: string) => {
-      commitSketchProfile({ ...sketchProfile, segments: sketchProfile.segments.filter((segment) => segment.id !== id) }, "Sketch line removed");
+      commitSketchProfile({ ...sketchProfile, segments: sketchProfile.segments.filter((segment) => segment.id !== id) }, t("status.sketchLineRemoved"));
       setSketchActivePointId(null);
       setSketchSelection(null);
     },
     [commitSketchProfile, sketchProfile],
   );
 
-  const updateSketchImage = useCallback((id: string, patch: Partial<SketchImage>, message = "Sketch image updated") => {
+  const updateSketchImage = useCallback((id: string, patch: Partial<SketchImage>, message = t("status.sketchImageUpdated")) => {
     const image = (sketchProfile.images ?? []).find((entry) => entry.id === id);
     if (!image) return;
     if (image.locked && patch.locked !== false) {
@@ -6812,7 +6812,7 @@ export function SketchForgeEditor({
     commitSketchProfile({
       ...sketchProfile,
       images: (sketchProfile.images ?? []).filter((image) => image.id !== id),
-    }, "Sketch image removed");
+    }, t("status.sketchImageRemoved"));
     setSketchSelection(null);
   }, [commitSketchProfile, sketchProfile]);
 
@@ -6830,7 +6830,7 @@ export function SketchForgeEditor({
       const dimensions = imagePlateDimensions(prepared.pixelWidth, prepared.pixelHeight);
       const image: SketchImage = {
         id: createLocalId("sketch-image"),
-        name: file.name.replace(/\.[^.]+$/, "") || "Sketch image",
+        name: file.name.replace(/\.[^.]+$/, "") || t("shape.sketchImage"),
         ...prepared,
         x: 0,
         z: 0,
@@ -6882,7 +6882,7 @@ export function SketchForgeEditor({
         points: sketchProfile.points.filter((point) => !pointIds.has(point.id)),
         segments: sketchProfile.segments.filter((segment) => !segmentIds.has(segment.id) && !pointIds.has(segment.startId) && !pointIds.has(segment.endId)),
         images: (sketchProfile.images ?? []).filter((image) => !imageIds.has(image.id)),
-      }, "Selected sketch geometry removed");
+      }, t("status.sketchGeometryRemoved"));
       setSketchActivePointId(null);
       setSketchSelection(null);
     }
@@ -6902,10 +6902,10 @@ export function SketchForgeEditor({
         handleOut: point.handleOut ? { x: point.handleOut.x + deltaX, z: point.handleOut.z + deltaZ } : undefined,
       } : point),
     };
-    commitSketchProfile(next, "Sketch point moved");
+    commitSketchProfile(next, t("status.sketchPointMoved"));
   }, [commitSketchProfile, sketchProfile]);
 
-  const transformSketchPoints = useCallback((points: SketchPoint[], message = "Sketch geometry transformed") => {
+  const transformSketchPoints = useCallback((points: SketchPoint[], message = t("status.sketchTransformed")) => {
     if (!points.length) return;
     const byId = new Map(points.map((point) => [point.id, point]));
     commitSketchProfile({
@@ -6924,7 +6924,7 @@ export function SketchForgeEditor({
       setNotice(t("status.rotationClosedOnly"));
       return;
     }
-    transformSketchPoints(rotateSketchPoints(selectedPoints), "Rotated closed sketch selection by 45°");
+    transformSketchPoints(rotateSketchPoints(selectedPoints), t("status.sketchRotated45"));
   }, [sketchProfile, sketchSelection, transformSketchPoints]);
 
   const moveSketchHandle = useCallback((id: string, handle: "in" | "out", position: { x: number; z: number }) => {
@@ -6938,7 +6938,7 @@ export function SketchForgeEditor({
       if (handle === "in") point.handleOut = opposite;
       else point.handleIn = opposite;
     }
-    commitSketchProfile(next, "Curve handle adjusted");
+    commitSketchProfile(next, t("status.curveHandleAdjusted"));
   }, [commitSketchProfile, sketchProfile]);
 
   const setSketchPointMode = useCallback((id: string, mode: "corner" | "smooth" | "split") => {
@@ -6956,13 +6956,13 @@ export function SketchForgeEditor({
       const updated = next.points.find((entry) => entry.id === id);
       if (updated) updated.mode = mode;
     }
-    commitSketchProfile(next, mode === "corner" ? "Made corner" : mode === "smooth" ? "Made smooth" : "Curve handles split");
+    commitSketchProfile(next, mode === "corner" ? t("status.madeCorner") : mode === "smooth" ? t("status.madeSmooth") : t("status.curveHandlesSplit"));
   }, [commitSketchProfile, sketchProfile]);
 
   const insertSketchPoint = useCallback((segmentId: string, _position: { x: number; z: number }, amount: number) => {
     const result = splitSketchSegment(sketchProfile, segmentId, amount, createLocalId);
     if (!result.pointId) return;
-    if (result.inserted) commitSketchProfile(result.profile, "Point added to path");
+    if (result.inserted) commitSketchProfile(result.profile, t("status.pointAddedToPath"));
     setSketchSelection({ kind: "point", id: result.pointId });
     setSketchTool("select");
   }, [commitSketchProfile, sketchProfile]);
@@ -7458,7 +7458,7 @@ export function SketchForgeEditor({
   const postCadModifierRequestAsync = useCallback((request: CadModifierWorkerPayload, transfer: Transferable[] = [], timeoutMs = 20000) => {
     const worker = cadModifierWorkerRef.current ?? cadModifierWorkerRestartRef.current();
     if (!worker) {
-      return Promise.reject(new Error("The CAD worker is not ready"));
+      return Promise.reject(new Error(t("status.cadWorkerNotReady")));
     }
     const requestId = cadModifierRequestRef.current + 1;
     cadModifierRequestRef.current = requestId;
@@ -7479,7 +7479,7 @@ export function SketchForgeEditor({
         cadModifierSourcePartsRef.current = [];
         setEdgeModifier(null);
         cadModifierWorkerRestartRef.current();
-        pendingRequests.forEach((pending) => pending.reject(new Error("Timed out waiting for the CAD worker; the worker was restarted")));
+        pendingRequests.forEach((pending) => pending.reject(new Error(t("status.cadWorkerTimeout"))));
       }, timeoutMs);
       cadModifierPendingRef.current.set(requestId, { resolve, reject, timer });
       try {
@@ -7487,7 +7487,7 @@ export function SketchForgeEditor({
       } catch (error) {
         window.clearTimeout(timer);
         cadModifierPendingRef.current.delete(requestId);
-        reject(error instanceof Error ? error : new Error("The CAD worker rejected the request"));
+        reject(error instanceof Error ? error : new Error(t("status.cadWorkerRejected")));
       }
     });
   }, []);
@@ -7579,7 +7579,7 @@ export function SketchForgeEditor({
 
   const prepareCadModifierForMcp = useCallback(async (shape: WorkplaneShape, sharpAngle: number) => {
     if (shape.locked || shape.hole) {
-      throw new Error("Select one unlocked solid object for edge treatment");
+      throw new Error(t("status.selectOneSolidForEdge"));
     }
     const appliedEdgeTreatmentCount = edgeTreatmentFeatureCount(shape);
     const hasAppliedEdgeTreatment = Boolean(shape.importedMesh && shape.edgeTreatments?.length);
@@ -7620,7 +7620,7 @@ export function SketchForgeEditor({
       suppressTreatmentDetailEdges: appliedEdgeTreatmentCount > 0,
     }, transfer, cadModifierPrepareTimeoutMs(triangleCount));
     if (response.type !== "ready") {
-      throw new Error("The CAD worker did not return an edge list");
+      throw new Error(t("status.cadNoEdgeList"));
     }
     return { response, sourceParts };
   }, [postCadModifierRequestAsync]);
@@ -7650,7 +7650,7 @@ export function SketchForgeEditor({
     const selectedEdgeIds = params.edgeIds === "all" || params.allEdges === true ? selectableIds : requestedIds.filter((edgeId) => selectableIds.includes(edgeId));
     const missingIds = requestedIds.filter((edgeId) => !selectableIds.includes(edgeId));
     if (selectedEdgeIds.length === 0) {
-      throw new Error("Select at least one valid highlighted edge ID");
+      throw new Error(t("status.selectValidEdgeId"));
     }
     if (missingIds.length > 0) {
       throw new Error(t("status.edgeIdsMissing", { ids: missingIds.join(", ") }));
@@ -7666,11 +7666,11 @@ export function SketchForgeEditor({
       flipTaper,
     }, [], 30000);
     if (previewResponse.type !== "preview") {
-      throw new Error("The CAD worker did not return an edge preview");
+      throw new Error(t("status.cadNoEdgePreview"));
     }
     const rawPreview = shapeFromCadMesh(shape, previewResponse.positions, previewResponse.normals, previewResponse.indices, previewResponse.brep);
     if (!rawPreview) {
-      throw new Error("The CAD kernel returned an empty edge treatment");
+      throw new Error(t("status.emptyEdgeResult"));
     }
     const preview = canonicalizeShape({
       ...rawPreview,
@@ -7717,7 +7717,7 @@ export function SketchForgeEditor({
       !currentTarget ||
       projectShapesFingerprint([currentTarget]) !== sourceFingerprint
     ) {
-      throw new Error("The target object or project changed while the edge treatment was running; try again");
+      throw new Error(t("status.edgeTargetChanged"));
     }
     commitShapes(
       shapesRef.current.map((candidate) => candidate.id === shape.id ? modifiedShape : candidate),
@@ -7856,7 +7856,7 @@ export function SketchForgeEditor({
     commitShapes(
       shapes.map((shape) => (selected.has(shape.id) && !shape.locked ? { ...shape, hidden: shouldHide } : shape)),
       selectedIds,
-      shouldHide ? "Selection hidden" : "Selection visible",
+      shouldHide ? t("status.selectionHidden") : t("status.selectionVisible"),
     );
   }, [commitShapes, hasSelection, selectedIds, selectedShapes, shapes]);
 
@@ -7883,7 +7883,7 @@ export function SketchForgeEditor({
     commitShapes(
       shapes.map((shape) => (selected.has(shape.id) ? { ...shape, locked: shouldLock } : shape)),
       selectedIds,
-      shouldLock ? "Selection locked" : "Selection unlocked",
+      shouldLock ? t("status.selectionLocked") : t("status.selectionUnlocked"),
     );
   }, [commitShapes, hasSelection, selectedIds, selectedShapes, shapes]);
 
@@ -7901,7 +7901,7 @@ export function SketchForgeEditor({
             : shape,
         ),
         selectedIds,
-        hole ? "Changed selection to hole" : "Changed selection to solid",
+        hole ? t("status.selectionToHole") : t("status.selectionToSolid"),
       );
     },
     [commitShapes, hasSelection, selectedIds, shapes],
@@ -7941,7 +7941,7 @@ export function SketchForgeEditor({
             : shape,
         ),
         selectedIds,
-        delta > 0 ? "Moved selection up" : "Moved selection down",
+        delta > 0 ? t("status.movedSelectionUp") : t("status.movedSelectionDown"),
       );
     },
     [commitShapes, hasSelection, placementWorkplane, selectedIds, shapes],
@@ -8298,7 +8298,7 @@ export function SketchForgeEditor({
         const requestedIds = mcpStringArray(params.ids ?? params.id);
         const ids = requestedIds.length ? new Set(requestedIds) : new Set(selectedIdsRef.current);
         const deleted = currentShapes().filter((shape) => ids.has(shape.id));
-        if (deleted.length === 0) throw new Error("No matching objects to delete");
+        if (deleted.length === 0) throw new Error(t("status.mcpNothingToDelete"));
         commitShapes(currentShapes().filter((shape) => !ids.has(shape.id)), [], deleted.length === 1 ? t("status.mcpDeletedOne") : t("status.mcpDeletedMany", { count: deleted.length }));
         selectedIdsRef.current = [];
         return { deletedIds: deleted.map((shape) => shape.id), deletedCount: deleted.length };
@@ -8411,7 +8411,7 @@ export function SketchForgeEditor({
         const height = Math.max(MIN_SHAPE_DIMENSION, mcpNumber(params.height, maxY - minY));
         const shape = canonicalizeShape({
           id: createLocalId("mcp-imported-mesh"),
-          name: mcpString(params.name, "Imported mesh"),
+          name: mcpString(params.name, t("shape.importedMesh")),
           kind: "mesh",
           color: mcpString(params.color, "#9bd7f0"),
           x: mcpNumber(params.x, 0),
@@ -8436,14 +8436,14 @@ export function SketchForgeEditor({
           locked: false,
           hidden: false,
         } satisfies WorkplaneShape);
-        commitShapes([...currentShapes(), shape], shape.id, `${shape.name} imported by MCP`);
+        commitShapes([...currentShapes(), shape], shape.id, t("status.shapeImportedMcp", { name: shape.name }));
         return { object: mcpShapeSummary(shape) };
       }
 
       if (command.action === "update_object") {
         const target = findShape(params.id);
-        if (!target) throw new Error("Object not found");
-        if (target.locked) throw new Error("Unlock the object before updating it");
+        if (!target) throw new Error(t("status.mcpObjectNotFound"));
+        if (target.locked) throw new Error(t("status.mcpUnlockBeforeUpdate"));
         const patch: ShapeUpdatePatch = {};
         const rotationWasRequested = [params.rotation, params.rotationX, params.rotationZ].some(
           (value) => typeof value === "number" && Number.isFinite(value),
@@ -8479,7 +8479,7 @@ export function SketchForgeEditor({
         const requestedIds = mcpStringArray(params.ids);
         const ids = requestedIds.length ? requestedIds : selectedIdsRef.current;
         const selectedForAlign = currentShapes().filter((shape) => ids.includes(shape.id));
-        if (selectedForAlign.length < 2) throw new Error("Select at least two objects to align");
+        if (selectedForAlign.length < 2) throw new Error(t("status.mcpSelectTwoAlign"));
         const validIds = selectedForAlign.map((shape) => shape.id);
         const requestedAnchorId = typeof params.anchorId === "string" ? params.anchorId : null;
         const anchorId = effectiveAlignmentAnchorId(selectedForAlign, requestedAnchorId);
@@ -8507,8 +8507,8 @@ export function SketchForgeEditor({
       if (command.action === "group_objects") {
         const ids = new Set(mcpStringArray(params.ids));
         const groupable = currentShapes().filter((shape) => ids.has(shape.id));
-        if (groupable.length < 2) throw new Error("Select at least two objects to group");
-        if (groupable.some((shape) => shape.locked)) throw new Error("Unlock every selected object before grouping");
+        if (groupable.length < 2) throw new Error(t("status.mcpSelectTwoGroup"));
+        if (groupable.some((shape) => shape.locked)) throw new Error(t("status.mcpUnlockBeforeGroup"));
         const sourceFingerprint = projectShapesFingerprint(currentShapes());
         const sourceProjectId = projectInfoRef.current.projectId;
         const result = await buildGroupedShapeFromSelection(groupable);
@@ -8531,7 +8531,7 @@ export function SketchForgeEditor({
         const requestedIds = mcpStringArray(params.ids ?? params.id);
         const ids = requestedIds.length ? new Set(requestedIds) : new Set(selectedIdsRef.current);
         const groups = currentShapes().filter((shape) => ids.has(shape.id) && shape.groupedShapes?.length);
-        if (groups.length === 0) throw new Error("Select at least one group to ungroup");
+        if (groups.length === 0) throw new Error(t("status.mcpSelectGroup"));
         const groupIds = new Set(groups.map((shape) => shape.id));
         const restored = groups.flatMap(restoreGroupedChildren);
         commitShapes([...currentShapes().filter((shape) => !groupIds.has(shape.id)), ...restored], restored.map((shape) => shape.id), groups.length === 1 ? t("status.mcpUngroupedOne") : t("status.mcpUngroupedMany", { count: groups.length }));
@@ -8549,7 +8549,7 @@ export function SketchForgeEditor({
           throw new Error("Provide at least one solidId and one holeId for boolean_cut");
         }
         if (operands.some((shape) => shape.locked)) {
-          throw new Error("Unlock every boolean operand before cutting");
+          throw new Error(t("status.mcpUnlockBeforeCut"));
         }
         const sourceFingerprint = projectShapesFingerprint(currentShapes());
         const sourceProjectId = projectInfoRef.current.projectId;
@@ -8582,7 +8582,7 @@ export function SketchForgeEditor({
 
       if (command.action === "list_edges") {
         const target = findShape(params.id);
-        if (!target) throw new Error("Object not found");
+        if (!target) throw new Error(t("status.mcpObjectNotFound"));
         invalidateCadModifierSession();
         const sharpAngle = Math.max(1, Math.min(CAD_MODIFIER_MAX_SHARP_ANGLE, mcpNumber(params.sharpAngle, 25)));
         const { response } = await prepareCadModifierForMcp(target, sharpAngle);
@@ -8592,7 +8592,7 @@ export function SketchForgeEditor({
 
       if (command.action === "apply_edge_treatment") {
         const target = findShape(params.id);
-        if (!target) throw new Error("Object not found");
+        if (!target) throw new Error(t("status.mcpObjectNotFound"));
         return applyCadModifierForMcp(target, params);
       }
 
@@ -8608,7 +8608,7 @@ export function SketchForgeEditor({
         const face = mcpString(params.face, "current") as SketchForgeMcpViewFace;
         const image = await (window.sketchforgeCaptureView?.(face) ?? window.sketchforgeCaptureCanvas?.() ?? "");
         if (!image || image.length < 100) {
-          throw new Error("The SketchForge viewport did not return an image");
+          throw new Error(t("status.viewportNoImage"));
         }
         return { face, dataUrl: image, bytesApprox: Math.floor(image.length * 0.75) };
       }
@@ -8984,7 +8984,7 @@ export function SketchForgeEditor({
         ? await (window.sketchforgeCaptureCanvasAsync?.() ?? Promise.resolve(""))
         : "";
       if (target === "shared" && (!thumbnailDataUrl.startsWith("data:image/png;base64,") || thumbnailDataUrl.length <= 100)) {
-        throw new Error("Could not capture the current project preview");
+        throw new Error(t("status.previewFailed"));
       }
       const exportedHistory = editorHistoryForExport(historyRef.current, historyIndexRef.current, historyLimit);
       const bytes = await exportSkfProject({
@@ -9017,7 +9017,7 @@ export function SketchForgeEditor({
   }, [onSaveSharedProject, placementElevation, placementWorkplane, projectCreatedAt, projectModifiedAt, projectName, skfExporting, snapGrid]);
 
   const clearDesign = useCallback(() => {
-    commitShapes([], [], "New empty design");
+    commitShapes([], [], t("status.newProject"));
     setClipboard([]);
     setMenuOpen(false);
     setTopPanel(null);
@@ -9063,7 +9063,7 @@ export function SketchForgeEditor({
       x: Math.min(110, shape.x + 12),
       z: Math.min(110, shape.z + 12),
     }));
-    commitShapes([...shapes, ...copies], copies.map((shape) => shape.id), "Made a copy of the design");
+    commitShapes([...shapes, ...copies], copies.map((shape) => shape.id), t("status.projectCopied"));
     setMenuOpen(false);
   }, [commitShapes, shapes]);
 
@@ -9693,13 +9693,13 @@ export function SketchForgeEditor({
               selectedEdgeIds,
               preview: null,
               busy: selectedEdgeIds.length > 0,
-              error: availableIds.size === 0 ? "No sharp edges match this threshold" : selectedEdgeIds.length ? null : "Select at least one highlighted edge",
+              error: availableIds.size === 0 ? t("status.noSharpEdges") : selectedEdgeIds.length ? null : t("status.selectHighlightedEdge"),
             };
           })}
           onTangentChainChange={(tangentChain) => setEdgeModifier((current) => current?.prepared ? { ...current, tangentChain } : current)}
           onPreserveEdgeSizeChange={(preserveEdgeSize) => setEdgeModifier((current) => current?.prepared ? { ...current, preserveEdgeSize } : current)}
           onSelectAll={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: modifierAvailableEdgeIds, preview: null, busy: modifierAvailableEdgeIds.length > 0, error: modifierAvailableEdgeIds.length ? null : current.error } : current)}
-          onClear={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: [], preview: null, busy: false, error: "Select at least one highlighted edge" } : current)}
+          onClear={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: [], preview: null, busy: false, error: t("status.selectHighlightedEdge") } : current)}
           onRemoveFeature={removeEdgeTreatment}
           onApply={applyEdgeModifier}
           onCancel={cancelEdgeModifier}
@@ -10260,7 +10260,7 @@ function SecondaryToolbar({
                     }}
                   >
                     <img src={shape.menuIcon} alt="" draggable={false} />
-                    <span>{shape.name}</span>
+                    <span>{shapeAssetLabel(shape)}</span>
                   </button>
                 ))}
               </div>
@@ -10335,9 +10335,9 @@ function SecondaryToolbar({
                 <strong>{hiddenShapeCount === 0 ? t("visibility.nothingHidden") : t("visibility.showAllHidden", { count: hiddenShapeCount })}</strong>
               </button>
               <div className="visibility-dropdown-help">
-                <span>Eye again: selected</span>
+                <span>{t("visibility.eyeAgain")}</span>
                 <span aria-hidden="true">·</span>
-                <span><kbd>Ctrl/Cmd</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>: all</span>
+                <span><kbd>Ctrl/Cmd</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>: {t("visibility.allShortcut")}</span>
               </div>
             </div>
           ) : null}
@@ -10869,16 +10869,16 @@ function TopActionPanel({
       {panel === "settings" ? (
         <div className="top-action-body">
           <p>{t("workspace.preferences")}</p>
-          <button onClick={() => onNotice("Grid display is controlled from the bottom-right Settings dialog")}>{t("workspace.gridAndSnapping")}</button>
-          <button onClick={() => onNotice("Units are set to millimeters")}>Units: Millimeters</button>
-          <button onClick={() => onNotice("Shadows and ray-traced lighting are enabled")}>{t("workspace.lightingShadows")}</button>
+          <button onClick={() => onNotice(t("workspace.gridHint"))}>{t("workspace.gridAndSnapping")}</button>
+          <button onClick={() => onNotice(t("workspace.unitsHint"))}>Units: Millimeters</button>
+          <button onClick={() => onNotice(t("workspace.shadowsHint"))}>{t("workspace.lightingShadows")}</button>
         </div>
       ) : null}
       {panel === "profile" ? (
         <div className="top-action-body">
-          <button onClick={() => onNotice("Account menu opened")}>{t("account.title")}</button>
-          <button onClick={() => onNotice("Dashboard opened")}>{t("account.dashboard")}</button>
-          <button onClick={() => onNotice("Sign out selected")}>{t("account.signOut")}</button>
+          <button onClick={() => onNotice(t("account.menuOpened"))}>{t("account.title")}</button>
+          <button onClick={() => onNotice(t("account.dashboardOpened"))}>{t("account.dashboard")}</button>
+          <button onClick={() => onNotice(t("account.signOutSelected"))}>{t("account.signOut")}</button>
         </div>
       ) : null}
     </div>

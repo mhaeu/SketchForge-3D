@@ -125,9 +125,9 @@ const knownProjectResourceKeys = new Map<string, Set<string>>();
 
 function formatUpdated(timestamp: number) {
   const age = Date.now() - timestamp;
-  if (age < 60_000) return "Just now";
-  if (age < 3_600_000) return `${Math.max(1, Math.round(age / 60_000))} min ago`;
-  if (age < 86_400_000) return "Today";
+  if (age < 60_000) return t("dashboard.justNow");
+  if (age < 3_600_000) return t("dashboard.minutesAgo", { count: Math.max(1, Math.round(age / 60_000)) });
+  if (age < 86_400_000) return t("dashboard.today");
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
 }
 
@@ -495,7 +495,7 @@ function newProject(name: string, index: number, shapeCount = 0): DashboardProje
 }
 
 function projectNameFromFileName(fileName: string) {
-  return fileName.replace(/\.[^.]+$/, "").trim() || "Imported design";
+  return fileName.replace(/\.[^.]+$/, "").trim() || t("shape.importedProject");
 }
 
 export default function Home() {
@@ -1261,7 +1261,7 @@ export default function Home() {
           viewMode={viewMode}
           onCloseSettings={() => setSettingsOpen(false)}
           onCreate={() => createAndOpenProject()}
-          onStartChallenge={(challenge) => createAndOpenProject(challenge === "nameplate" ? "Personalized Nameplate" : "Key Tag", challenge)}
+          onStartChallenge={(challenge) => createAndOpenProject(challenge === "nameplate" ? t("plate.name") : t("keytag.name"), challenge)}
           onDeleteProject={deleteProject}
           onDeleteSharedProject={(project) => void deleteSharedProject(project)}
           onDownloadFolderChange={setDownloadFolder}
