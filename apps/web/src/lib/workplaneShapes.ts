@@ -1,5 +1,6 @@
 import { createLocalId } from "@/lib/localIds";
 import { createThreadShapeFields } from "@/lib/threadShape";
+import { threadFootprintPatch } from "@/lib/threadGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 export function normalizeDegrees(value: number) {
@@ -64,8 +65,38 @@ export function shapeTaperDimensions(shape: WorkplaneShape) {
   };
 }
 
+/**
+ * Arten, die eine Verjuengung ueberhaupt annehmen. Zahnrad, Gewinde und Feder
+ * kennen sie nicht: ihre Form kommt aus ihren eigenen Werten, nicht aus Breite
+ * und Tiefe der Grundflaeche.
+ */
+export function shapeSupportsTaper(kind: WorkplaneShape["kind"]) {
+  return kind !== "gear" && kind !== "thread" && kind !== "spring" && kind !== "ruler";
+}
+
+/**
+ * Reine Messwerkzeuge ohne druckbares Volumen - technisch eine `WorkplaneShape`,
+ * aber ueberall dort ausgeschlossen, wo ein echter Koerper vorausgesetzt wird
+ * (Gruppieren, Verschneiden, Kantenwerkzeug, Ausfuhr).
+ */
+export function isNonSolidShapeKind(kind: WorkplaneShape["kind"]) {
+  return kind === "ruler";
+}
+
+/**
+ * Bodies that a boolean, a group or an export may take. The reference point
+ * marks a place, the ruler measures one - neither is material.
+ */
+export function isSolidShape(shape: Pick<WorkplaneShape, "kind">) {
+  return shape.kind !== "reference" && !isNonSolidShapeKind(shape.kind);
+}
+
+export function solidShapesOnly<T extends Pick<WorkplaneShape, "kind">>(shapes: ReadonlyArray<T>): T[] {
+  return shapes.filter(isSolidShape);
+}
+
 export function shapeHasTaper(shape: WorkplaneShape) {
-  if (shape.kind === "gear") return false;
+  if (!shapeSupportsTaper(shape.kind)) return false;
   const width = shapeWidth(shape);
   const depth = shapeDepth(shape);
   const taper = shapeTaperDimensions(shape);
@@ -84,7 +115,7 @@ export function shapeOverallFootprintDimensions(shape: WorkplaneShape) {
 }
 
 export function shapeTaperScaleAt(shape: WorkplaneShape, normalizedHeight: number, axis: "width" | "depth" = "width") {
-  if (shape.kind === "gear") return 1;
+  if (!shapeSupportsTaper(shape.kind)) return 1;
   const taper = shapeTaperDimensions(shape);
   const base = axis === "width" ? shapeWidth(shape) : shapeDepth(shape);
   const bottom = axis === "width" ? taper.bottomWidth : taper.bottomDepth;
@@ -94,7 +125,7 @@ export function shapeTaperScaleAt(shape: WorkplaneShape, normalizedHeight: numbe
 }
 
 export function meshYawDegrees(shape: WorkplaneShape) {
-  const isRoundPrimitive = !shape.importedMesh && (shape.kind === "cylinder" || shape.kind === "cone");
+  const isRoundPrimitive = !shape.importedMesh && (shape.kind === "cylinder" || shape.kind === "ellipse" || shape.kind === "cone");
   const isCircular = Math.abs(shapeWidth(shape) - shapeDepth(shape)) < 0.0005;
   if (!isRoundPrimitive || !isCircular) {
     return shape.rotation;
@@ -172,7 +203,10 @@ export function resizedImportedMeshPositions(shape: WorkplaneShape) {
  */
 export function shapeFootprintIsRadial(shape: Pick<WorkplaneShape, "kind">) {
   return shape.kind === "cylinder"
+    || shape.kind === "ellipse"
     || shape.kind === "cone"
+    || shape.kind === "thread"
+    || shape.kind === "spring"
     || shape.kind === "sphere"
     || shape.kind === "halfSphere"
     || shape.kind === "polygon";
@@ -320,6 +354,13 @@ export function canonicalizeShape(shape: WorkplaneShape): WorkplaneShape {
       // broken geometry.
     }
   }
+  // Ein parametrisches Gewinde bekommt Breite und Tiefe aus seinem
+  // Durchmesser. Zieht jemand am Anfasser, wird daraus wieder ein gleichmaessiger
+  // Massstab - ein ovales Gewinde kann so gar nicht erst entstehen.
+  if (next.kind === "thread") {
+    Object.assign(next, threadFootprintPatch(next));
+    next.size = resizedShapeSize(next.width, next.depth);
+  }
   if (shape.groupedShapes) {
     next.groupedShapes = shape.groupedShapes.map(canonicalizeShape);
   }
@@ -381,6 +422,21 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.gearType === b.gearType &&
     a.helixAngle === b.helixAngle &&
     a.helixQuality === b.helixQuality &&
+    a.threadRole === b.threadRole &&
+    a.threadHead === b.threadHead &&
+    a.threadDrive === b.threadDrive &&
+    a.threadHand === b.threadHand &&
+    a.threadProfile === b.threadProfile &&
+    a.threadDiameter === b.threadDiameter &&
+    a.threadPitch === b.threadPitch &&
+    a.threadClearance === b.threadClearance &&
+    a.threadQuality === b.threadQuality &&
+    a.threadHeadHeight === b.threadHeadHeight &&
+    a.threadChamfer === b.threadChamfer &&
+    a.threadHeadChamfer === b.threadHeadChamfer &&
+    a.springTurns === b.springTurns &&
+    a.springWire === b.springWire &&
+    a.springQuality === b.springQuality &&
     a.loftBottomShape === b.loftBottomShape &&
     a.loftTopShape === b.loftTopShape &&
     a.loftTopWidth === b.loftTopWidth &&

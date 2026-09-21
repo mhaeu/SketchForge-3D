@@ -1,6 +1,23 @@
 import type { GridSize, HistoryRetentionLimit, MeasurementAccuracy, ShapeCustomization, ShapeCustomizationMap, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { normalizeScaleForUnits } from "@/lib/measurementUnits";
 import { DEFAULT_WORKPLANE_GRID_COLOR } from "@/lib/workplaneGrid";
+import {
+  MAX_THREAD_CLEARANCE,
+  MAX_THREAD_DIAMETER,
+  MAX_THREAD_PITCH,
+  MAX_THREAD_QUALITY,
+  MIN_THREAD_CLEARANCE,
+  MIN_THREAD_DIAMETER,
+  MIN_THREAD_PITCH,
+  MIN_THREAD_QUALITY,
+} from "@/lib/threadGeometry";
+import {
+  MAX_SPRING_QUALITY,
+  MAX_SPRING_TURNS,
+  MIN_SPRING_QUALITY,
+  MIN_SPRING_TURNS,
+  MIN_SPRING_WIRE,
+} from "@/lib/springGeometry";
 
 export const DEFAULT_SNAP_GRID: GridSize = "1.0 mm";
 export const MIN_CUSTOM_SHAPE_DIMENSION = 0.01;
@@ -94,9 +111,9 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
     if (kind === "sphere" || kind === "halfSphere") {
       entry.steps = optionalShapeNumber(source.steps, fallbackEntry?.steps, 6, 64, true);
     }
-    if (kind === "cylinder" || kind === "cone") {
+    if (kind === "cylinder" || kind === "ellipse" || kind === "cone") {
       entry.sides = optionalShapeNumber(source.sides, fallbackEntry?.sides, 3, MAX_HIGH_RESOLUTION_SIDES, true);
-    } else if (kind === "pyramid") {
+    } else if (kind === "pyramid" || kind === "polygon") {
       entry.sides = optionalShapeNumber(source.sides, fallbackEntry?.sides, 3, 24, true);
     } else if (kind === "roundRoof") {
       entry.sides = optionalShapeNumber(source.sides, fallbackEntry?.sides, 4, MAX_HIGH_RESOLUTION_SIDES, true);
@@ -130,6 +147,25 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
           : fallbackEntry?.gearType;
       entry.helixAngle = optionalShapeNumber(source.helixAngle, fallbackEntry?.helixAngle, -45, 45);
       entry.helixQuality = optionalShapeNumber(source.helixQuality, fallbackEntry?.helixQuality, 4, 32, true);
+    }
+    if (kind === "spring") {
+      entry.springTurns = optionalShapeNumber(source.springTurns, fallbackEntry?.springTurns, MIN_SPRING_TURNS, MAX_SPRING_TURNS, true);
+      entry.springWire = optionalShapeNumber(source.springWire, fallbackEntry?.springWire, MIN_SPRING_WIRE, MAX_CUSTOM_SHAPE_DIMENSION);
+      entry.springQuality = optionalShapeNumber(source.springQuality, fallbackEntry?.springQuality, MIN_SPRING_QUALITY, MAX_SPRING_QUALITY, true);
+    }
+    if (kind === "thread") {
+      const pick = <T extends string>(value: unknown, allowed: readonly T[], previous: T | undefined) => (
+        value === undefined ? previous : allowed.includes(value as T) ? (value as T) : previous
+      );
+      entry.threadRole = pick(source.threadRole, ["rod", "screw", "nut", "bore"] as const, fallbackEntry?.threadRole);
+      entry.threadHead = pick(source.threadHead, ["cylinder", "countersunk", "hex"] as const, fallbackEntry?.threadHead);
+      entry.threadDrive = pick(source.threadDrive, ["none", "hex", "slot", "phillips", "pozidriv", "torx"] as const, fallbackEntry?.threadDrive);
+      entry.threadHand = pick(source.threadHand, ["right", "left"] as const, fallbackEntry?.threadHand);
+      entry.threadProfile = pick(source.threadProfile, ["v", "trapezoidal", "round"] as const, fallbackEntry?.threadProfile);
+      entry.threadDiameter = optionalShapeNumber(source.threadDiameter, fallbackEntry?.threadDiameter, MIN_THREAD_DIAMETER, MAX_THREAD_DIAMETER);
+      entry.threadPitch = optionalShapeNumber(source.threadPitch, fallbackEntry?.threadPitch, MIN_THREAD_PITCH, MAX_THREAD_PITCH);
+      entry.threadClearance = optionalShapeNumber(source.threadClearance, fallbackEntry?.threadClearance, MIN_THREAD_CLEARANCE, MAX_THREAD_CLEARANCE);
+      entry.threadQuality = optionalShapeNumber(source.threadQuality, fallbackEntry?.threadQuality, MIN_THREAD_QUALITY, MAX_THREAD_QUALITY, true);
     }
     const compact = Object.fromEntries(Object.entries(entry).filter(([, entryValue]) => entryValue !== undefined)) as ShapeCustomization;
     if (Object.keys(compact).length > 0) normalized[kind] = compact;

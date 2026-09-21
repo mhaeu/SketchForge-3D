@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ShapeAsset } from "@/types/sketchforge";
 import { makeShapeFromAsset, sceneShape, toolbarShapeAssets } from "@/lib/shapeCatalog";
+import { canonicalizeShape, isSolidShape, solidShapesOnly } from "@/lib/workplaneShapes";
 
 describe("shape catalog", () => {
   it("does not expose removed decorative shapes in the toolbar catalog", () => {
@@ -129,5 +130,71 @@ describe("shape catalog", () => {
       hidden: false,
     });
     expect(created.mirrorX).toBeUndefined();
+  });
+});
+
+/**
+ * The shapes brought over from Layerling. What matters here is that each one
+ * arrives on the workplane as its own body rather than as a default box: with
+ * its own footprint, its own parameters and - for the ruler - without being
+ * counted as material.
+ */
+describe("shapes from the extended palette", () => {
+  const assetFor = (kind: string) => {
+    const asset = toolbarShapeAssets.find((entry) => entry.kind === kind);
+    expect(asset).toBeDefined();
+    return asset!;
+  };
+
+  it("offers every kind in the palette", () => {
+    const kinds = toolbarShapeAssets.map((asset) => asset.kind);
+    ["ellipse", "polygon", "thread", "spring", "ruler"].forEach((kind) => {
+      expect(kinds).toContain(kind);
+    });
+  });
+
+  it("gives the ellipse an unequal footprint so it is not a cylinder", () => {
+    const shape = makeShapeFromAsset(assetFor("ellipse"));
+    expect(shape.width).not.toBeCloseTo(shape.depth, 3);
+    expect(shape.sides).toBe(96);
+  });
+
+  it("inserts the polygon as a regular hexagon", () => {
+    const shape = makeShapeFromAsset(assetFor("polygon"));
+    expect(shape.sides).toBe(6);
+    // Across the corners a hexagon measures 2/sqrt(3) of its across-flats size.
+    expect(Math.max(shape.width, shape.depth) / Math.min(shape.width, shape.depth)).toBeCloseTo(2 / Math.sqrt(3), 3);
+  });
+
+  it("gives the thread its standard footprint and a hex socket", () => {
+    const shape = makeShapeFromAsset(assetFor("thread"));
+    expect(shape.kind).toBe("thread");
+    expect(shape.threadRole).toBe("rod");
+    expect(shape.threadDrive).toBe("hex");
+    expect(shape.threadDiameter).toBe(6);
+    expect(shape.width).toBeCloseTo(6, 6);
+    expect(shape.depth).toBeCloseTo(6, 6);
+  });
+
+  it("keeps a thread round when a handle pulls it out of shape", () => {
+    const shape = makeShapeFromAsset(assetFor("thread"));
+    const stretched = canonicalizeShape({ ...shape, width: shape.width * 2, depth: shape.depth });
+    expect(stretched.width).toBeCloseTo(stretched.depth, 6);
+    expect(stretched.threadDiameter).toBeGreaterThan(shape.threadDiameter!);
+  });
+
+  it("fits the spring's wire and turns into its size", () => {
+    const shape = makeShapeFromAsset(assetFor("spring"));
+    expect(shape.springTurns).toBeGreaterThan(0);
+    expect(shape.springWire).toBeGreaterThan(0);
+    expect(shape.springWire! * shape.springTurns!).toBeLessThan(shape.height);
+  });
+
+  it("keeps the ruler out of every solid operation", () => {
+    const ruler = makeShapeFromAsset(assetFor("ruler"));
+    expect(ruler.height).toBe(3);
+    expect(isSolidShape(ruler)).toBe(false);
+    expect(isSolidShape(makeShapeFromAsset(assetFor("box")))).toBe(true);
+    expect(solidShapesOnly([ruler, makeShapeFromAsset(assetFor("box"))])).toHaveLength(1);
   });
 });

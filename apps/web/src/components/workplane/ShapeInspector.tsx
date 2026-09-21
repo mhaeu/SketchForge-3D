@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, Link2, LockKeyhole, LockKeyholeOpen, Split, Unlink2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { ToolbarHideSelectedIcon } from "@/components/icons";
 import {
   DEFAULT_GEAR_HELIX_ANGLE,
@@ -27,6 +27,52 @@ import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZ
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
+import {
+  MAX_THREAD_CLEARANCE,
+  MAX_THREAD_DIAMETER,
+  MAX_THREAD_QUALITY,
+  MIN_THREAD_CLEARANCE,
+  MIN_THREAD_DIAMETER,
+  MIN_THREAD_QUALITY,
+  THREAD_SIZE_GROUPS,
+  defaultThreadHeadHeight,
+  normalizeThreadChamfer,
+  normalizeThreadClearance,
+  normalizeThreadDiameter,
+  normalizeThreadDrive,
+  normalizeThreadHand,
+  normalizeThreadHead,
+  normalizeThreadHeadChamfer,
+  normalizeThreadHeadHeight,
+  normalizeThreadPitch,
+  normalizeThreadProfile,
+  normalizeThreadQuality,
+  normalizeThreadRole,
+  pitchToThreadsPerInch,
+  threadChamferLimits,
+  threadDriveSpec,
+  threadHeadChamferLimits,
+  threadHeadHeightLimits,
+  threadNaturalFootprint,
+  threadNaturalHeight,
+  threadPitchLimits,
+  threadSettings,
+  threadSizeFor,
+  threadUsesInchPitch,
+  threadsPerInchToPitch,
+  type ThreadSettings,
+} from "@/lib/threadGeometry";
+import {
+  MAX_SPRING_QUALITY,
+  MIN_SPRING_QUALITY,
+  normalizeSpringQuality,
+  normalizeSpringTurns,
+  normalizeSpringWire,
+  springSettings,
+  springTurnLimits,
+  springWireLimits,
+} from "@/lib/springGeometry";
+import { regularPolygonAspect } from "@/lib/regularPolygonFootprint";
 import { createThreadShapeFields, findDesignation } from "@/lib/threadShape";
 import {
   LOFT_PROFILE_SHAPES,
@@ -37,7 +83,7 @@ import {
   isPolygonLoftShape,
   loftSettings,
 } from "@/lib/loftGeometry";
-import type { GearType, GridSize, LoftProfileShape, MeasurementAccuracy, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { GearType, GridSize, LoftProfileShape, MeasurementAccuracy, ThreadDrive, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 const GRID_SIZES: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 mm", "2.0 mm", "5.0 mm", "Brick"];
 const MIN_SHAPE_SIZE = 0.01;
@@ -98,11 +144,16 @@ type TextPropertyConfig = {
   onChange: (value: string) => void;
 };
 
+export type SelectPropertyOption = { value: string; label: string; group?: string };
+
 type SelectPropertyConfig = {
   type: "select";
   label: string;
   value: string;
-  options: string[];
+  // A plain string is its own value and label; the object form carries a
+  // separate label (translated, or a standard's own name) and an optional
+  // heading that groups consecutive entries.
+  options: Array<string | SelectPropertyOption>;
   onChange: (value: string) => void;
 };
 
@@ -153,7 +204,266 @@ function formatPropertyNumber(value: number, accuracy: MeasurementAccuracy, step
 function propertyUsesLengthUnit(label: string) {
   // The region bounds ("Length from" ...) are lengths as well.
   if (/^(Length|Width|Height) (from|to)$/.test(label)) return true;
-  return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness", "Tooth Size", "Tooth Width", "Center Hole", "Top Length", "Top Width", "Bottom Length", "Bottom Width", "Diameter", "Pitch", "Thread Length", "Clearance", "X", "Y", "Z", "Cross size", "Marker size"].includes(label);
+  return ["Radius", "Length", "Width", "Height", "Bevel", "Top Radius", "Base Radius", "Thickness", "Tooth Size", "Tooth Width", "Center Hole", "Top Length", "Top Width", "Bottom Length", "Bottom Width", "Diameter", "Pitch", "Thread Length", "Clearance", "Head Height", "Chamfer", "Head Chamfer", "Rim Chamfer", "Wire", "X", "Y", "Z", "Cross size", "Marker size"].includes(label);
+}
+
+const THREAD_ROLE_OPTIONS: SelectPropertyOption[] = [
+  { value: "rod", label: "Threaded rod" },
+  { value: "screw", label: "Screw" },
+  { value: "nut", label: "Nut" },
+  { value: "bore", label: "Tapped hole" },
+];
+
+const THREAD_HEAD_OPTIONS: SelectPropertyOption[] = [
+  { value: "cylinder", label: "Cylinder head" },
+  { value: "countersunk", label: "Countersunk head" },
+  { value: "hex", label: "Hex head" },
+];
+
+const THREAD_PROFILE_OPTIONS: SelectPropertyOption[] = [
+  { value: "v", label: "V thread" },
+  { value: "trapezoidal", label: "Trapezoidal" },
+  { value: "round", label: "Round" },
+];
+
+const THREAD_DRIVE_LABELS: Record<Exclude<ThreadDrive, "none">, string> = {
+  hex: "Hex socket",
+  slot: "Slot",
+  phillips: "Phillips",
+  pozidriv: "Pozidriv",
+  torx: "Torx",
+};
+
+/**
+ * The drive choices, each with the size that belongs to this thread: a hex
+ * socket on an M5 is 4 mm wide, its Torx is a T25. Showing the standard size
+ * in the option is the whole point - it is what one buys the bit for.
+ */
+function threadDriveOptions(settings: ThreadSettings): SelectPropertyOption[] {
+  const headHeight = Math.max(0.2, settings.headHeight);
+  return [
+    { value: "none", label: "None" },
+    ...(Object.keys(THREAD_DRIVE_LABELS) as Array<Exclude<ThreadDrive, "none">>).map((drive) => {
+      const spec = threadDriveSpec(drive, settings.diameter, settings.pitch, headHeight);
+      const name = THREAD_DRIVE_LABELS[drive];
+      return { value: drive, label: spec?.label ? `${name} ${spec.label}` : name };
+    }),
+  ];
+}
+
+/**
+ * Everything a thread can be: rod, screw, nut or tapped hole, in a standard
+ * size, with a profile, a hand, a head and - in that head - a drive.
+ *
+ * Width and depth are not offered: they follow the diameter and the role.
+ * Turning the diameter gives a round body of the right size, and the head
+ * grows with it as long as it stands on its standard height.
+ */
+function threadProperties(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate): ShapePropertyConfig[] {
+  const settings = threadSettings(shape);
+  const standard = threadSizeFor(settings.diameter, settings.pitch);
+  const pitchLimits = threadPitchLimits(settings.diameter);
+  const headLimits = threadHeadHeightLimits(settings);
+  const chamferLimits = threadChamferLimits(settings);
+  const rimChamferLimits = threadHeadChamferLimits(settings);
+  // Inch threads are thought of in threads per inch, not in millimetres.
+  const inchPitch = threadUsesInchPitch(settings.diameter);
+  const sizeOptions: SelectPropertyOption[] = [
+    ...THREAD_SIZE_GROUPS.flatMap((group) => group.sizes.map((size) => ({
+      value: size.id,
+      label: size.id,
+      group: group.series === "metric" ? "Metric" : group.series,
+    }))),
+    { value: "custom", label: "Custom" },
+  ];
+  // The body's height stays head plus thread; what is asked for is the thread,
+  // because a measurement that counts the head in tells nobody anything.
+  const threadLength = Math.max(MIN_SHAPE_SIZE, shape.height - settings.headHeight);
+  const headFollowsStandard = Math.abs(settings.headHeight - defaultThreadHeadHeight(settings)) < 1e-6;
+  const applyThread = (patch: Partial<ThreadSettings>, nextLength?: number, resetHeight = false) => {
+    const next: ThreadSettings = { ...settings, ...patch };
+    next.diameter = normalizeThreadDiameter(next.diameter);
+    next.pitch = normalizeThreadPitch(next.pitch, next.diameter);
+    next.clearance = normalizeThreadClearance(next.clearance);
+    next.quality = normalizeThreadQuality(next.quality);
+    next.chamfer = normalizeThreadChamfer(next.chamfer, { role: next.role, diameter: next.diameter, pitch: next.pitch, profile: next.profile });
+    const headBase = { role: next.role, head: next.head, diameter: next.diameter, pitch: next.pitch };
+    const keepHeadHeight = patch.headHeight !== undefined || !headFollowsStandard;
+    next.headHeight = normalizeThreadHeadHeight(
+      keepHeadHeight ? next.headHeight : defaultThreadHeadHeight(headBase),
+      headBase,
+    );
+    next.headChamfer = normalizeThreadHeadChamfer(next.headChamfer, { ...headBase, headHeight: next.headHeight, profile: next.profile });
+    const footprint = threadNaturalFootprint(next);
+    const update: Partial<WorkplaneShape> = {
+      threadRole: next.role,
+      threadHead: next.head,
+      threadDrive: next.drive,
+      threadHand: next.hand,
+      threadProfile: next.profile,
+      threadDiameter: next.diameter,
+      threadPitch: next.pitch,
+      threadClearance: next.clearance,
+      threadQuality: next.quality,
+      threadHeadHeight: next.headHeight,
+      threadChamfer: next.chamfer,
+      threadHeadChamfer: next.headChamfer,
+      width: footprint.width,
+      depth: footprint.depth,
+      size: resizedShapeSize(footprint.width, footprint.depth),
+      height: resetHeight
+        ? threadNaturalHeight(next)
+        : Math.max(MIN_SHAPE_SIZE, (nextLength ?? threadLength) + next.headHeight),
+    };
+    // A tapped hole is there to be subtracted; everything else is material.
+    if (next.role === "bore") update.hole = true;
+    else if (settings.role === "bore") update.hole = false;
+    onUpdate(update);
+  };
+
+  const properties: ShapePropertyConfig[] = [
+    {
+      type: "select",
+      label: "Type",
+      value: settings.role,
+      options: THREAD_ROLE_OPTIONS,
+      onChange: (role) => applyThread({ role: normalizeThreadRole(role) }, undefined, true),
+    },
+  ];
+  if (settings.role === "screw") {
+    properties.push({
+      type: "select",
+      label: "Head",
+      value: settings.head,
+      options: THREAD_HEAD_OPTIONS,
+      onChange: (head) => applyThread({ head: normalizeThreadHead(head) }),
+    });
+    // A hex head is gripped from the outside; a recess in it would be one no
+    // tool ever looks for.
+    if (settings.head !== "hex") {
+      properties.push({
+        type: "select",
+        label: "Drive",
+        value: settings.drive,
+        options: threadDriveOptions(settings),
+        onChange: (drive) => applyThread({ drive: normalizeThreadDrive(drive) }),
+      });
+    }
+  }
+  properties.push(
+    {
+      type: "select",
+      label: "Standard",
+      value: standard ? standard.id : "custom",
+      options: sizeOptions,
+      onChange: (value) => {
+        const chosen = THREAD_SIZE_GROUPS.flatMap((group) => group.sizes).find((size) => size.id === value);
+        if (chosen) applyThread({ diameter: chosen.diameter, pitch: chosen.pitch });
+      },
+    },
+    {
+      label: "Diameter",
+      value: settings.diameter,
+      min: MIN_THREAD_DIAMETER,
+      max: MAX_THREAD_DIAMETER,
+      step: 0.1,
+      onChange: (diameter) => applyThread({ diameter }),
+    },
+    {
+      // A nut has no thread length, it has a height.
+      label: settings.role === "nut" ? "Height" : "Thread Length",
+      value: threadLength,
+      min: MIN_SHAPE_SIZE,
+      max: 160,
+      onChange: (length) => applyThread({}, length),
+    },
+  );
+  if (settings.role === "screw") {
+    properties.push({
+      label: "Head Height",
+      value: settings.headHeight,
+      min: headLimits.min,
+      max: headLimits.max,
+      step: 0.1,
+      onChange: (headHeight) => applyThread({ headHeight }),
+    });
+  }
+  // The outer chamfer exists on a screw head and on a nut: both have a sharp
+  // outer edge on both faces, and both are chamfered there in reality. The
+  // countersunk head is already a cone - nothing to break there, and the limit
+  // says so with a maximum of zero.
+  if (rimChamferLimits.max > 0) {
+    properties.push({
+      label: settings.role === "nut" ? "Rim Chamfer" : "Head Chamfer",
+      value: settings.headChamfer,
+      min: rimChamferLimits.min,
+      max: rimChamferLimits.max,
+      step: 0.05,
+      onChange: (headChamfer) => applyThread({ headChamfer }),
+    });
+  }
+  properties.push(
+    inchPitch
+      ? {
+        label: "Threads per Inch",
+        value: pitchToThreadsPerInch(settings.pitch),
+        min: Math.max(4, Math.ceil(pitchToThreadsPerInch(pitchLimits.max))),
+        max: Math.min(80, Math.floor(pitchToThreadsPerInch(pitchLimits.min))),
+        step: 1,
+        onChange: (perInch) => applyThread({ pitch: threadsPerInchToPitch(Math.round(perInch)) }),
+      }
+      : {
+        label: "Pitch",
+        value: settings.pitch,
+        min: pitchLimits.min,
+        max: pitchLimits.max,
+        step: 0.05,
+        onChange: (pitch) => applyThread({ pitch }),
+      },
+    {
+      type: "select",
+      label: "Hand",
+      value: settings.hand,
+      options: [{ value: "right", label: "Right-hand" }, { value: "left", label: "Left-hand" }],
+      onChange: (hand) => applyThread({ hand: normalizeThreadHand(hand) }),
+    },
+    {
+      type: "select",
+      label: "Profile",
+      value: settings.profile,
+      options: THREAD_PROFILE_OPTIONS,
+      onChange: (profile) => applyThread({ profile: normalizeThreadProfile(profile) }),
+    },
+  );
+  if (settings.role === "bore" || settings.role === "nut") {
+    properties.push({
+      label: "Clearance",
+      value: settings.clearance,
+      min: MIN_THREAD_CLEARANCE,
+      max: MAX_THREAD_CLEARANCE,
+      step: 0.05,
+      onChange: (clearance) => applyThread({ clearance }),
+    });
+  }
+  properties.push(
+    {
+      label: "Chamfer",
+      value: settings.chamfer,
+      min: chamferLimits.min,
+      max: chamferLimits.max,
+      step: 0.05,
+      onChange: (chamfer) => applyThread({ chamfer }),
+    },
+    {
+      label: "Quality",
+      value: settings.quality,
+      min: MIN_THREAD_QUALITY,
+      max: MAX_THREAD_QUALITY,
+      step: 6,
+      onChange: (quality) => applyThread({ quality }),
+    },
+  );
+  return properties;
 }
 
 function getShapePropertiesWithAppLimits(
@@ -313,6 +623,117 @@ function getShapePropertiesWithAppLimits(
       { label: "Width", value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { label: "Height", value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
     ];
+  }
+
+  if (shape.kind === "ellipse") {
+    return [
+      { label: "Sides", value: shape.sides ?? 96, min: 3, max: MAX_HIGH_RESOLUTION_SIDES, step: 1, onChange: (sides) => onUpdate({ sides: Math.round(sides) }) },
+      { label: "Length", value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
+      { label: "Width", value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
+      { label: "Height", value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
+  }
+
+  if (shape.kind === "polygon") {
+    return [
+      {
+        label: "Sides",
+        value: shape.sides ?? 6,
+        min: 3,
+        max: 24,
+        step: 1,
+        onChange: (value) => {
+          // A pentagon has a different width-to-depth ratio than a hexagon.
+          // Without carrying it along, switching turns the regular polygon
+          // into a squashed one.
+          const nextSides = Math.round(value);
+          const current = regularPolygonAspect(shape.sides ?? 6);
+          const next = regularPolygonAspect(nextSides);
+          const nextWidth = Math.max(MIN_SHAPE_SIZE, (width / current.width) * next.width);
+          const nextDepth = Math.max(MIN_SHAPE_SIZE, (depth / current.depth) * next.depth);
+          onUpdate({ sides: nextSides, width: nextWidth, depth: nextDepth, size: resizedShapeSize(nextWidth, nextDepth) });
+        },
+      },
+      { label: "Length", value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
+      { label: "Width", value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
+      { label: "Height", value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
+  }
+
+  if (shape.kind === "ruler") {
+    // Only the length can be set - the ruler's cross width and thickness are fixed.
+    return [
+      { label: "Length", value: width, min: 30, max: 500, onChange: setWidth },
+    ];
+  }
+
+  if (shape.kind === "spring") {
+    const across = Math.max(width, depth);
+    const settings = springSettings(shape, across, shape.height);
+    const wireLimits = springWireLimits(across, shape.height);
+    const turnLimits = springTurnLimits(across, shape.height, settings.wire);
+    // Wire and turns hang on the dimensions: a flatter spring carries fewer
+    // turns, a thinner one less wire. Dragging a size therefore moves them
+    // into their new limits instead of showing a body running through itself.
+    const fit = (nextWidth: number, nextDepth: number, nextHeight: number) => {
+      const reach = Math.max(nextWidth, nextDepth);
+      const wire = normalizeSpringWire(settings.wire, reach, nextHeight);
+      return { springWire: wire, springTurns: normalizeSpringTurns(settings.turns, reach, nextHeight, wire) };
+    };
+    return [
+      {
+        label: "Turns",
+        value: settings.turns,
+        min: turnLimits.min,
+        max: turnLimits.max,
+        step: 1,
+        onChange: (turns) => onUpdate({ springTurns: normalizeSpringTurns(turns, across, shape.height, settings.wire) }),
+      },
+      {
+        label: "Wire",
+        value: settings.wire,
+        min: wireLimits.min,
+        max: wireLimits.max,
+        step: 0.1,
+        onChange: (value) => {
+          const wire = normalizeSpringWire(value, across, shape.height);
+          onUpdate({ springWire: wire, springTurns: normalizeSpringTurns(settings.turns, across, shape.height, wire) });
+        },
+      },
+      {
+        label: "Quality",
+        value: settings.quality,
+        min: MIN_SPRING_QUALITY,
+        max: MAX_SPRING_QUALITY,
+        step: 4,
+        onChange: (quality) => onUpdate({ springQuality: normalizeSpringQuality(quality) }),
+      },
+      {
+        label: "Length",
+        value: depth,
+        min: MIN_SHAPE_SIZE,
+        max: 160,
+        onChange: (value) => onUpdate({ depth: value, size: resizedShapeSize(width, value), ...fit(width, value, shape.height) }, { resizeAxis: "depth" }),
+      },
+      {
+        label: "Width",
+        value: width,
+        min: MIN_SHAPE_SIZE,
+        max: 160,
+        onChange: (value) => onUpdate({ width: value, size: resizedShapeSize(value, depth), ...fit(value, depth, shape.height) }, { resizeAxis: "width" }),
+      },
+      {
+        label: "Height",
+        value: shape.height,
+        min: MIN_SHAPE_SIZE,
+        max: 160,
+        onChange: (value) => onUpdate({ height: value, ...fit(width, depth, value) }, { resizeAxis: "height" }),
+      },
+    ];
+  }
+
+  if (shape.kind === "thread") {
+    return threadProperties(shape, onUpdate);
   }
 
   if (shape.kind === "sphere") {
@@ -539,7 +960,7 @@ function getShapeProperties(
   if (customLimit === undefined) return properties;
   return properties.map((property) => {
     if (property.type === "text" || property.type === "select") return property;
-    if (["Length", "Width", "Height"].includes(property.label)) return { ...property, max: customLimit };
+    if (["Length", "Width", "Height", "Thread Length"].includes(property.label)) return { ...property, max: customLimit };
     if (["Top Radius", "Base Radius"].includes(property.label)) return { ...property, max: customLimit / 2 };
     return property;
   });
@@ -1227,14 +1648,35 @@ function TextProperty({ label, value, disabled, onChange, onInteractionActiveCha
 }
 
 function SelectProperty({ label, value, options, disabled, onChange }: SelectPropertyConfig & { disabled?: boolean }) {
+  const entries: SelectPropertyOption[] = options.map((option) => (
+    typeof option === "string" ? { value: option, label: option } : option
+  ));
+  // Consecutive entries under the same heading become one block; entries
+  // without a heading stand on their own.
+  const blocks: Array<{ group?: string; items: SelectPropertyOption[] }> = [];
+  entries.forEach((option) => {
+    const last = blocks[blocks.length - 1];
+    if (last && last.group === option.group) last.items.push(option);
+    else blocks.push({ group: option.group, items: [option] });
+  });
   return (
     <label className="select-property">
       <span>{label}</span>
       <select value={value} disabled={disabled} onChange={(event) => onChange(event.currentTarget.value)}>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
+        {blocks.map((block) => (
+          block.group ? (
+            <optgroup key={block.group} label={block.group}>
+              {block.items.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </optgroup>
+          ) : (
+            <Fragment key={block.items[0].value}>
+              {block.items.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </Fragment>
+          )
         ))}
       </select>
     </label>

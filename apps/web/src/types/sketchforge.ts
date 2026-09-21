@@ -1,6 +1,7 @@
 export type ShapeKind =
   | "box"
   | "cylinder"
+  | "ellipse"
   | "sphere"
   | "sketch"
   | "scribble"
@@ -13,6 +14,9 @@ export type ShapeKind =
   | "torus"
   | "tube"
   | "gear"
+  | "thread"
+  | "spring"
+  | "ruler"
   | "ring"
   | "wedge"
   | "polygon"
@@ -20,6 +24,17 @@ export type ShapeKind =
   | "mesh"
   | "reference"
   | "loft";
+
+/** Was fuer ein Koerper das Gewinde ist. */
+export type ThreadRole = "rod" | "screw" | "nut" | "bore";
+/** Die Kopfform der Schraube. */
+export type ThreadHead = "cylinder" | "countersunk" | "hex";
+/** Der Angriff im Kopf: Innensechskant, Schlitz, Kreuz, Torx. */
+export type ThreadDrive = "none" | "hex" | "slot" | "phillips" | "pozidriv" | "torx";
+/** Die Gangrichtung. */
+export type ThreadHand = "right" | "left";
+/** Das Gewindeprofil im Querschnitt. */
+export type ThreadProfile = "v" | "trapezoidal" | "round";
 
 export type ShapeAsset = {
   id: string;
@@ -64,6 +79,18 @@ export type ShapeCustomization = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  threadRole?: ThreadRole;
+  threadHead?: ThreadHead;
+  threadDrive?: ThreadDrive;
+  threadHand?: ThreadHand;
+  threadProfile?: ThreadProfile;
+  threadDiameter?: number;
+  threadPitch?: number;
+  threadClearance?: number;
+  threadQuality?: number;
+  springTurns?: number;
+  springWire?: number;
+  springQuality?: number;
   text?: string;
   font?: string;
 };
@@ -267,6 +294,21 @@ export type WorkplaneShape = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  threadRole?: ThreadRole;
+  threadHead?: ThreadHead;
+  threadDrive?: ThreadDrive;
+  threadHand?: ThreadHand;
+  threadProfile?: ThreadProfile;
+  threadDiameter?: number;
+  threadPitch?: number;
+  threadClearance?: number;
+  threadQuality?: number;
+  threadHeadHeight?: number;
+  threadChamfer?: number;
+  threadHeadChamfer?: number;
+  springTurns?: number;
+  springWire?: number;
+  springQuality?: number;
   loftBottomShape?: LoftProfileShape;
   loftTopShape?: LoftProfileShape;
   loftTopWidth?: number;

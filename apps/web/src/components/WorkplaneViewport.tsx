@@ -28,6 +28,8 @@ import type { AppThemePreference, ResolvedAppTheme } from "@/lib/appTheme";
 import type { ChallengeTutorialId } from "@/lib/challenges";
 import { cadModifierPrimitiveForBakedShape, cadTransformFromMatrix, cadTransformToMatrix } from "@/lib/cadBakeMetadata";
 import { createGearGeometry } from "@/lib/gearGeometry";
+import { createThreadGeometry } from "@/lib/threadGeometry";
+import { createSpringGeometry } from "@/lib/springGeometry";
 import { createLoftGeometry } from "@/lib/loftGeometry";
 import { parseMeasurementInput } from "@/lib/measurementUnits";
 import { createMoveDimensionOverlay, type MoveDimensionAxis, type MoveDimensionOverlayData } from "@/lib/moveDimensionLines";
@@ -965,6 +967,21 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    threadRole: shape.threadRole,
+    threadHead: shape.threadHead,
+    threadDrive: shape.threadDrive,
+    threadHand: shape.threadHand,
+    threadProfile: shape.threadProfile,
+    threadDiameter: shape.threadDiameter,
+    threadPitch: shape.threadPitch,
+    threadClearance: shape.threadClearance,
+    threadQuality: shape.threadQuality,
+    threadHeadHeight: shape.threadHeadHeight,
+    threadChamfer: shape.threadChamfer,
+    threadHeadChamfer: shape.threadHeadChamfer,
+    springTurns: shape.springTurns,
+    springWire: shape.springWire,
+    springQuality: shape.springQuality,
     loftBottomShape: shape.loftBottomShape,
     loftTopShape: shape.loftTopShape,
     loftTopWidth: shape.loftTopWidth,
@@ -1022,6 +1039,15 @@ function shapeMaterialSignature(shape: WorkplaneShape): string {
   });
 }
 
+/**
+ * The side count of the two prism-shaped bodies. The polygon is angular and
+ * stays at whatever is set; a cylinder or ellipse defaults to a fine round.
+ */
+function polygonSidesForShape(shape: WorkplaneShape) {
+  if (shape.kind === "polygon") return Math.max(3, Math.round(shape.sides ?? 6));
+  return Math.max(3, Math.round(shape.sides ?? 96));
+}
+
 function shapeGeometrySignature(shape: WorkplaneShape): string {
   if (shape.kind === "reference") {
     // The reference cross has no mesh geometry; its visible size is driven by
@@ -1034,7 +1060,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
       height: shape.height,
     });
   }
-  const taper = shape.kind === "gear" || !shapeHasTaper(shape)
+  const taper = !shapeHasTaper(shape)
     ? null
     : { ...shapeTaperDimensions(shape), baseWidth: shapeWidth(shape), baseDepth: shapeDepth(shape) };
   if (shape.groupedShapes?.length && !shape.importedMesh) {
@@ -1070,14 +1096,16 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
   if (shape.kind === "box" && !(shape.radius && shape.radius > 0)) {
     return JSON.stringify({ kind: "box", taper });
   }
-  if (shape.kind === "cylinder") {
-    return JSON.stringify({ kind: "cylinder", sides: shape.sides, segments: shape.segments, taper });
+  if (shape.kind === "cylinder" || shape.kind === "ellipse" || shape.kind === "polygon") {
+    return JSON.stringify({ kind: shape.kind, sides: polygonSidesForShape(shape), segments: shape.segments, taper });
   }
   if (shape.kind === "sphere") {
     return JSON.stringify({ kind: "sphere", steps: shape.steps, taper });
   }
-  if (shape.kind === "polygon") {
-    return JSON.stringify({ kind: "polygon", taper });
+  if (shape.kind === "ruler") {
+    // Die Strichteilung sitzt in der Beschichtung, nicht in der Geometrie -
+    // sie wird trotzdem mit ihr zusammen neu gebaut.
+    return JSON.stringify({ kind: "ruler", width: shapeWidth(shape), depth: shapeDepth(shape), color: shape.color });
   }
 
   return JSON.stringify({
@@ -6547,6 +6575,8 @@ function syncShapeObjectDimensions(object: THREE.Group, shape: WorkplaneShape) {
   const width = shapeWidth(shape);
   const depth = shapeDepth(shape);
   let scale: THREE.Vector3 | null = null;
+  let offsetX = 0;
+  let offsetZ = 0;
   // Threads must not be live-scaled: their mesh is generated at the correct
   // length (createShapeObject rebuilds it via canonicalizeShape), so stretching
   // the existing object by height/baseHeight would pull the turns apart. Leaving
@@ -6559,8 +6589,11 @@ function syncShapeObjectDimensions(object: THREE.Group, shape: WorkplaneShape) {
     );
   } else if (shape.kind === "box" && !(shape.radius && shape.radius > 0)) {
     scale = new THREE.Vector3(width, shape.height, depth);
-  } else if (shape.kind === "cylinder" || shape.kind === "polygon") {
-    scale = new THREE.Vector3(width / 2, shape.height, depth / 2);
+  } else if (shape.kind === "cylinder" || shape.kind === "ellipse" || shape.kind === "polygon") {
+    const fit = regularPolygonFootprintScale(width, depth, polygonSidesForShape(shape));
+    scale = new THREE.Vector3(fit.x, shape.height, fit.z);
+    offsetX = fit.offsetX;
+    offsetZ = fit.offsetZ;
   } else if (shape.kind === "sphere") {
     scale = new THREE.Vector3(width / 2, shape.height / 2, depth / 2);
   }
@@ -6569,7 +6602,8 @@ function syncShapeObjectDimensions(object: THREE.Group, shape: WorkplaneShape) {
   object.position.y = (shape.elevation ?? 0) + shape.height / 2;
   object.updateMatrix();
   surface.scale.copy(scale);
-  surface.position.y = -shape.height / 2;
+  // A polygon with an odd side count does not sit centred in its frame.
+  surface.position.set(offsetX, -shape.height / 2, offsetZ);
   surface.updateMatrix();
   object.children.forEach((child) => {
     if (!child.userData.shapeEdge) return;
@@ -7992,9 +8026,36 @@ function createShapeObject(
         shape.radius && shape.radius > 0 ? undefined : new THREE.Vector3(width, height, depth),
       );
       break;
-    case "cylinder":
-      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => new THREE.CylinderGeometry(1, 1, 1, shape.sides ?? 96, shape.segments ?? 1)), material, shape, undefined, undefined, new THREE.Vector3(width / 2, height, depth / 2));
+    case "ruler":
+      addMesh(
+        group,
+        sharedShapeGeometry(geometryCacheKey, () => new THREE.BoxGeometry(1, 1, 1)),
+        createRulerMaterials(shape, material),
+        shape,
+        undefined,
+        undefined,
+        new THREE.Vector3(width, height, depth),
+      );
       break;
+    case "cylinder":
+    case "ellipse":
+    case "polygon": {
+      // Cylinder, ellipse and polygon are the same body with a different side
+      // count and footprint. The geometry stays a unit body and is fitted into
+      // the frame by mesh scaling, so dragging a handle does not rebuild it.
+      const sides = polygonSidesForShape(shape);
+      const fit = regularPolygonFootprintScale(width, depth, sides);
+      addMesh(
+        group,
+        sharedShapeGeometry(geometryCacheKey, () => new THREE.CylinderGeometry(1, 1, 1, sides, shape.segments ?? 1)),
+        material,
+        shape,
+        new THREE.Vector3(fit.offsetX, 0, fit.offsetZ),
+        undefined,
+        new THREE.Vector3(fit.x, height, fit.z),
+      );
+      break;
+    }
     case "sphere": {
       const { widthSegments, heightSegments } = sphereTessellation(shape.steps);
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => new THREE.SphereGeometry(1, widthSegments, heightSegments)), material, shape, undefined, undefined, new THREE.Vector3(width / 2, height / 2, depth / 2));
@@ -8046,6 +8107,35 @@ function createShapeObject(
         helixQuality: shape.helixQuality,
       })), material, shape);
       break;
+    case "thread":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createThreadGeometry({
+        width,
+        depth,
+        height,
+        threadRole: shape.threadRole,
+        threadHead: shape.threadHead,
+        threadDrive: shape.threadDrive,
+        threadHand: shape.threadHand,
+        threadProfile: shape.threadProfile,
+        threadDiameter: shape.threadDiameter,
+        threadPitch: shape.threadPitch,
+        threadClearance: shape.threadClearance,
+        threadQuality: shape.threadQuality,
+        threadHeadHeight: shape.threadHeadHeight,
+        threadChamfer: shape.threadChamfer,
+        threadHeadChamfer: shape.threadHeadChamfer,
+      })), material, shape);
+      break;
+    case "spring":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createSpringGeometry({
+        width,
+        depth,
+        height,
+        springTurns: shape.springTurns,
+        springWire: shape.springWire,
+        springQuality: shape.springQuality,
+      })), material, shape);
+      break;
     case "loft":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createLoftGeometry({
         width,
@@ -8063,9 +8153,6 @@ function createShapeObject(
       break;
     case "wedge":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createWedgeGeometry(width, height, depth)), material, shape);
-      break;
-    case "polygon":
-      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => new THREE.CylinderGeometry(1, 1, 1, 6)), material, shape, undefined, undefined, new THREE.Vector3(width / 2, height, depth / 2));
       break;
     case "icosahedron":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => new THREE.IcosahedronGeometry(size / 2, 1)), material, shape);
@@ -8109,6 +8196,60 @@ function createShapeObject(
   freezeStaticObjectMatrices(group);
 
   return group;
+}
+
+/** Breite der Strichteilung in Bildpunkten - reicht fuer ein halbmeterlanges Lineal. */
+const RULER_TICK_TEXTURE_WIDTH = 2048;
+const RULER_LABEL_FONT_STACK = '"Avenir Next", Avenir, "Helvetica Neue", Arial, sans-serif';
+
+/**
+ * Die Strichteilung des Lineals wird auf eine Leinwand gezeichnet und als
+ * Beschichtung auf die Oberseite gelegt: ein Millimeterstrich je Millimeter,
+ * jeder fuenfte laenger, jeder zehnte lang und beschriftet. Gezeichnet statt
+ * modelliert, weil ein Lineal nur gemessen und nicht gedruckt wird - als
+ * Geometrie waeren es zehntausend Rillen.
+ */
+function createRulerTickTexture(length: number, crossWidth: number, baseColor: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = RULER_TICK_TEXTURE_WIDTH;
+  canvas.height = Math.max(1, Math.round((RULER_TICK_TEXTURE_WIDTH * crossWidth) / Math.max(1, length)));
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.fillStyle = baseColor;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#1a1a1a";
+  context.strokeStyle = "#1a1a1a";
+  context.textAlign = "center";
+  context.textBaseline = "top";
+  const pxPerMm = canvas.width / length;
+  const lastMm = Math.floor(length);
+  for (let value = 0; value <= lastMm; value += 1) {
+    const isTen = value % 10 === 0;
+    const isFive = value % 5 === 0;
+    const x = value * pxPerMm;
+    context.lineWidth = isTen ? 3 : 1.6;
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.lineTo(x, canvas.height * (isTen ? 0.62 : isFive ? 0.42 : 0.26));
+    context.stroke();
+    if (isTen) {
+      context.font = `600 ${Math.round(canvas.height * 0.24)}px ${RULER_LABEL_FONT_STACK}`;
+      context.fillText(String(value), x, canvas.height * 0.66, pxPerMm * 9);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createRulerMaterials(shape: WorkplaneShape, sideMaterial: THREE.MeshStandardMaterial) {
+  const sideMaterials = Array.from({ length: 5 }, (_, index) => (index === 0 ? sideMaterial : sideMaterial.clone()));
+  const topMaterial = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.55, metalness: 0 });
+  const texture = createRulerTickTexture(shapeWidth(shape), shapeDepth(shape), shape.color);
+  if (texture) topMaterial.map = texture;
+  return [sideMaterials[0], sideMaterials[1], topMaterial, sideMaterials[2], sideMaterials[3], sideMaterials[4]];
 }
 
 function createImagePlateMaterials(shape: WorkplaneShape, sideMaterial: THREE.MeshStandardMaterial, onTextureReady?: () => void) {
@@ -8260,7 +8401,7 @@ function addShapeEdgeDecorations(group: THREE.Group, mesh: THREE.Mesh, prepared:
   const complexEdges =
     shape.kind === "mesh" ||
     Boolean(shape.importedMesh) ||
-    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "wedge", "loft"].includes(shape.kind);
+    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "wedge", "loft", "polygon"].includes(shape.kind);
   const importedTriangleCount = shape.importedMesh?.triangleCount ?? 0;
   const skipHeavyImportedEdges = Boolean(shape.importedMesh) && importedTriangleCount > IMPORTED_SELECTED_EDGE_TRIANGLE_LIMIT;
   if ((group.userData.showEdges || complexEdges) && !skipHeavyImportedEdges) {
@@ -8271,7 +8412,9 @@ function addShapeEdgeDecorations(group: THREE.Group, mesh: THREE.Mesh, prepared:
     if (selectedOutline && shape.importedMesh && shape.cadDisplayEdgesVersion === 2 && Boolean(shape.cadDisplayEdges?.length)) {
       addCadDisplayEdges(group, shape, edgeColor, edgeOpacity);
     } else {
-      const selectedThreshold = shape.importedMesh ? NORMAL_IMPORTED_SELECTION_EDGE_ANGLE : 1;
+      // A thread is one long helical flank: at one degree every facet of it
+      // would count as an edge, and the body would be drawn as a wire ball.
+      const selectedThreshold = shape.importedMesh ? NORMAL_IMPORTED_SELECTION_EDGE_ANGLE : shape.kind === "thread" ? 25 : shape.kind === "spring" ? 30 : 1;
       const edges = new THREE.LineSegments(getEdgesGeometry(shape, prepared, selectedOutline ? selectedThreshold : complexEdges ? 14 : 25), sharedLineMaterial(edgeColor, edgeOpacity));
       edges.userData.complexEdge = complexEdges;
       edges.userData.shapeDecoration = true;

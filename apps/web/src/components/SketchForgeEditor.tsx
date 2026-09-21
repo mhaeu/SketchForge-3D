@@ -21,6 +21,8 @@ import { manifoldModuleSource } from "@/generated/manifoldModuleSource";
 import { manifoldWasmBase64 } from "@/generated/manifoldWasmBase64";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import { createGearGeometry } from "@/lib/gearGeometry";
+import { createThreadGeometry } from "@/lib/threadGeometry";
+import { createSpringGeometry } from "@/lib/springGeometry";
 import {
   createLoftGeometry,
   DEFAULT_LOFT_BOTTOM_SHAPE,
@@ -69,6 +71,7 @@ import {
   cleanNearZero,
   cleanRotationDegrees,
   fallbackSolidColor,
+  isSolidShape,
   meshYawDegrees,
   mirroredAxisCount,
   mirrorSign,
@@ -2184,9 +2187,18 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
         : new THREE.BoxGeometry(width, height, depth);
       break;
     case "cylinder":
-      geometry = new THREE.CylinderGeometry(1, 1, height, shape.sides ?? 96, shape.segments ?? 1);
-      geometry.scale(width / 2, 1, depth / 2);
+    case "ellipse":
+    case "polygon": {
+      // The same prism for all three; only the side count and the footprint
+      // fit differ. A hexagon measures more across its corners than across its
+      // flats, so its frame is met by fitting, not by halving.
+      const sides = shape.kind === "polygon" ? Math.max(3, Math.round(shape.sides ?? 6)) : Math.max(3, Math.round(shape.sides ?? 96));
+      const fit = regularPolygonFootprintScale(width, depth, sides);
+      geometry = new THREE.CylinderGeometry(1, 1, height, sides, shape.segments ?? 1);
+      geometry.scale(fit.x, 1, fit.z);
+      geometry.translate(fit.offsetX, 0, fit.offsetZ);
       break;
+    }
     case "sphere":
       geometry = new THREE.SphereGeometry(1, sphereTessellation(shape.steps).widthSegments, sphereTessellation(shape.steps).heightSegments);
       geometry.scale(width / 2, height / 2, depth / 2);
@@ -2230,6 +2242,41 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
         helixQuality: shape.helixQuality,
       });
       break;
+    case "thread":
+      geometry = createThreadGeometry({
+        width,
+        depth,
+        height,
+        threadRole: shape.threadRole,
+        threadHead: shape.threadHead,
+        threadDrive: shape.threadDrive,
+        threadHand: shape.threadHand,
+        threadProfile: shape.threadProfile,
+        threadDiameter: shape.threadDiameter,
+        threadPitch: shape.threadPitch,
+        threadClearance: shape.threadClearance,
+        threadQuality: shape.threadQuality,
+        threadHeadHeight: shape.threadHeadHeight,
+        threadChamfer: shape.threadChamfer,
+        threadHeadChamfer: shape.threadHeadChamfer,
+      });
+      break;
+    case "spring":
+      geometry = createSpringGeometry({
+        width,
+        depth,
+        height,
+        springTurns: shape.springTurns,
+        springWire: shape.springWire,
+        springQuality: shape.springQuality,
+      });
+      break;
+    case "ruler":
+      // A ruler is a measuring aid, not a body - it is kept out of booleans and
+      // exports elsewhere. Should it reach here anyway, its plain bar is what
+      // is meant.
+      geometry = new THREE.BoxGeometry(width, height, depth);
+      break;
     case "loft":
       geometry = createLoftGeometry({
         width,
@@ -2247,10 +2294,6 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
       break;
     case "wedge":
       geometry = createBooleanWedgeGeometry(width, height, depth);
-      break;
-    case "polygon":
-      geometry = new THREE.CylinderGeometry(1, 1, height, 6);
-      geometry.scale(width / 2, 1, depth / 2);
       break;
     case "icosahedron":
       geometry = new THREE.IcosahedronGeometry(size / 2, 1);
@@ -3903,8 +3946,8 @@ function cuboidsToMesh(name: string, cuboids: Cuboid[], centerX: number, centerZ
 }
 
 function booleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
-  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
+  const holes = selection.filter((shape) => shape.hole && isSolidShape(shape));
   if (solids.length === 0 || holes.length === 0) {
     return null;
   }
@@ -4401,8 +4444,8 @@ async function manifoldBooleanMeshShape(selection: WorkplaneShape[], options: { 
   // GROUPING SAFETY NOTE FOR FUTURE AGENTS:
   // Imported STL + hole grouping stays on exact boolean first. Rotated cutters
   // are validated against their real oriented volume, not their broad AABB.
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
-  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
+  const holes = selection.filter((shape) => shape.hole && isSolidShape(shape));
   if (solids.length === 0 || holes.length === 0 || (options.requireImported !== false && !selection.some((shape) => Boolean(shape.importedMesh)))) {
     return null;
   }
@@ -4466,7 +4509,7 @@ async function manifoldBooleanMeshShape(selection: WorkplaneShape[], options: { 
 }
 
 async function manifoldUnionMeshShape(selection: WorkplaneShape[]): Promise<WorkplaneShape | null> {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
   if (solids.length < 2 || !selection.some((shape) => Boolean(shape.importedMesh))) {
     return null;
   }
@@ -4508,8 +4551,8 @@ function asIntersectionGroup(group: WorkplaneShape): WorkplaneShape {
 }
 
 async function manifoldIntersectionMeshShape(selection: WorkplaneShape[]): Promise<IntersectionAttempt> {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
-  const holes = selection.filter((shape) => shape.hole && !shape.locked && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
+  const holes = selection.filter((shape) => shape.hole && !shape.locked && isSolidShape(shape));
   if (solids.length === 0 || holes.length === 0) {
     return { status: "unsupported" };
   }
@@ -4551,8 +4594,8 @@ async function manifoldIntersectionMeshShape(selection: WorkplaneShape[]): Promi
 }
 
 function bvhIntersectionMeshShape(selection: WorkplaneShape[], operation: CSGOperation, idPrefix: string): IntersectionAttempt {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
-  const holes = selection.filter((shape) => shape.hole && !shape.locked && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
+  const holes = selection.filter((shape) => shape.hole && !shape.locked && isSolidShape(shape));
   if (solids.length === 0 || holes.length === 0) {
     return { status: "unsupported" };
   }
@@ -4672,8 +4715,8 @@ function clearsImportedCutVolume(geometry: THREE.BufferGeometry, sourceInteriorT
 }
 
 function importedBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
-  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
+  const holes = selection.filter((shape) => shape.hole && isSolidShape(shape));
   if (solids.length === 0 || holes.length === 0 || !selection.some((shape) => Boolean(shape.importedMesh))) {
     return null;
   }
@@ -4794,8 +4837,8 @@ function boxedBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | nu
 }
 
 function aabbBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
-  const holes = selection.filter((shape) => shape.hole && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
+  const holes = selection.filter((shape) => shape.hole && isSolidShape(shape));
   if (solids.length === 0 || holes.length === 0) {
     return null;
   }
@@ -4849,7 +4892,7 @@ function aabbBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | nul
 }
 
 function hollowClipMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
   const holes = selection
     .filter((shape) => shape.hole)
     .map(paddedCutterShape)
@@ -4975,7 +5018,7 @@ function hollowClipMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null
 }
 
 function cutFullyConsumesSolids(selection: WorkplaneShape[]) {
-  const solids = selection.filter((shape) => !shape.hole && !shape.locked && !isReferencePoint(shape));
+  const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
   const holes = selection.filter((shape) => shape.hole).map(paddedCutterShape);
   if (solids.length === 0 || holes.length === 0) {
     return false;
@@ -8806,7 +8849,7 @@ export function SketchForgeEditor({
 
   const exportDesign = useCallback((format: DirectExportFormat, exportName: string) => {
     const sourceShapes = hasSelection ? selectedShapes : shapes;
-    const exportable = sourceShapes.filter((shape) => !shape.hole && !isReferencePoint(shape));
+    const exportable = sourceShapes.filter((shape) => !shape.hole && isSolidShape(shape));
     if (exportable.length === 0) {
       setNotice(hasSelection ? "Select at least one solid shape before exporting" : "Add a solid shape before exporting");
       return;

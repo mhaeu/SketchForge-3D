@@ -5,11 +5,14 @@ export type RegularPolygonFootprintScale = {
   offsetZ: number;
 };
 
-export function regularPolygonFootprintScale(
-  width: number,
-  depth: number,
-  sides: number,
-): RegularPolygonFootprintScale {
+export type RegularPolygonBounds = {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+};
+
+function regularPolygonBounds(sides: number): RegularPolygonBounds {
   const count = Math.max(3, Math.round(sides));
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -25,7 +28,26 @@ export function regularPolygonFootprintScale(
     minZ = Math.min(minZ, z);
     maxZ = Math.max(maxZ, z);
   }
+  return { minX, maxX, minZ, maxZ };
+}
 
+/**
+ * How wide and how deep a polygon with circumradius 1 measures. A hexagon is
+ * wider across its corners than across its flats, a pentagon different again -
+ * whoever changes the side count and still wants a regular polygon has to
+ * carry width and depth along in this ratio.
+ */
+export function regularPolygonAspect(sides: number) {
+  const bounds = regularPolygonBounds(sides);
+  return { width: bounds.maxX - bounds.minX, depth: bounds.maxZ - bounds.minZ };
+}
+
+export function regularPolygonFootprintScale(
+  width: number,
+  depth: number,
+  sides: number,
+): RegularPolygonFootprintScale {
+  const { minX, maxX, minZ, maxZ } = regularPolygonBounds(sides);
   const x = Math.max(0.001, width) / Math.max(0.001, maxX - minX);
   const z = Math.max(0.001, depth) / Math.max(0.001, maxZ - minZ);
   return {

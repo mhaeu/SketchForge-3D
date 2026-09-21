@@ -6,6 +6,33 @@ import { createPortal } from "react-dom";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { APP_THEME_OPTIONS, type AppThemePreference } from "@/lib/appTheme";
 import { gearCenterHoleLimits, gearToothPitch } from "@/lib/gearGeometry";
+import {
+  DEFAULT_THREAD_CLEARANCE,
+  DEFAULT_THREAD_DIAMETER,
+  DEFAULT_THREAD_DRIVE,
+  DEFAULT_THREAD_HAND,
+  DEFAULT_THREAD_HEAD,
+  DEFAULT_THREAD_PITCH,
+  DEFAULT_THREAD_PROFILE,
+  DEFAULT_THREAD_QUALITY,
+  DEFAULT_THREAD_ROLE,
+  MAX_THREAD_CLEARANCE,
+  MAX_THREAD_DIAMETER,
+  MAX_THREAD_QUALITY,
+  MIN_THREAD_CLEARANCE,
+  MIN_THREAD_DIAMETER,
+  MIN_THREAD_QUALITY,
+  threadPitchLimits,
+} from "@/lib/threadGeometry";
+import {
+  DEFAULT_SPRING_QUALITY,
+  DEFAULT_SPRING_TURNS,
+  DEFAULT_SPRING_WIRE,
+  MAX_SPRING_QUALITY,
+  MIN_SPRING_QUALITY,
+  springTurnLimits,
+  springWireLimits,
+} from "@/lib/springGeometry";
 import { normalizeScaleForUnits, parseMeasurementInput, scaleOptionsForUnits, WORKSPACE_UNIT_OPTIONS } from "@/lib/measurementUnits";
 import { shapeAssetDefaultDimensions, shapeAssetSpecialDefaults, toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { DEFAULT_WORKPLANE_WORKSPACE, MAX_CUSTOM_SHAPE_DIMENSION, MAX_HIGH_RESOLUTION_SIDES, MIN_CUSTOM_SHAPE_DIMENSION } from "@/lib/workplaneSettings";
@@ -36,11 +63,39 @@ const GEAR_TYPE_OPTIONS: Array<{ value: GearType; label: string }> = [
   { value: "helical", label: "Helical gear" },
   { value: "bevel", label: "Bevel gear" },
 ];
+const THREAD_ROLE_OPTIONS = [
+  { value: "rod", label: "Threaded rod" },
+  { value: "screw", label: "Screw" },
+  { value: "nut", label: "Nut" },
+  { value: "bore", label: "Tapped hole" },
+];
+const THREAD_HEAD_OPTIONS = [
+  { value: "cylinder", label: "Cylinder head" },
+  { value: "countersunk", label: "Countersunk head" },
+  { value: "hex", label: "Hex head" },
+];
+const THREAD_DRIVE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "hex", label: "Hex socket" },
+  { value: "slot", label: "Slot" },
+  { value: "phillips", label: "Phillips" },
+  { value: "pozidriv", label: "Pozidriv" },
+  { value: "torx", label: "Torx" },
+];
+const THREAD_HAND_OPTIONS = [
+  { value: "right", label: "Right-hand" },
+  { value: "left", label: "Left-hand" },
+];
+const THREAD_PROFILE_OPTIONS = [
+  { value: "v", label: "V thread" },
+  { value: "trapezoidal", label: "Trapezoidal" },
+  { value: "round", label: "Round" },
+];
 
-type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality";
+type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality";
 type ShapeSpecialField =
   | { type: "number"; key: ShapeSpecialNumberKey; label: string; defaultValue: number; min: number; max: number; step?: number; unit?: string }
-  | { type: "select"; key: "font" | "gearType"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
+  | { type: "select"; key: "font" | "gearType" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
   | { type: "text"; key: "text"; label: string; defaultValue: string; maxLength: number };
 
 function clamp(value: number, min: number, max: number) {
@@ -64,7 +119,8 @@ function specialFieldsForShape(
   customization: ShapeCustomization,
 ): ShapeSpecialField[] {
   const defaults = shapeAssetSpecialDefaults(kind, dimensions);
-  if (kind === "cylinder") return [{ type: "number", key: "sides", label: "Sides", defaultValue: defaults.sides ?? 96, min: 3, max: MAX_HIGH_RESOLUTION_SIDES, step: 1 }];
+  if (kind === "cylinder" || kind === "ellipse") return [{ type: "number", key: "sides", label: "Sides", defaultValue: defaults.sides ?? 96, min: 3, max: MAX_HIGH_RESOLUTION_SIDES, step: 1 }];
+  if (kind === "polygon") return [{ type: "number", key: "sides", label: "Sides", defaultValue: defaults.sides ?? 6, min: 3, max: 24, step: 1 }];
   if (kind === "sphere" || kind === "halfSphere") return [{ type: "number", key: "steps", label: "Steps", defaultValue: defaults.steps ?? 24, min: 6, max: 64, step: 1 }];
   if (kind === "cone") {
     return [
@@ -83,6 +139,40 @@ function specialFieldsForShape(
       { type: "number", key: "bevel", label: "Bevel", defaultValue: defaults.bevel ?? 0, min: 0, max: 8, unit: "mm" },
       { type: "number", key: "segments", label: "Segments", defaultValue: defaults.segments ?? 0, min: 0, max: 24, step: 1 },
     ];
+  }
+  if (kind === "spring") {
+    const across = Math.max(dimensions.width, dimensions.depth);
+    const wireLimits = springWireLimits(across, dimensions.height);
+    const turnLimits = springTurnLimits(across, dimensions.height, customization.springWire ?? defaults.springWire);
+    return [
+      { type: "number", key: "springTurns", label: "Turns", defaultValue: defaults.springTurns ?? DEFAULT_SPRING_TURNS, min: turnLimits.min, max: turnLimits.max, step: 1 },
+      { type: "number", key: "springWire", label: "Wire", defaultValue: defaults.springWire ?? DEFAULT_SPRING_WIRE, min: wireLimits.min, max: wireLimits.max, unit: "mm" },
+      { type: "number", key: "springQuality", label: "Quality", defaultValue: defaults.springQuality ?? DEFAULT_SPRING_QUALITY, min: MIN_SPRING_QUALITY, max: MAX_SPRING_QUALITY, step: 4 },
+    ];
+  }
+  if (kind === "thread") {
+    const diameter = customization.threadDiameter ?? defaults.threadDiameter ?? DEFAULT_THREAD_DIAMETER;
+    const pitchLimits = threadPitchLimits(diameter);
+    const role = customization.threadRole ?? defaults.threadRole ?? DEFAULT_THREAD_ROLE;
+    const head = customization.threadHead ?? defaults.threadHead ?? DEFAULT_THREAD_HEAD;
+    const fields: ShapeSpecialField[] = [
+      { type: "select", key: "threadRole", label: "Type", defaultValue: DEFAULT_THREAD_ROLE, options: THREAD_ROLE_OPTIONS },
+    ];
+    if (role === "screw") {
+      fields.push({ type: "select", key: "threadHead", label: "Head", defaultValue: DEFAULT_THREAD_HEAD, options: THREAD_HEAD_OPTIONS });
+      if (head !== "hex") {
+        fields.push({ type: "select", key: "threadDrive", label: "Drive", defaultValue: DEFAULT_THREAD_DRIVE, options: THREAD_DRIVE_OPTIONS });
+      }
+    }
+    fields.push(
+      { type: "number", key: "threadDiameter", label: "Diameter", defaultValue: defaults.threadDiameter ?? DEFAULT_THREAD_DIAMETER, min: MIN_THREAD_DIAMETER, max: MAX_THREAD_DIAMETER, unit: "mm" },
+      { type: "number", key: "threadPitch", label: "Pitch", defaultValue: defaults.threadPitch ?? DEFAULT_THREAD_PITCH, min: pitchLimits.min, max: pitchLimits.max, unit: "mm" },
+      { type: "select", key: "threadHand", label: "Hand", defaultValue: DEFAULT_THREAD_HAND, options: THREAD_HAND_OPTIONS },
+      { type: "select", key: "threadProfile", label: "Profile", defaultValue: DEFAULT_THREAD_PROFILE, options: THREAD_PROFILE_OPTIONS },
+      { type: "number", key: "threadClearance", label: "Clearance", defaultValue: defaults.threadClearance ?? DEFAULT_THREAD_CLEARANCE, min: MIN_THREAD_CLEARANCE, max: MAX_THREAD_CLEARANCE, unit: "mm" },
+      { type: "number", key: "threadQuality", label: "Quality", defaultValue: defaults.threadQuality ?? DEFAULT_THREAD_QUALITY, min: MIN_THREAD_QUALITY, max: MAX_THREAD_QUALITY, step: 6 },
+    );
+    return fields;
   }
   if (kind === "gear") {
     const teeth = customization.teeth ?? defaults.teeth ?? 12;
