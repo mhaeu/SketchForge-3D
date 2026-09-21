@@ -628,6 +628,18 @@ function rectangleCorners(halfLength: number, halfWidth: number, turn = 0) {
   return [base, Math.PI - base, Math.PI + base, 2 * Math.PI - base].map((angle) => angle + turn);
 }
 
+/** Der Winkel, unter dem die Keule den Kern trifft - die Kante des Zahns. */
+function torxCreaseAngle(lobeRadius: (angle: number) => number, limit: number, minor: number) {
+  let inside = 0;
+  let outside = limit;
+  for (let step = 0; step < 40; step += 1) {
+    const middle = (inside + outside) / 2;
+    if (lobeRadius(middle) > minor) inside = middle;
+    else outside = middle;
+  }
+  return (inside + outside) / 2;
+}
+
 export function threadDriveProfile(drive: ThreadDrive, spec: ThreadDriveSpec | null): ThreadDriveProfile | null {
   if (!spec) return null;
   if (drive === "hex") {
@@ -640,15 +652,34 @@ export function threadDriveProfile(drive: ThreadDrive, spec: ThreadDriveSpec | n
     };
   }
   if (drive === "torx") {
-    // Sechs Keulen: der Halbmesser schwingt zwischen Eckenmass und Kernmass
-    // (B ist bei ISO 10664 rund vier Fuenftel von A) einmal je sechzig Grad.
+    /*
+     * Sechs Keulen auf einem Teilkreis, dazwischen der Kern - so ist ein Torx
+     * gebaut. Eine Kosinuswelle zwischen Ecken- und Kernmass sieht von weitem
+     * aehnlich aus, laeuft aber ohne Kante in den Kern; die Zaehne wirken dann
+     * rund statt spitz. Hier trifft jede Keule den Kern unter einem Winkel,
+     * und dieser Knick wird als Ecke mitgegeben, damit er auch abgetastet wird.
+     *
+     * B ist bei ISO 10664 rund vier Fuenftel von A.
+     */
     const major = spec.across / 2;
     const minor = major * 0.8;
+    const lobe = major * 0.22;
+    const centre = major - lobe;
+    const sector = Math.PI / 3;
+    const lobeRadius = (fromLobe: number) => {
+      const offset = centre * Math.sin(fromLobe);
+      if (Math.abs(offset) >= lobe) return 0;
+      return centre * Math.cos(fromLobe) + Math.sqrt(lobe * lobe - offset * offset);
+    };
+    const crease = torxCreaseAngle(lobeRadius, Math.asin(Math.min(1, lobe / centre)), minor);
     return {
-      radiusAt: (angle) => minor + (major - minor) * (1 + Math.cos(6 * angle)) / 2,
-      corners: [],
+      radiusAt: (angle) => {
+        const phase = wrapUnit(angle / sector) * sector;
+        return Math.max(minor, lobeRadius(phase > sector / 2 ? phase - sector : phase));
+      },
+      corners: Array.from({ length: 6 }, (_, index) => index * sector).flatMap((centreAngle) => [centreAngle - crease, centreAngle + crease]),
       depth: spec.depth,
-      floorScale: 0.88,
+      floorScale: 0.92,
     };
   }
   if (drive === "slot") {

@@ -566,6 +566,33 @@ describe("thread drives", () => {
     expect(threadSettings({ threadHead: "cylinder", threadDrive: "torx" }).drive).toBe("torx");
   });
 
+  it("gives the torx six pointed lobes instead of a wave", () => {
+    const spec = threadDriveSpec("torx", 5, 0.8, 5)!;
+    const profile = threadDriveProfile("torx", spec)!;
+    const radiusAt = (degrees: number) => profile.radiusAt((degrees * Math.PI) / 180);
+    // The points reach the across-points size A, the valleys sit on the core.
+    expect(radiusAt(0)).toBeCloseTo(spec.across / 2, 6);
+    expect(radiusAt(60)).toBeCloseTo(spec.across / 2, 6);
+    expect(radiusAt(30)).toBeCloseTo((spec.across / 2) * 0.8, 6);
+
+    // A tooth is a lobe on a flat core, not a cosine: a third of the pitch is
+    // taken up by the tooth, and it meets the core at a corner rather than
+    // easing into it. A wave would pass its half-height at 15 degrees and
+    // still be falling at 25.
+    expect(radiusAt(25)).toBeCloseTo((spec.across / 2) * 0.8, 6);
+    // One valley between two teeth, so two corners inside the first pitch.
+    const crease = profile.corners.filter((angle) => angle > 0 && angle < Math.PI / 3).sort((a, b) => a - b);
+    expect(crease.length).toBe(2);
+    const creaseDegrees = (crease[0] * 180) / Math.PI;
+    expect((crease[1] * 180) / Math.PI).toBeCloseTo(60 - creaseDegrees, 6);
+    expect(creaseDegrees).toBeGreaterThan(12);
+    expect(creaseDegrees).toBeLessThan(20);
+    // Right at the corner the slope changes; just inside it the lobe is still
+    // clearly above the core.
+    expect(radiusAt(creaseDegrees - 2)).toBeGreaterThan((spec.across / 2) * 0.82);
+    expect(profile.corners.length).toBe(12);
+  });
+
   it("falls back to the hex socket for an unknown drive", () => {
     expect(normalizeThreadDrive("gibberish")).toBe("hex");
     expect(normalizeThreadDrive(undefined)).toBe("hex");

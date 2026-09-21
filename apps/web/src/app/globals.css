@@ -2527,9 +2527,15 @@ button {
   padding: 0 6px 2px;
 }
 
+/* Die drei Bildchen behalten ihre Größe; was fehlt, nimmt sich die Leiste vom
+   Platzhalter mit dem Projektnamen, nicht von ihnen. */
+.action-buttons > * {
+  flex: none;
+}
+
 .toolbar-actions-section {
-  flex: 0 0 152px;
-  min-width: 152px;
+  flex: 0 0 208px;
+  min-width: 208px;
   border-left: 1px solid rgba(203, 215, 226, 0.82);
   border-right: 0;
 }
@@ -8876,13 +8882,14 @@ html[data-theme="dark"] .nameplate-fillet-coachmark {
 }
 
 
-/* Die Sprachwahl: zwei Fahnen nebeneinander, die gewählte hervorgehoben. Sie
-   steht in der Kopfzeile der Startseite und ganz rechts in der Werkzeugleiste
-   des Editors, deshalb bringt sie ihre Größe selbst mit. */
+/* Die Sprachwahl: ein Knopf mit der aktuellen Fahne, der die andere Sprache
+   darunter aufklappt. Sie steht in der Kopfzeile der Startseite und ganz
+   rechts in der Werkzeugleiste des Editors, deshalb bringt sie ihre Größe
+   selbst mit - und hält sich schmal, damit daneben noch Platz bleibt. */
 .language-switch {
+  position: relative;
   display: inline-flex;
   flex: none;
-  gap: 2px;
   font-family: Arial, Helvetica, sans-serif;
   font-size: 12px;
   font-weight: 800;
@@ -8896,11 +8903,11 @@ html[data-theme="dark"] .nameplate-fillet-coachmark {
   gap: 12px;
 }
 
-.language-switch button {
+.language-switch-trigger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 7px;
+  padding: 5px 7px;
   color: #607589;
   background: transparent;
   border: 0;
@@ -8909,15 +8916,11 @@ html[data-theme="dark"] .nameplate-fillet-coachmark {
   cursor: pointer;
 }
 
-.language-switch button:hover,
-.language-switch button:focus-visible {
+.language-switch-trigger:hover,
+.language-switch-trigger:focus-visible,
+.language-switch-trigger.active {
   color: #0e69f1;
   background: #e8f1fd;
-}
-
-.language-switch button.active {
-  color: #10324f;
-  background: #dceaf9;
 }
 
 .language-switch svg {
@@ -8927,42 +8930,99 @@ html[data-theme="dark"] .nameplate-fillet-coachmark {
   border-radius: 2px;
 }
 
-/* In der blauen Kopfzeile steht sie auf dunklem Grund. */
-.dashboard-topbar .language-switch button {
-  color: rgba(255, 255, 255, 0.82);
+.language-switch-trigger svg:last-child {
+  width: 12px;
+  height: 12px;
+  border: 0;
 }
 
-.dashboard-topbar .language-switch button:hover,
-.dashboard-topbar .language-switch button:focus-visible {
+.language-switch-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  min-width: 132px;
+  flex-direction: column;
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid #d3dfe8;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(16, 50, 79, 0.18);
+}
+
+.language-switch-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #33506a;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.language-switch-menu button:hover,
+.language-switch-menu button:focus-visible {
+  background: #e8f1fd;
+}
+
+.language-switch-menu button.active {
+  color: #10324f;
+  background: #dceaf9;
+}
+
+/* In der blauen Kopfzeile steht der Knopf auf dunklem Grund. */
+.dashboard-topbar .language-switch-trigger {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.dashboard-topbar .language-switch-trigger:hover,
+.dashboard-topbar .language-switch-trigger:focus-visible,
+.dashboard-topbar .language-switch-trigger.active {
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.18);
 }
 
-.dashboard-topbar .language-switch button.active {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.24);
-}
-
-.dashboard-topbar .language-switch svg {
+.dashboard-topbar .language-switch-trigger svg:first-child {
   border-color: rgba(255, 255, 255, 0.5);
 }
 
 .toolbar-actions-section .language-switch {
   align-self: center;
-  margin-left: 6px;
 }
 
-html[data-theme="dark"] .language-switch button {
+html[data-theme="dark"] .language-switch-trigger {
   color: #9fb3c4;
 }
 
-html[data-theme="dark"] .language-switch button:hover,
-html[data-theme="dark"] .language-switch button:focus-visible {
+html[data-theme="dark"] .language-switch-trigger:hover,
+html[data-theme="dark"] .language-switch-trigger:focus-visible,
+html[data-theme="dark"] .language-switch-trigger.active {
   color: #6bb7ff;
   background: #1c2b38;
 }
 
-html[data-theme="dark"] .language-switch button.active {
+html[data-theme="dark"] .language-switch-menu {
+  background: #16202a;
+  border-color: #2b3b4a;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme="dark"] .language-switch-menu button {
+  color: #c6d6e3;
+}
+
+html[data-theme="dark"] .language-switch-menu button:hover,
+html[data-theme="dark"] .language-switch-menu button:focus-visible {
+  background: #1c2b38;
+}
+
+html[data-theme="dark"] .language-switch-menu button.active {
   color: #eaf3fb;
   background: #24384a;
 }

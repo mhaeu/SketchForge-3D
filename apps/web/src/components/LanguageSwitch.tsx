@@ -1,5 +1,7 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { LANGUAGES, LANGUAGE_NAMES, setLanguage, t, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
@@ -31,26 +33,69 @@ function LanguageFlag({ language }: { language: Language }) {
 
 /**
  * Die Sprachwahl sitzt oben rechts, wo man sie auf Webseiten sucht - auf der
- * Startseite wie im Editor. Zwei Sprachen brauchen keine Liste, die man erst
- * aufklappt: beide stehen nebeneinander, die gewählte ist hervorgehoben.
+ * Startseite wie im Editor.
+ *
+ * Sie zeigt nur die aktuelle Sprache und klappt die andere darunter auf.
+ * Nebeneinander waren es zwei Knöpfe, und in der Werkzeugleiste des Editors
+ * nahmen die genug Platz weg, dass Ein-/Ausfuhr und Einstellungen daneben
+ * nicht mehr zu erkennen waren.
  */
 export function LanguageSwitch() {
   const language = useLanguage();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
   return (
-    <div className="language-switch" role="group" aria-label={t("common.language")}>
-      {LANGUAGES.map((option) => (
-        <button
-          key={option}
-          type="button"
-          className={option === language ? "active" : undefined}
-          aria-pressed={option === language}
-          title={LANGUAGE_NAMES[option]}
-          onClick={() => setLanguage(option)}
-        >
-          <LanguageFlag language={option} />
-          <span>{option.toUpperCase()}</span>
-        </button>
-      ))}
+    <div className="language-switch" ref={rootRef}>
+      <button
+        type="button"
+        className={`language-switch-trigger ${open ? "active" : ""}`}
+        aria-label={t("common.language")}
+        title={`${t("common.language")}: ${LANGUAGE_NAMES[language]}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <LanguageFlag language={language} />
+        <span>{language.toUpperCase()}</span>
+        <ChevronDown size={12} strokeWidth={2.8} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="language-switch-menu" role="menu" aria-label={t("common.language")}>
+          {LANGUAGES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="menuitemradio"
+              aria-checked={option === language}
+              className={option === language ? "active" : undefined}
+              onClick={() => {
+                setLanguage(option);
+                setOpen(false);
+              }}
+            >
+              <LanguageFlag language={option} />
+              <span>{LANGUAGE_NAMES[option]}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
