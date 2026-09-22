@@ -10,6 +10,7 @@ import { closestPointOnSketchSegment, type SketchSegmentPlacement } from "@/lib/
 import { resizeSketchPoints, type ResizeHandle, type SelectionBounds } from "@/lib/sketchResize";
 import { isSketchPanGesture } from "@/lib/sketchPointerControls";
 import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes";
+import { selectWholeValue } from "@/lib/numberField";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { t } from "@/lib/i18n";
@@ -1394,6 +1395,7 @@ function SketchImageRange({
           className="sketch-image-number-input"
           type="text"
           inputMode="decimal"
+          onFocus={(event) => selectWholeValue(event.currentTarget)}
           value={draft}
           disabled={disabled}
           onChange={(event) => setDraft(event.currentTarget.value)}
@@ -1436,6 +1438,7 @@ function SketchImagePositionField({
       <input
         type="text"
         inputMode="decimal"
+        onFocus={(event) => selectWholeValue(event.currentTarget)}
         value={draft}
         disabled={disabled}
         onChange={(event) => setDraft(event.currentTarget.value)}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { t } from "@/lib/i18n";
+import { selectWholeValue } from "@/lib/numberField";
 import { useLanguage } from "@/lib/useLanguage";
 import { Check, LoaderCircle, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
@@ -95,9 +96,10 @@ function EdgeModifierSlider({
             value={editing ? draft : formatSliderValue(controlValue, workspace.accuracy, controlStep)}
             inputMode="decimal"
             disabled={disabled}
-            onFocus={() => {
+            onFocus={(event) => {
               setDraft(formatSliderValue(controlValue, workspace.accuracy, controlStep));
               setEditing(true);
+              selectWholeValue(event.currentTarget);
             }}
             onChange={(event) => setDraft(event.currentTarget.value)}
             onBlur={commitDraft}

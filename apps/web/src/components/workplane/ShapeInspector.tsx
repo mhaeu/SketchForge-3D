@@ -76,6 +76,7 @@ import {
   springWireLimits,
 } from "@/lib/springGeometry";
 import { regularPolygonAspect } from "@/lib/regularPolygonFootprint";
+import { selectWholeValue } from "@/lib/numberField";
 import { createThreadShapeFields, findDesignation } from "@/lib/threadShape";
 import {
   LOFT_PROFILE_SHAPES,
@@ -1670,10 +1671,11 @@ function RangeProperty({
             value={editing ? draft : formatPropertyNumber(controlValue, accuracy, controlStep)}
             disabled={disabled}
             inputMode="decimal"
-            onFocus={() => {
+            onFocus={(event) => {
               onInteractionActiveChange?.(true);
               setDraft(formatPropertyNumber(controlValue, accuracy, controlStep));
               setEditing(true);
+              selectWholeValue(event.currentTarget);
             }}
             onChange={(event) => setDraft(event.currentTarget.value)}
             onBlur={commitDraft}

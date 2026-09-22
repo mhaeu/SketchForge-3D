@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, RulerDimensionLine, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Rotate3d, Ruler, RulerDimensionLine, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction, type WheelEvent as ReactWheelEvent } from "react";
 import * as THREE from "three";
 import { Brush, Evaluator, HOLLOW_INTERSECTION } from "three-bvh-csg";
@@ -2831,6 +2831,20 @@ export function WorkplaneViewport({
   const mirrorReferenceShapesRef = useRef(mirrorReferenceShapes);
   const selectedIdsRef = useRef(selectedIds);
   const dragRef = useRef<DragState | null>(null);
+  /**
+   * Die Finger, die gerade auf der Arbeitsflaeche liegen.
+   *
+   * Ein Finger meldet sich dem Browser als **linke Maustaste**, und die
+   * gehoert hier dem Auswaehlen und Ziehen. Drehen liegt auf der rechten,
+   * Schieben auf der mittleren Taste - die es auf einem Tablet beide nicht
+   * gibt. Deshalb zaehlen wir die Finger selbst: Beim zweiten geht die
+   * Arbeitsflaeche an die Kamera, und dort heisst spreizen zoomen und
+   * gemeinsam schieben verschieben.
+   */
+  const touchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  /** Solange wahr, gehoert jeder Finger der Kamera und nichts wird ausgewaehlt. */
+  const cameraTouchRef = useRef(false);
+  const touchRotateRef = useRef(false);
   const moveDimensionSessionRef = useRef<MoveDimensionSession | null>(null);
   const moveDimensionOverlayRef = useRef<MoveDimensionOverlayState | null>(null);
   const moveDimensionsEnabledRef = useRef(true);
@@ -2846,6 +2860,10 @@ export function WorkplaneViewport({
   const lastWorkspaceSettingsSyncRef = useRef("");
   const pendingWorkspaceHydrationFingerprintRef = useRef<string | null>(null);
   const viewCubeRef = useRef<HTMLDivElement | null>(null);
+  // Der Umschalter fuer das Drehen mit einem Finger steht nur dort, wo er
+  // gebraucht wird. Anfangs falsch, damit das ausgelieferte HTML passt.
+  const [touchDevice, setTouchDevice] = useState(false);
+  const [touchRotate, setTouchRotate] = useState(false);
   const transformOverlayRef = useRef<TransformOverlayState | null>(null);
   const alignOverlayRef = useRef<AlignOverlayState | null>(null);
   const mirrorOverlayRef = useRef<MirrorOverlayState | null>(null);
@@ -4729,11 +4747,109 @@ export function WorkplaneViewport({
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia("(pointer: coarse)");
+    const apply = () => setTouchDevice(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    touchRotateRef.current = touchRotate;
+  }, [touchRotate]);
+
+  /**
+   * Die liegenden Finger an die Kamera uebergeben.
+   *
+   * `OrbitControls` hoert auf der Leinwand und hat den ersten Finger schon
+   * gesehen; ein nachgereichter Zeigerdruck bringt ihm die uebrigen bei, und
+   * ab zwei Fingern faehrt es von sich aus Zoomen und Schieben.
+   */
+  const handOverTouchToCamera = useCallback(() => {
+    const state = threeRef.current;
+    const canvas = state?.renderer.domElement;
+    const PointerEventConstructor = canvas?.ownerDocument.defaultView?.PointerEvent;
+    if (!state || !canvas || !PointerEventConstructor) return;
+    state.controls.enabled = true;
+    touchPointersRef.current.forEach((position, pointerId) => {
+      const handover = new PointerEventConstructor("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        pointerId,
+        pointerType: "touch",
+        isPrimary: false,
+        button: 0,
+        buttons: 1,
+        clientX: position.x,
+        clientY: position.y,
+      });
+      // Der Beruehrungszweig von OrbitControls rechnet **nur** mit
+      // pageX/pageY - der Mauszweig mit clientX/clientY. Mitgeben lassen die
+      // sich nicht, sie werden vom Browser abgeleitet: Chrome rechnet sie aus
+      // clientX aus, WebKit nicht. Auf einem iPad stuende dort 0, beide Finger
+      // laegen fuer die Kamera im Nullpunkt, und das Spreizen ergaebe nichts.
+      // Deshalb hier von Hand darueber gelegt.
+      Object.defineProperty(handover, "pageX", { value: position.x + window.scrollX, configurable: true });
+      Object.defineProperty(handover, "pageY", { value: position.y + window.scrollY, configurable: true });
+      canvas.dispatchEvent(handover);
+    });
+  }, []);
+
+  /**
+   * Was ein Finger angefangen hat, zuruecknehmen, bevor die Kamera uebernimmt.
+   *
+   * Ein angefangener Zug wird dabei auf seinen Ausgangspunkt zurueckgesetzt:
+   * Wer zwei Finger aufsetzt, will die Ansicht bewegen und nicht ein Teil,
+   * das der erste Finger zufaellig getroffen hat.
+   */
+  const cancelGestureForCamera = useCallback(() => {
+    const state = threeRef.current;
+    if (marqueeRef.current) {
+      marqueeRef.current = null;
+      setMarqueeFromState(null);
+    }
+    const drag = dragRef.current;
+    if (drag) {
+      drag.items.forEach((item) => {
+        item.nextX = item.startX;
+        item.nextZ = item.startZ;
+        item.nextElevation = item.startElevation;
+        if (item.visual && item.hadPreviewSimplified) setComplexEdgeVisibility(item.visual, true);
+        if (state) applyDragItemPreview(state, item);
+      });
+      dragRef.current = null;
+      clearMoveDimensions();
+      if (state) syncCutPreviewOverlays(state, shapesRef.current);
+    }
+    if (state) state.needsRender = true;
+    onInteractionActiveChange?.(false);
+  }, [clearMoveDimensions, onInteractionActiveChange, setMarqueeFromState]);
+
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const state = threeRef.current;
       if (!state) {
         return;
+      }
+      // Ein Finger ist fuer den Browser die linke Taste. Ab dem zweiten gehoert
+      // die Flaeche der Kamera - und solange das so ist, wird nichts
+      // ausgewaehlt, auch nicht vom nachgereichten Zeigerdruck, der hier
+      // wieder ankommt.
+      if (event.pointerType === "touch") {
+        touchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (cameraTouchRef.current) return;
+        const wantsCamera = touchPointersRef.current.size >= 2 || touchRotateRef.current;
+        // Wer gerade an einem Anfasser zieht, meint auch das - dann bleibt
+        // alles, wie es ist.
+        if (wantsCamera && !transformRef.current) {
+          cancelGestureForCamera();
+          cameraTouchRef.current = true;
+          handOverTouchToCamera();
+          return;
+        }
       }
       if (event.button !== 0 || event.ctrlKey || event.metaKey) {
         return;
@@ -5031,7 +5147,9 @@ export function WorkplaneViewport({
       onInteractionActiveChange?.(true);
     },
     [
+      cancelGestureForCamera,
       clearMoveDimensions,
+      handOverTouchToCamera,
       modifierActive,
       onAlignAnchorChange,
       onInteractionActiveChange,
@@ -5055,6 +5173,9 @@ export function WorkplaneViewport({
 
   const handlePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      // Gehoert die Flaeche gerade der Kamera, hat hier niemand etwas zu
+      // schweben oder zu ziehen - die Finger bewegen die Ansicht.
+      if (cameraTouchRef.current) return;
       if (workplaneModeRef.current) {
         const surface = pickPlacementSurface(event.clientX, event.clientY, event.shiftKey);
         let preview = surface?.workplane ?? null;
@@ -5183,6 +5304,10 @@ export function WorkplaneViewport({
 
   const finishDrag = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "touch") {
+        touchPointersRef.current.delete(event.pointerId);
+        if (touchPointersRef.current.size === 0) cameraTouchRef.current = false;
+      }
       const state = threeRef.current;
       const transform = transformRef.current;
       if (transform) {
@@ -5672,6 +5797,20 @@ export function WorkplaneViewport({
             <button aria-label={t("camera.zoomOut")} onClick={() => zoomCamera(1.35)}>
               <Minus size={28} strokeWidth={2.15} />
             </button>
+            {/* Zwei Finger zoomen und schieben von selbst. Zum Drehen fehlt die
+                Geste, also gibt es sie hier als Umschalter - und er steht nur
+                da, wo mit dem Finger gearbeitet wird. */}
+            {touchDevice ? (
+              <button
+                className={touchRotate ? "active" : ""}
+                aria-label={t("camera.touchRotate")}
+                title={t("camera.touchRotateHint")}
+                aria-pressed={touchRotate}
+                onClick={() => setTouchRotate((current) => !current)}
+              >
+                <Rotate3d size={26} strokeWidth={2.15} aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               className={orthographic ? "active" : ""}
               aria-label={t("camera.orthographic")}
@@ -6025,6 +6164,21 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const preventContextMenu = (event: MouseEvent) => {
     event.preventDefault();
   };
+  /**
+   * Safaris eigene Zwei-Finger-Geste abwenden.
+   *
+   * Seit iOS 10 laesst Safari das Aufziehen der Seite zu, was auch immer im
+   * Viewport-Kopf steht - `user-scalable=no` wird dort absichtlich uebergangen.
+   * Bleibt nur, `gesturestart` und seine Geschwister abzulehnen; sonst nimmt
+   * der Browser das Spreizen fuer sich und bricht die Zeigerereignisse ab,
+   * bevor die Kamera sie sieht. Auf allem ausser Safari gibt es diese
+   * Ereignisse gar nicht.
+   */
+  const preventSafariGesture = (event: Event) => {
+    if (event.cancelable) event.preventDefault();
+  };
+  const SAFARI_GESTURES = ["gesturestart", "gesturechange", "gestureend"] as const;
+  SAFARI_GESTURES.forEach((name) => renderer.domElement.addEventListener(name, preventSafariGesture));
   controls.addEventListener("change", requestRender);
   renderer.domElement.addEventListener("pointerdown", configureSketchForgeMouseButtons, { capture: true });
   renderer.domElement.addEventListener("pointerup", resetSketchForgeMouseButtons);
@@ -6040,6 +6194,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     renderer.domElement.removeEventListener("contextmenu", preventContextMenu);
     renderer.domElement.removeEventListener("wheel", requestRender);
     renderer.domElement.removeEventListener("pointerdown", requestRender);
+    SAFARI_GESTURES.forEach((name) => renderer.domElement.removeEventListener(name, preventSafariGesture));
   };
   rebuildWorkplane(state, DEFAULT_WORKSPACE);
   return state;
