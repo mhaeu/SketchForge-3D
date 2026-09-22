@@ -6,66 +6,59 @@ export type SketchGeometrySelection = {
   imageIds?: readonly string[];
 };
 
-export function selectedClosedSketchPoints(
+/**
+ * Die ausgewaehlten Punkte, ohne Bedingung an ihre Form.
+ *
+ * Drehen und Spiegeln brauchen keinen geschlossenen Umriss - zwei Punkte
+ * genuegen, und ein offener Zug dreht sich so gut wie ein Rechteck. Nur
+ * Vorlagenbilder bleiben aussen vor: die haengen an ihren eigenen Feldern.
+ */
+export function selectedSketchPoints(
   profile: SketchProfile,
   selection: SketchGeometrySelection,
 ): SketchPoint[] | null {
   if (selection.imageIds?.length) return null;
-
   const pointIds = new Set(selection.pointIds);
-  const segmentIds = new Set(selection.segmentIds);
-  if (pointIds.size < 3 || segmentIds.size !== pointIds.size) return null;
+  if (pointIds.size < 2) return null;
+  const points = profile.points.filter((point) => pointIds.has(point.id));
+  return points.length >= 2 ? points : null;
+}
 
-  const selectedPoints = profile.points.filter((point) => pointIds.has(point.id));
-  if (selectedPoints.length !== pointIds.size) return null;
+/** Die Mitte des Rahmens um eine Auswahl - der Punkt, um den sie sich dreht. */
+function selectionPivot(points: readonly SketchPoint[]) {
+  const minX = Math.min(...points.map((point) => point.x));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const minZ = Math.min(...points.map((point) => point.z));
+  const maxZ = Math.max(...points.map((point) => point.z));
+  return { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+}
 
-  const segmentById = new Map(profile.segments.map((segment) => [segment.id, segment]));
-  const adjacency = new Map([...pointIds].map((pointId) => [pointId, new Set<string>()]));
-
-  for (const segmentId of segmentIds) {
-    const segment = segmentById.get(segmentId);
-    if (
-      !segment
-      || segment.startId === segment.endId
-      || !pointIds.has(segment.startId)
-      || !pointIds.has(segment.endId)
-    ) {
-      return null;
-    }
-    adjacency.get(segment.startId)?.add(segment.endId);
-    adjacency.get(segment.endId)?.add(segment.startId);
-  }
-
-  if ([...adjacency.values()].some((neighbors) => neighbors.size !== 2)) return null;
-
-  const unvisited = new Set(pointIds);
-  while (unvisited.size > 0) {
-    const start = unvisited.values().next().value as string | undefined;
-    if (!start) return null;
-    const stack = [start];
-    let componentSize = 0;
-    while (stack.length > 0) {
-      const pointId = stack.pop();
-      if (!pointId || !unvisited.delete(pointId)) continue;
-      componentSize += 1;
-      adjacency.get(pointId)?.forEach((neighborId) => {
-        if (unvisited.has(neighborId)) stack.push(neighborId);
-      });
-    }
-    if (componentSize < 3) return null;
-  }
-
-  return selectedPoints;
+/**
+ * Spiegeln an der Mittellinie der Auswahl - waagerecht heisst: links und
+ * rechts tauschen.
+ *
+ * Die Griffe der Kurven werden mitgespiegelt und nicht getauscht: Eine Kante
+ * laeuft weiterhin von ihrem Anfang zu ihrem Ende, nur eben seitenverkehrt,
+ * und ihr Bogen kommt dabei von selbst richtig heraus.
+ */
+export function mirrorSketchPoints(points: readonly SketchPoint[], axis: "x" | "z"): SketchPoint[] {
+  if (points.length === 0) return [];
+  const pivot = selectionPivot(points);
+  const mirrorPosition = (position: { x: number; z: number }) => (axis === "x"
+    ? { x: pivot.x * 2 - position.x, z: position.z }
+    : { x: position.x, z: pivot.z * 2 - position.z });
+  return points.map((point) => ({
+    ...point,
+    ...mirrorPosition(point),
+    handleIn: point.handleIn ? mirrorPosition(point.handleIn) : undefined,
+    handleOut: point.handleOut ? mirrorPosition(point.handleOut) : undefined,
+  }));
 }
 
 export function rotateSketchPoints(points: readonly SketchPoint[], degrees = 45): SketchPoint[] {
   if (points.length === 0) return [];
 
-  const minX = Math.min(...points.map((point) => point.x));
-  const maxX = Math.max(...points.map((point) => point.x));
-  const minZ = Math.min(...points.map((point) => point.z));
-  const maxZ = Math.max(...points.map((point) => point.z));
-  const pivot = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 };
+  const pivot = selectionPivot(points);
   const radians = degrees * Math.PI / 180;
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);

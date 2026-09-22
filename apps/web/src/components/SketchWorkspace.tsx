@@ -34,6 +34,8 @@ type SketchWorkspaceProps = {
   revolvePreviewPositions?: number[] | null;
   referenceShapes: WorkplaneShape[];
   tool: SketchTool;
+  /** Ob Laengen und Winkel in der Zeichnung stehen. */
+  dimensionsVisible?: boolean;
   activePointId: string | null;
   selected: SketchSelection;
   measurement: SketchMeasurement;
@@ -450,6 +452,7 @@ export function SketchWorkspace({
   revolvePreviewPositions = null,
   referenceShapes,
   tool,
+  dimensionsVisible = true,
   activePointId,
   selected,
   measurement,
@@ -1019,7 +1022,7 @@ export function SketchWorkspace({
             />
           ) : null}
           <g className="sketch-segment-dimensions" pointerEvents="none">
-            {selected?.kind === "multiple" ? null : displayProfile.segments.map((segment) => {
+            {selected?.kind === "multiple" || !dimensionsVisible ? null : displayProfile.segments.map((segment) => {
               const dimension = segmentDimension(segment, pointById);
               if (!dimension) return null;
               const label = formatDimension(dimension.length, workspace.accuracy);
@@ -1121,7 +1124,7 @@ export function SketchWorkspace({
               })()}
             </g>
           ) : null}
-          {selected?.kind === "multiple" ? null : cornerAngles.map((corner) => {
+          {selected?.kind === "multiple" || !dimensionsVisible ? null : cornerAngles.map((corner) => {
             if (previewAngle && corner.pointId === activePoint?.id) return null;
             const radius = 22 * screenUnit;
             const start = { x: corner.vertex.x + corner.from.x * radius, z: corner.vertex.z + corner.from.z * radius };

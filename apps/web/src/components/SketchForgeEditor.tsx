@@ -1,6 +1,6 @@
 "use client";
 
-import { BoxSelect, Check, Circle as CircleIcon, Link, Link2, Link2Off, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { BoxSelect, Check, Circle as CircleIcon, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
@@ -137,7 +137,7 @@ import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParamet
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
-import { rotateSketchPoints, selectedClosedSketchPoints } from "@/lib/sketchRotation";
+import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
@@ -299,6 +299,9 @@ const MIN_SHAPE_DIMENSION = 0.01;
  * Textfeld, nicht wie ein Buchstabe.
  */
 const NOTE_COMMIT_IDLE_MS = 700;
+
+/** Wo die Stellung des Bemassungsschalters der Skizze liegen bleibt. */
+const SKETCH_DIMENSIONS_STORAGE_KEY = "sketchForge.sketch.dimensionsVisible";
 const MAX_SKETCH_HISTORY_ENTRIES = 100;
 const MODEL_DIMENSION_PRECISION = 3;
 const IMPORTED_EXACT_BOOLEAN_TRIANGLE_LIMIT = 150000;
@@ -5873,6 +5876,12 @@ export function SketchForgeEditor({
   const sketchRevolveUpdateRequestRef = useRef(new Map<string, number>());
   const sketchRevolveUpdateTimerRef = useRef(new Map<string, number>());
   const [sketchTool, setSketchTool] = useState<SketchTool>("line");
+  /**
+   * Ob die Skizze ihre Laengen und Winkel zeigt. Beim Zeichnen sind sie das
+   * Wichtigste, beim Betrachten eines dichten Umrisses stehen sie im Weg -
+   * deshalb ein Schalter, dessen Stellung ueber die Sitzung hinaus bleibt.
+   */
+  const [sketchDimensionsVisible, setSketchDimensionsVisible] = useState(true);
   // Sits here rather than in SketchWorkspace so the toolbar can show it: the
   // toggle belongs where the user looks for tools, not next to the snap grid.
   const [sketchLockAspect, setSketchLockAspect] = useState(false);
@@ -7253,6 +7262,26 @@ export function SketchForgeEditor({
     commitSketchProfile(next, t("status.sketchPointMoved"));
   }, [commitSketchProfile, sketchProfile]);
 
+  useEffect(() => {
+    try {
+      setSketchDimensionsVisible(window.localStorage.getItem(SKETCH_DIMENSIONS_STORAGE_KEY) !== "false");
+    } catch {
+      // Ohne Speicher gilt die Vorgabe.
+    }
+  }, []);
+
+  const toggleSketchDimensions = useCallback(() => {
+    setSketchDimensionsVisible((visible) => {
+      const next = !visible;
+      try {
+        window.localStorage.setItem(SKETCH_DIMENSIONS_STORAGE_KEY, String(next));
+      } catch {
+        // Ohne Speicher gilt die Stellung wenigstens fuer diese Sitzung.
+      }
+      return next;
+    });
+  }, []);
+
   const transformSketchPoints = useCallback((points: SketchPoint[], message = t("status.sketchTransformed")) => {
     if (!points.length) return;
     const byId = new Map(points.map((point) => [point.id, point]));
@@ -7262,18 +7291,38 @@ export function SketchForgeEditor({
     }, message);
   }, [commitSketchProfile, sketchProfile]);
 
-  const rotateSelectedClosedSketch45 = useCallback(() => {
-    if (sketchSelection?.kind !== "multiple") {
-      setNotice(t("status.selectClosedSketch"));
+  /**
+   * Drehen und Spiegeln der Auswahl. Beides braucht keinen geschlossenen
+   * Umriss - zwei Punkte genuegen, und ein offener Zug dreht sich so gut wie
+   * ein Rechteck. Gedreht wird um die Mitte des Rahmens um die Auswahl.
+   */
+  const transformSelectedSketch = useCallback((change: (points: SketchPoint[]) => SketchPoint[], message: string) => {
+    const selection = sketchSelection?.kind === "multiple" ? sketchSelection : null;
+    const points = selection ? selectedSketchPoints(sketchProfile, selection) : null;
+    if (!points) {
+      setNotice(t("sketch.selectToTransform"));
       return;
     }
-    const selectedPoints = selectedClosedSketchPoints(sketchProfile, sketchSelection);
-    if (!selectedPoints) {
-      setNotice(t("status.rotationClosedOnly"));
-      return;
-    }
-    transformSketchPoints(rotateSketchPoints(selectedPoints), t("status.sketchRotated45"));
+    transformSketchPoints(change(points), message);
   }, [sketchProfile, sketchSelection, transformSketchPoints]);
+
+  const rotateSelectedSketch = useCallback((degrees: number) => {
+    transformSelectedSketch(
+      (points) => rotateSketchPoints(points, degrees),
+      t("status.sketchRotated", { degrees: String(Math.abs(degrees)) }),
+    );
+  }, [transformSelectedSketch]);
+
+  const mirrorSelectedSketch = useCallback((axis: "x" | "z") => {
+    transformSelectedSketch((points) => mirrorSketchPoints(points, axis), t("status.sketchMirrored"));
+  }, [transformSelectedSketch]);
+
+  const rotateSelectedClosedSketch45 = useCallback(() => {
+    transformSelectedSketch(
+      (points) => rotateSketchPoints(points, 45),
+      t("status.sketchRotated", { degrees: "45" }),
+    );
+  }, [transformSelectedSketch]);
 
   const moveSketchHandle = useCallback((id: string, handle: "in" | "out", position: { x: number; z: number }) => {
     const next = cloneSketchProfile(sketchProfile);
@@ -10028,6 +10077,11 @@ export function SketchForgeEditor({
         canEditSketch={selectedShapes.length === 1 && Boolean(selectedShape?.sketchProfile)}
         onStartSketch={(operation) => beginSketch(operation)}
         onEditSketch={beginSketchEdit}
+        sketchDimensionsVisible={sketchDimensionsVisible}
+        onToggleSketchDimensions={toggleSketchDimensions}
+        onRotateSketch={rotateSelectedSketch}
+        onMirrorSketch={mirrorSelectedSketch}
+        canTransformSketch={sketchSelection?.kind === "multiple" && (sketchSelection.pointIds?.length ?? 0) >= 2}
         onSketchTool={setActiveSketchTool}
         onSketchPrimitive={(primitive) => addSketchPrimitive(primitive, { x: 0, z: 0 })}
         onSketchSvg={() => sketchSvgInputRef.current?.click()}
@@ -10081,6 +10135,7 @@ export function SketchForgeEditor({
             revolvePreviewPositions={sketchRevolvePreview?.positions ?? null}
             referenceShapes={sketchReferenceShapes.filter((shape) => shape.id !== editingSketchShapeId)}
             tool={sketchTool}
+            dimensionsVisible={sketchDimensionsVisible}
             lockAspect={sketchLockAspect}
             activePointId={sketchActivePointId}
             selected={sketchSelection}
@@ -10400,6 +10455,11 @@ function SecondaryToolbar({
   sketchActive,
   sketchOperation,
   sketchTool,
+  sketchDimensionsVisible,
+  canTransformSketch,
+  onToggleSketchDimensions,
+  onRotateSketch,
+  onMirrorSketch,
   sketchLockAspect,
   onSketchLockAspect,
   linkedAxes,
@@ -10473,6 +10533,11 @@ function SecondaryToolbar({
   sketchActive: boolean;
   sketchOperation: SketchOperation;
   sketchTool: SketchTool;
+  sketchDimensionsVisible: boolean;
+  canTransformSketch: boolean;
+  onToggleSketchDimensions: () => void;
+  onRotateSketch: (degrees: number) => void;
+  onMirrorSketch: (axis: "x" | "z") => void;
   sketchLockAspect: boolean;
   onSketchLockAspect: () => void;
   linkedAxes: LinkedResizeAxes;
@@ -11138,11 +11203,66 @@ function SecondaryToolbar({
                     </button>
                   </div>
                 </div>
+                <div className="toolbar-section sketch-arrange-section">
+                  <div className="toolbar-section-label">{t("sketch.group.arrange")}</div>
+                  <div className="toolbar-section-tools">
+                    <button
+                      className={`toolbar-icon ${canTransformSketch ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.rotateLeft")}
+                      title={canTransformSketch ? t("sketch.rotateLeft") : t("sketch.selectToTransform")}
+                      onClick={() => onRotateSketch(-90)}
+                      disabled={!canTransformSketch}
+                    >
+                      <RotateCcw size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                    <button
+                      className={`toolbar-icon ${canTransformSketch ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.rotateRight")}
+                      title={canTransformSketch ? t("sketch.rotateRight") : t("sketch.selectToTransform")}
+                      onClick={() => onRotateSketch(90)}
+                      disabled={!canTransformSketch}
+                    >
+                      <RotateCw size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                    <button
+                      className={`toolbar-icon ${canTransformSketch ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.mirrorLeftRight")}
+                      title={canTransformSketch ? t("sketch.mirrorLeftRight") : t("sketch.selectToTransform")}
+                      onClick={() => onMirrorSketch("x")}
+                      disabled={!canTransformSketch}
+                    >
+                      <FlipHorizontal size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                    <button
+                      className={`toolbar-icon ${canTransformSketch ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.mirrorUpDown")}
+                      title={canTransformSketch ? t("sketch.mirrorUpDown") : t("sketch.selectToTransform")}
+                      onClick={() => onMirrorSketch("z")}
+                      disabled={!canTransformSketch}
+                    >
+                      <FlipVertical size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
                 <div className="toolbar-section sketch-measure-section">
                   <div className="toolbar-section-label">{t("sketch.group.inspect")}</div>
                   <div className="toolbar-section-tools">
                     <button className={`toolbar-icon sketch-tool-icon ${sketchTool === "measure" ? "active" : ""}`} type="button" aria-label={t("sketch.measure")} title={t("sketch.measure")} onClick={() => onSketchTool("measure")}>
                       <SketchReferenceIcon name="measure" />
+                    </button>
+                    <button
+                      className={`toolbar-icon ${sketchDimensionsVisible ? "active" : ""}`}
+                      type="button"
+                      aria-label={sketchDimensionsVisible ? t("sketch.hideDimensions") : t("sketch.showDimensions")}
+                      aria-pressed={sketchDimensionsVisible}
+                      title={t("sketch.dimensionsHint")}
+                      onClick={onToggleSketchDimensions}
+                    >
+                      <RulerDimensionLine size={19} strokeWidth={2.2} aria-hidden="true" />
                     </button>
                   </div>
                 </div>
