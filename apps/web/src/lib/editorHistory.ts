@@ -1,5 +1,6 @@
-import type { WorkplaneShape } from "@/types/sketchforge";
+import type { WorkplaneNote, WorkplaneShape } from "@/types/sketchforge";
 import { canonicalizeShape } from "@/lib/workplaneShapes";
+import { normalizeNotes, notesSignature } from "@/lib/workplaneNotes";
 
 export const MAX_EDITOR_HISTORY_ENTRIES = 5000;
 export type EditorHistoryExportLimit = "unlimited" | number;
@@ -7,6 +8,12 @@ export type EditorHistoryExportLimit = "unlimited" | number;
 export type EditorHistoryEntry = {
   shapes: WorkplaneShape[];
   selectedIds: string[];
+  /**
+   * Die Notizen dieses Standes. Sie liegen im selben Eintrag wie die Koerper,
+   * damit Rueckgaengig sie mitnimmt und jeder Weg, der schon einen Verlauf
+   * traegt - Projektspeicher, Paketformat -, sie ohne Zutun mittraegt.
+   */
+  notes?: WorkplaneNote[];
   fingerprint: string;
   estimatedBytes: number;
 };
@@ -238,14 +245,52 @@ export function projectShapesFingerprint(shapes: WorkplaneShape[]) {
   return serializedSceneSignature(shapes).fingerprint;
 }
 
-export function editorHistoryEntry(shapes: WorkplaneShape[], selectedIds: string[]): EditorHistoryEntry {
+/** Koerper und Notizen in einem Fingerabdruck - ein Stand ist beides. */
+function sceneFingerprint(shapeFingerprint: string, notes: WorkplaneNote[]) {
+  const text = notesSignature(notes);
+  return text ? `${shapeFingerprint}#${signatureFromSerialized(text).fingerprint}` : shapeFingerprint;
+}
+
+/**
+ * Der Fingerabdruck dessen, was in einem Entwurf steht. Wer nur wissen will, ob
+ * sich die Koerper geaendert haben, nimmt `projectShapesFingerprint`; wer
+ * entscheidet, **ob gespeichert werden muss**, nimmt diesen hier - eine
+ * getippte Notiz ist eine Aenderung.
+ */
+export function projectSceneFingerprint(shapes: WorkplaneShape[], notes: WorkplaneNote[] = []) {
+  return sceneFingerprint(projectShapesFingerprint(shapes), normalizeNotes(notes));
+}
+
+export function editorHistoryEntry(shapes: WorkplaneShape[], selectedIds: string[], notes: WorkplaneNote[] = []): EditorHistoryEntry {
   const canonicalShapes = shapes.map(canonicalizeShape);
   const validSelection = selectedIds.filter((id, index) => selectedIds.indexOf(id) === index && canonicalShapes.some((shape) => shape.id === id));
-  return {
+  const canonicalNotes = normalizeNotes(notes);
+  const signature = serializedSceneSignature(canonicalShapes);
+  // Die Notizen gehen in den Fingerabdruck ein, sonst haelt das Paketformat
+  // zwei Staende, die sich nur in einer Notiz unterscheiden, fuer denselben und
+  // legt sie zusammen - die Notiz waere dann beim naechsten Oeffnen weg.
+  const noteText = notesSignature(canonicalNotes);
+  const entry: EditorHistoryEntry = {
     shapes: canonicalShapes,
     selectedIds: validSelection,
-    ...serializedSceneSignature(canonicalShapes),
+    fingerprint: sceneFingerprint(signature.fingerprint, canonicalNotes),
+    estimatedBytes: signature.estimatedBytes + noteText.length * 2,
   };
+  if (canonicalNotes.length > 0) entry.notes = canonicalNotes;
+  return entry;
+}
+
+/**
+ * Die Notizen des Standes, auf den ein Verlauf gerade zeigt. Sie sind die
+ * Antwort auf "welche Notizen gehoeren zu diesen Koerpern" - ein gespeicherter
+ * Verlauf traegt sie, und wer ihn wieder aufsetzt, muss sie mitgeben, sonst
+ * haelt `hydrateEditorHistoryState` den Stand fuer einen anderen und wirft den
+ * ganzen Verlauf weg.
+ */
+export function notesForHistoryIndex(entries: EditorHistoryEntry[] | undefined, index: number | undefined): WorkplaneNote[] {
+  if (!Array.isArray(entries) || entries.length === 0) return [];
+  const bounded = Number.isInteger(index) ? Math.min(Math.max(0, index as number), entries.length - 1) : entries.length - 1;
+  return normalizeNotes(entries[bounded]?.notes);
 }
 
 export function boundedEditorHistory(entries: EditorHistoryEntry[], limit: EditorHistoryExportLimit = "unlimited") {
@@ -297,8 +342,9 @@ export function hydrateEditorHistoryState(
   storedEntries: EditorHistoryEntry[] | undefined,
   requestedIndex: number | undefined,
   limit: EditorHistoryExportLimit = "unlimited",
+  currentNotes: WorkplaneNote[] = [],
 ): EditorHistoryState {
-  const fallback = editorHistoryEntry(currentShapes, []);
+  const fallback = editorHistoryEntry(currentShapes, [], currentNotes);
   if (!Array.isArray(storedEntries) || storedEntries.length === 0) {
     return { entries: [fallback], index: 0 };
   }
@@ -308,6 +354,7 @@ export function hydrateEditorHistoryState(
       editorHistoryEntry(
         Array.isArray(entry?.shapes) ? entry.shapes : [],
         Array.isArray(entry?.selectedIds) ? entry.selectedIds.filter((id): id is string => typeof id === "string") : [],
+        normalizeNotes(entry?.notes),
       ),
     );
     const index = Number.isInteger(requestedIndex)

@@ -411,3 +411,31 @@ export type WorkplaneShape = {
   locked?: boolean;
   hidden?: boolean;
 };
+
+/**
+ * Woran eine Notiz haengt, wenn sie nicht frei auf der Arbeitsebene steht: an
+ * einem Koerper, und zwar an einer Stelle seines Rahmens statt an einer
+ * Weltkoordinate. So faehrt sie mit, wenn der Koerper verschoben, gedreht oder
+ * in der Groesse geaendert wird - dieselbe Rechnung wie beim Lineal.
+ */
+export type WorkplaneNoteAnchor = {
+  shapeId: string;
+  normalized: [number, number, number];
+};
+
+/**
+ * Eine Notiz auf der Arbeitsflaeche. Sie ist kein Koerper: Sie wird nicht
+ * gedruckt, taucht in keiner Ausfuhr auf und traegt keine Geometrie - nur einen
+ * Text und die Stelle, an der er steht.
+ */
+export type WorkplaneNote = {
+  id: string;
+  text: string;
+  /** Weltkoordinate. Bei einer angehefteten Notiz die zuletzt bekannte Lage. */
+  x: number;
+  y: number;
+  z: number;
+  anchor?: WorkplaneNoteAnchor;
+  /** Zugeklappt zeigt die Notiz nur ihre Nadel mit der Nummer. */
+  collapsed?: boolean;
+};

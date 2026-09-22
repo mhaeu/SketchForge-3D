@@ -4,11 +4,12 @@ import { normalizePlacementWorkplane, placementWorkplaneIsBase, type PlacementWo
 import { importedShapeFromObj } from "@/lib/objImport";
 import { normalizeProjectAsset, sha256Hex } from "@/lib/projectAssets";
 import { canonicalizeShape } from "@/lib/workplaneShapes";
+import { normalizeNotes } from "@/lib/workplaneNotes";
 import { withoutReferencePoints } from "@/lib/referencePoint";
 import { importedShapeFromStl } from "@/lib/stlImport";
 import { importedShapeFromSvg } from "@/lib/svgImport";
 import { normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
-import type { GridSize, ProjectAsset, ProjectAssetSourceFormat, SketchOperation, SketchRevolveSettings, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { GridSize, ProjectAsset, ProjectAssetSourceFormat, SketchOperation, SketchRevolveSettings, WorkplaneNote, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 export const SKF_SCHEMA_ID = "com.sketchforge.project";
 export const SKF_FORMAT_VERSION = 1;
@@ -85,6 +86,13 @@ export type SkfStateV1 = {
   id: string;
   rootNodeIds: string[];
   nodes: SkfShapeNodeV1[];
+  /**
+   * Die Notizen dieses Standes. Sie sind kein Koerper und stehen deshalb neben
+   * den Knoten, nicht darin. Ein aelterer Leser uebergeht das Feld - er oeffnet
+   * die Datei, zeigt aber keine Notizen und schreibt sie beim naechsten Sichern
+   * auch nicht zurueck.
+   */
+  notes?: WorkplaneNote[];
 };
 
 export type SkfFeatureV1 = {
@@ -136,6 +144,7 @@ export type SkfProjectExportInput = {
   createdAt: number;
   modifiedAt: number;
   shapes: WorkplaneShape[];
+  notes?: WorkplaneNote[];
   history: EditorHistoryEntry[];
   historyIndex: number;
   assets: ProjectAsset[];
@@ -153,6 +162,7 @@ export type SkfRestoredProject = {
   createdAt: number;
   modifiedAt: number;
   shapes: WorkplaneShape[];
+  notes?: WorkplaneNote[];
   history: EditorHistoryEntry[];
   historyIndex: number;
   assets: ProjectAsset[];
@@ -544,6 +554,7 @@ async function serializeState(
   shapes: WorkplaneShape[],
   builder: SkfArchiveBuilder,
   sourceAssetsByArchiveId: Map<string, SkfAssetRecordV1>,
+  notes: WorkplaneNote[] = [],
 ): Promise<SkfStateV1> {
   assertUniqueRuntimeObjectIds(shapes, id);
   const nodes: SkfShapeNodeV1[] = [];
@@ -553,7 +564,9 @@ async function serializeState(
     rootNodeIds.push(await serializeShapeNode(shape, nodeId, nodes, builder, sourceAssetsByArchiveId));
   }
   nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId));
-  return { id, rootNodeIds, nodes };
+  const state: SkfStateV1 = { id, rootNodeIds, nodes };
+  if (notes.length > 0) state.notes = notes;
+  return state;
 }
 
 function nodeGroupOperation(node: SkfShapeNodeV1, nodeById: Map<string, SkfShapeNodeV1>) {
@@ -690,13 +703,13 @@ function unzipAsync(bytes: Uint8Array) {
 }
 
 export async function exportSkfProject(input: SkfProjectExportInput) {
-  const hydrated = hydrateEditorHistoryState(input.shapes, input.history, input.historyIndex);
+  const hydrated = hydrateEditorHistoryState(input.shapes, input.history, input.historyIndex, "unlimited", normalizeNotes(input.notes));
   if (hydrated.entries.length > SKF_LIMITS.states) throw new Error("Project has too many undo states for the .skf format");
   // The reference point is a local scene helper (like an origin marker), not
   // real geometry - exclude it from shared/exported projects the same way the
   // STEP exporter does. ensureReferencePoint recreates it on load.
   const exportEntries = hydrated.entries.map((entry) =>
-    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds));
+    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds, normalizeNotes(entry.notes)));
   const builder = new SkfArchiveBuilder();
   const stateShapes = exportEntries.map((entry) => entry.shapes);
   await builder.addSources(input.assets, referencedSourceAssetIds(stateShapes));
@@ -709,7 +722,7 @@ export async function exportSkfProject(input: SkfProjectExportInput) {
     let stateId = stateIdByFingerprint.get(entry.fingerprint);
     if (!stateId) {
       stateId = `state-${states.length + 1}`;
-      states.push(await serializeState(stateId, entry.shapes, builder, sourceAssetsByArchiveId));
+      states.push(await serializeState(stateId, entry.shapes, builder, sourceAssetsByArchiveId, normalizeNotes(entry.notes)));
       stateIdByFingerprint.set(entry.fingerprint, stateId);
     }
     historyEntries.push({ stateId, selectedObjectIds: [...entry.selectedIds] });
@@ -1227,6 +1240,7 @@ async function restoreV1(document: SkfProjectDocumentV1, assetById: Map<string, 
   const derivedMeshCache = new Map<string, ReturnType<typeof decodeMeshCache>>();
   const sourceImporter = options.sourceImporter ?? defaultSourceImporter;
   const restoredStates = new Map<string, WorkplaneShape[]>();
+  const restoredNotes = new Map<string, WorkplaneNote[]>();
   for (const state of document.states) {
     const nodeById = new Map(state.nodes.map((node) => [node.nodeId, node]));
     const shapes = await Promise.all(state.rootNodeIds.map((nodeId) => restoreShapeFromNode(
@@ -1240,10 +1254,16 @@ async function restoreV1(document: SkfProjectDocumentV1, assetById: Map<string, 
       sourceImporter,
     )));
     restoredStates.set(state.id, shapes);
+    restoredNotes.set(state.id, normalizeNotes(state.notes));
   }
-  const history = document.history.entries.map((entry) => editorHistoryEntry(restoredStates.get(entry.stateId) ?? [], entry.selectedObjectIds));
+  const history = document.history.entries.map((entry) => editorHistoryEntry(
+    restoredStates.get(entry.stateId) ?? [],
+    entry.selectedObjectIds,
+    restoredNotes.get(entry.stateId) ?? [],
+  ));
   const shapes = restoredStates.get(document.sceneStateId) ?? [];
-  const hydrated = hydrateEditorHistoryState(shapes, history, document.history.index);
+  const notes = restoredNotes.get(document.sceneStateId) ?? [];
+  const hydrated = hydrateEditorHistoryState(shapes, history, document.history.index, "unlimited", notes);
   if (hydrated.entries.length !== history.length || hydrated.index !== document.history.index) throw new Error("Undo history could not be restored without data loss");
   return {
     sourceProjectId: document.metadata.projectId,
@@ -1251,6 +1271,7 @@ async function restoreV1(document: SkfProjectDocumentV1, assetById: Map<string, 
     createdAt: parseIsoTimestamp(document.metadata.createdAt, "metadata.createdAt"),
     modifiedAt: parseIsoTimestamp(document.metadata.modifiedAt, "metadata.modifiedAt"),
     shapes: hydrated.entries[hydrated.index]?.shapes ?? shapes,
+    notes: hydrated.entries[hydrated.index]?.notes ?? notes,
     history: hydrated.entries,
     historyIndex: hydrated.index,
     assets: [...runtimeAssetByArchiveId.values()],

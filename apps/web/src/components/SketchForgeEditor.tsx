@@ -1,6 +1,6 @@
 "use client";
 
-import { BoxSelect, Check, Circle as CircleIcon, Link, Link2, Link2Off, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { BoxSelect, Check, Circle as CircleIcon, Link, Link2, Link2Off, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
@@ -24,6 +24,7 @@ import { createGearGeometry } from "@/lib/gearGeometry";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { sketchPrimitiveGeometry } from "@/lib/sketchPrimitives";
+import { createNoteId, detachNotesFromMissingShapes, normalizeNotes, NOTE_COUNT_LIMIT, NOTE_TEXT_LIMIT } from "@/lib/workplaneNotes";
 import { createPyramidGeometry } from "@/lib/pyramidGeometry";
 import {
   createLoftGeometry,
@@ -50,6 +51,7 @@ import {
   SketchHalfCircleIcon,
   SketchPieSliceIcon,
   ToolbarAlignIcon,
+  ToolbarNoteIcon,
   SketchImportSvgIcon,
   ToolbarAlignToWorkplaneIcon,
   ToolbarCenterOnWorkplaneIcon,
@@ -124,7 +126,7 @@ import {
   SKETCH_CAD_DEFLECTION,
 } from "@/lib/cadModifierRuntime";
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
-import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
 import { geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
 import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
@@ -173,7 +175,7 @@ import {
 } from "@/lib/sketchforgeMcpProtocol";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import type { SketchCadBuildResponse } from "@/lib/sketchCadTypes";
-import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, ProjectAsset, ShapeAsset, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, ProjectAsset, ShapeAsset, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment, WorkplaneNote, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 export { importedShapeFromObj, importedShapeFromStl, importedShapeFromSvg };
 
@@ -285,6 +287,13 @@ const CUTTER_PADDING = 0.05;
 const POINT_TOLERANCE = 0.0001;
 const CUTTER_RESIDUAL_INSET = CUTTER_PADDING * 0.4;
 const MIN_SHAPE_DIMENSION = 0.01;
+
+/**
+ * So lange darf eine Notiz getippt oder gezogen werden, ohne dass daraus ein
+ * Schritt im Verlauf wird. Danach steht sie darin - wie ein Absatz in einem
+ * Textfeld, nicht wie ein Buchstabe.
+ */
+const NOTE_COMMIT_IDLE_MS = 700;
 const MAX_SKETCH_HISTORY_ENTRIES = 100;
 const MODEL_DIMENSION_PRECISION = 3;
 const IMPORTED_EXACT_BOOLEAN_TRIANGLE_LIMIT = 150000;
@@ -5739,9 +5748,15 @@ export function SketchForgeEditor({
       initialHistory,
       initialHistoryIndex,
       normalizeWorkspaceSettings(initialWorkspace).historyLimit,
+      notesForHistoryIndex(initialHistory, initialHistoryIndex),
     );
   }
   const [shapes, setShapes] = useState<WorkplaneShape[]>(() => initialSceneRef.current as WorkplaneShape[]);
+  // Die Notizen reisen im Verlauf mit, also kommen sie auch von dort - der
+  // Stand, auf den der Verlauf zeigt, ist der Stand, den der Editor zeigt.
+  const [notes, setNotes] = useState<WorkplaneNote[]>(() => notesForHistoryIndex(initialHistory, initialHistoryIndex));
+  const [notesVisible, setNotesVisible] = useState(true);
+  const [noteMode, setNoteMode] = useState(false);
   const [projectAssets, setProjectAssets] = useState<ProjectAsset[]>(() => dedupeProjectAssets(initialAssets));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [clipboard, setClipboard] = useState<WorkplaneShape[]>([]);
@@ -5781,6 +5796,8 @@ export function SketchForgeEditor({
   const projectSnapshotRunRef = useRef(0);
   const lastProjectSnapshotRef = useRef<ProjectThumbnailSceneKey | null>(null);
   const shapesRef = useRef(shapes);
+  const notesRef = useRef(notes);
+  const noteCommitTimerRef = useRef<number | null>(null);
   const projectAssetsRef = useRef(projectAssets);
   const selectedIdsRef = useRef(selectedIds);
   const workspaceSettingsRef = useRef(workspaceSettings);
@@ -6108,6 +6125,10 @@ export function SketchForgeEditor({
   useEffect(() => {
     shapesRef.current = shapes;
   }, [shapes]);
+
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
 
   useEffect(() => {
     projectAssetsRef.current = projectAssets;
@@ -6471,8 +6492,8 @@ export function SketchForgeEditor({
   }, []);
 
   const appendHistorySnapshot = useCallback(
-    (nextShapes: WorkplaneShape[], nextSelection: string[]) =>
-      appendHistoryEntry(editorHistoryEntry(nextShapes, nextSelection)),
+    (nextShapes: WorkplaneShape[], nextSelection: string[], nextNotes: WorkplaneNote[] = notesRef.current) =>
+      appendHistoryEntry(editorHistoryEntry(nextShapes, nextSelection, nextNotes)),
     [appendHistoryEntry],
   );
 
@@ -6485,7 +6506,7 @@ export function SketchForgeEditor({
       return;
     }
 
-    const entry = editorHistoryEntry(shapesRef.current, selectedIdsRef.current);
+    const entry = editorHistoryEntry(shapesRef.current, selectedIdsRef.current, notesRef.current);
     if (!startFingerprint || startFingerprint === entry.fingerprint) {
       return;
     }
@@ -6511,7 +6532,7 @@ export function SketchForgeEditor({
           finalizeInteractionHistory();
         }
         if (!projectInteractionActiveRef.current) {
-          interactionHistoryStartRef.current = projectShapesFingerprint(shapesRef.current);
+          interactionHistoryStartRef.current = projectSceneFingerprint(shapesRef.current, notesRef.current);
           interactionHistoryChangedRef.current = false;
         }
         projectInteractionActiveRef.current = true;
@@ -6575,11 +6596,16 @@ export function SketchForgeEditor({
       const canonicalNext = next.map(canonicalizeShape);
       const requestedSelection = Array.isArray(nextSelection) ? nextSelection : nextSelection ? [nextSelection] : [];
       const validSelection = requestedSelection.filter((id, index) => requestedSelection.indexOf(id) === index && canonicalNext.some((shape) => shape.id === id));
+      // Eine Notiz, deren Koerper nicht mehr da ist, bleibt stehen und loest
+      // sich nur von ihm - sonst waere jedes Gruppieren ein stiller Verlust.
+      const nextNotes = detachNotesFromMissingShapes(notesRef.current, canonicalNext);
       shapesRef.current = canonicalNext;
       selectedIdsRef.current = validSelection;
+      notesRef.current = nextNotes;
       setShapes(canonicalNext);
       setSelectedIds(validSelection);
-      const changed = appendHistorySnapshot(canonicalNext, validSelection);
+      if (nextNotes !== notes) setNotes(nextNotes);
+      const changed = appendHistorySnapshot(canonicalNext, validSelection, nextNotes);
       if (message) {
         setNotice(message);
       }
@@ -6587,8 +6613,118 @@ export function SketchForgeEditor({
         syncProjectShapes(canonicalNext);
       }
     },
-    [appendHistorySnapshot, selectedIds, syncProjectShapes],
+    [appendHistorySnapshot, notes, selectedIds, syncProjectShapes],
   );
+
+  /**
+   * Notizen aendern sich wie Koerper: ueber den Verlauf. Deshalb liegt hier
+   * alles, was sie anfasst - anlegen, tippen, verschieben, loeschen -, und jeder
+   * dieser Wege legt einen Stand ab, den Rueckgaengig wieder holen kann.
+   */
+  const commitNotes = useCallback(
+    (next: WorkplaneNote[], message?: string) => {
+      const normalized = normalizeNotes(next);
+      notesRef.current = normalized;
+      setNotes(normalized);
+      const changed = appendHistoryEntry(editorHistoryEntry(shapesRef.current, selectedIdsRef.current, normalized));
+      if (message) setNotice(message);
+      // Der Abgleich mit dem Projektspeicher vergleicht Koerper. Eine Notiz
+      // aendert daran nichts, also muss er hier ausdruecklich laufen.
+      if (changed) syncProjectShapes(shapesRef.current, true);
+    },
+    [appendHistoryEntry, setNotice, syncProjectShapes],
+  );
+
+  const addNote = useCallback(
+    (note: { x: number; y: number; z: number; anchor?: WorkplaneNote["anchor"] }) => {
+      if (notesRef.current.length >= NOTE_COUNT_LIMIT) {
+        setNotice(t("status.noteLimitReached", { count: NOTE_COUNT_LIMIT }));
+        return null;
+      }
+      const created: WorkplaneNote = { id: createNoteId(), text: "", x: note.x, y: note.y, z: note.z };
+      if (note.anchor) created.anchor = note.anchor;
+      commitNotes([...notesRef.current, created], note.anchor ? t("status.notePinned") : t("status.noteAdded"));
+      return created.id;
+    },
+    [commitNotes, setNotice],
+  );
+
+  /**
+   * Beim Tippen und beim Ziehen faellt pro Anschlag eine Aenderung an. Jede
+   * davon in den Verlauf zu legen, machte Rueckgaengig unbrauchbar - also geht
+   * ein solcher Zwischenstand nur in den Zustand, und der Verlauf bekommt ihn,
+   * wenn die Hand stillhaelt oder das Feld den Fokus abgibt.
+   */
+  const updateNote = useCallback(
+    (id: string, patch: Partial<WorkplaneNote>, transient = false) => {
+      const current = notesRef.current;
+      if (!current.some((note) => note.id === id)) return;
+      const next = current.map((note) => {
+        if (note.id !== id) return note;
+        const merged: WorkplaneNote = { ...note, ...patch, id: note.id };
+        if (typeof patch.text === "string") merged.text = patch.text.slice(0, NOTE_TEXT_LIMIT);
+        // `anchor: undefined` heisst "loese dich" und muss das Feld wirklich
+        // los werden, sonst traegt die Notiz es nach dem Sichern wieder.
+        if ("anchor" in patch && !patch.anchor) delete merged.anchor;
+        return merged;
+      });
+      if (noteCommitTimerRef.current !== null) {
+        window.clearTimeout(noteCommitTimerRef.current);
+        noteCommitTimerRef.current = null;
+      }
+      if (!transient) {
+        commitNotes(next);
+        return;
+      }
+      notesRef.current = next;
+      setNotes(next);
+      noteCommitTimerRef.current = window.setTimeout(() => {
+        noteCommitTimerRef.current = null;
+        commitNotes(notesRef.current);
+      }, NOTE_COMMIT_IDLE_MS);
+    },
+    [commitNotes],
+  );
+
+  const removeNote = useCallback(
+    (id: string) => {
+      if (noteCommitTimerRef.current !== null) {
+        window.clearTimeout(noteCommitTimerRef.current);
+        noteCommitTimerRef.current = null;
+      }
+      const current = notesRef.current;
+      if (!current.some((note) => note.id === id)) return;
+      commitNotes(current.filter((note) => note.id !== id), t("status.noteRemoved"));
+    },
+    [commitNotes],
+  );
+
+  /**
+   * Das Notizwerkzeug: Der naechste Klick auf die Arbeitsflaeche setzt eine
+   * Notiz. Es schliesst aus, was sonst am Zeiger haengt - zwei Werkzeuge auf
+   * einem Klick waeren ein Ratespiel.
+   */
+  const toggleNoteTool = useCallback(() => {
+    setNoteMode((current) => {
+      const next = !current;
+      if (next) {
+        setNotesVisible(true);
+        setNotice(t("status.noteMode"));
+      } else {
+        setNotice("");
+      }
+      return next;
+    });
+  }, [setNotice]);
+
+  const toggleNotesVisible = useCallback(() => {
+    setNotesVisible((current) => {
+      const next = !current;
+      if (!next) setNoteMode(false);
+      setNotice(next ? t("status.notesShown") : t("status.notesHidden"));
+      return next;
+    });
+  }, [setNotice]);
 
   const removeEdgeTreatment = useCallback(async (optionId: string) => {
     if (!selectedShape) {
@@ -7221,18 +7357,22 @@ export function SketchForgeEditor({
     if (!projectChanged && incomingSerialized === projectShapesFingerprint(shapes)) {
       return;
     }
+    const incomingNotes = notesForHistoryIndex(initialHistory, initialHistoryIndex);
     const hydratedHistory = hydrateEditorHistoryState(
       incoming,
       initialHistory,
       initialHistoryIndex,
       normalizeWorkspaceSettings(initialWorkspace).historyLimit,
+      incomingNotes,
     );
     projectHydratingRef.current = true;
     shapesRef.current = incoming;
     selectedIdsRef.current = [];
+    notesRef.current = incomingNotes;
     historyRef.current = hydratedHistory.entries;
     historyIndexRef.current = hydratedHistory.index;
     setShapes(incoming);
+    setNotes(incomingNotes);
     setSelectedIds([]);
     setHistory(hydratedHistory.entries);
     setHistoryIndex(hydratedHistory.index);
@@ -7512,11 +7652,14 @@ export function SketchForgeEditor({
     const entry = currentHistory[nextIndex];
     const nextShapes = (entry?.shapes ?? []).map(canonicalizeShape);
     const nextSelection = (entry?.selectedIds ?? []).filter((id) => nextShapes.some((shape) => shape.id === id));
+    const nextNotes = normalizeNotes(entry?.notes);
     historyIndexRef.current = nextIndex;
     shapesRef.current = nextShapes;
     selectedIdsRef.current = nextSelection;
+    notesRef.current = nextNotes;
     setHistoryIndex(nextIndex);
     setShapes(nextShapes);
+    setNotes(nextNotes);
     setSelectedIds(nextSelection);
     syncProjectShapes(nextShapes);
     setNotice(modifierCancelled ? t("status.edgeCancelledUndo") : "Undo");
@@ -7538,11 +7681,14 @@ export function SketchForgeEditor({
     const entry = currentHistory[nextIndex];
     const nextShapes = (entry?.shapes ?? []).map(canonicalizeShape);
     const nextSelection = (entry?.selectedIds ?? []).filter((id) => nextShapes.some((shape) => shape.id === id));
+    const nextNotes = normalizeNotes(entry?.notes);
     historyIndexRef.current = nextIndex;
     shapesRef.current = nextShapes;
     selectedIdsRef.current = nextSelection;
+    notesRef.current = nextNotes;
     setHistoryIndex(nextIndex);
     setShapes(nextShapes);
+    setNotes(nextNotes);
     setSelectedIds(nextSelection);
     syncProjectShapes(nextShapes);
     setNotice(modifierCancelled ? t("status.edgeCancelledRedo") : "Redo");
@@ -9288,6 +9434,7 @@ export function SketchForgeEditor({
         createdAt: projectCreatedAt,
         modifiedAt: projectModifiedAt,
         shapes: shapesRef.current,
+        notes: notesRef.current,
         history: exportedHistory.entries,
         historyIndex: exportedHistory.index,
         assets: projectAssetsRef.current,
@@ -9600,6 +9747,13 @@ export function SketchForgeEditor({
       }
 
       if (event.key === "Escape") {
+        // Erst das Werkzeug ablegen, dann die Auswahl - wer ein Werkzeug in
+        // der Hand hat, meint mit Escape das Werkzeug.
+        if (noteMode) {
+          setNoteMode(false);
+          setNotice("");
+          return;
+        }
         setSelectedIds([]);
         setNotice(t("status.selectionCleared"));
         return;
@@ -9722,6 +9876,9 @@ export function SketchForgeEditor({
       } else if (key === "m") {
         event.preventDefault();
         toggleMirrorMode();
+      } else if (key === "n") {
+        event.preventDefault();
+        toggleNoteTool();
       }
     };
 
@@ -9731,6 +9888,8 @@ export function SketchForgeEditor({
     commitShapes,
     clearSketchMeasurement,
     copySelected,
+    noteMode,
+    toggleNoteTool,
     cutSelected,
     deleteSelected,
     deleteSelectedSketchEntity,
@@ -9763,6 +9922,11 @@ export function SketchForgeEditor({
   return (
     <div className="sketchforge-editor">
       <SecondaryToolbar
+        noteMode={noteMode}
+        notesVisible={notesVisible}
+        noteCount={notes.length}
+        onNoteTool={toggleNoteTool}
+        onToggleNotes={toggleNotesVisible}
         toolbarMode={toolbarMode}
         projectName={projectName}
         onProjectNameChange={onProjectNameChange}
@@ -9934,6 +10098,13 @@ export function SketchForgeEditor({
           canSeparateParts={canSeparateSelectedParts}
           onSeparateParts={separateSelectedParts}
           onUpdateShape={updateShape}
+          notes={notes}
+          notesVisible={notesVisible}
+          noteMode={noteMode}
+          onNoteAdd={addNote}
+          onNoteUpdate={updateNote}
+          onNoteRemove={removeNote}
+          onNoteModeChange={setNoteMode}
           onWorkspaceSettingsChange={updateProjectWorkspaceSettings}
           onWorkplaneModeChange={closeViewportWorkplaneMode}
           modifierActive={Boolean(edgeModifier)}
@@ -10209,6 +10380,11 @@ function SecondaryToolbar({
   onRedo,
   onSnap,
   onShowHidden,
+  noteMode,
+  notesVisible,
+  noteCount,
+  onNoteTool,
+  onToggleNotes,
   onToggleHidden,
   onUngroup,
   onUndo,
@@ -10277,6 +10453,11 @@ function SecondaryToolbar({
   onRedo: () => void;
   onSnap: () => void;
   onShowHidden: () => void;
+  noteMode: boolean;
+  notesVisible: boolean;
+  noteCount: number;
+  onNoteTool: () => void;
+  onToggleNotes: () => void;
   onToggleHidden: () => void;
   onUngroup: () => void;
   onUndo: () => void;
@@ -10654,6 +10835,20 @@ function SecondaryToolbar({
                 <Eye size={20} aria-hidden="true" />
                 <strong>{hiddenShapeCount === 0 ? t("visibility.nothingHidden") : t("visibility.showAllHidden", { count: hiddenShapeCount })}</strong>
               </button>
+              <button
+                className="visibility-dropdown-action"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={notesVisible}
+                disabled={noteCount === 0}
+                onClick={() => {
+                  setVisibilityOpen(false);
+                  onToggleNotes();
+                }}
+              >
+                {notesVisible ? <Eye size={20} aria-hidden="true" /> : <EyeOff size={20} aria-hidden="true" />}
+                <strong>{t("visibility.notes")}{noteCount > 0 ? ` (${noteCount})` : ""}</strong>
+              </button>
               <div className="visibility-dropdown-help">
                 <span>{t("visibility.eyeAgain")}</span>
                 <span aria-hidden="true">·</span>
@@ -10740,6 +10935,15 @@ function SecondaryToolbar({
       <div className="toolbar-section toolbar-actions-section">
         <div className="toolbar-section-label">{t("editor.group.manage")}</div>
         <div className="action-buttons">
+          <button
+            className={`action-icon-button ${noteMode ? "active" : ""}`}
+            aria-label={t("editor.tool.note")}
+            aria-pressed={noteMode}
+            title={t("editor.tool.note")}
+            onClick={onNoteTool}
+          >
+            <ToolbarNoteIcon />
+          </button>
           <button className="action-icon-button" aria-label={t("editor.import")} title={t("editor.import")} onClick={() => onTopPanel("import")}>
             <ToolbarImportIcon />
           </button>

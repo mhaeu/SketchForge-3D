@@ -228,6 +228,20 @@ export function ToolbarAlignToWorkplaneIcon(props: IconProps) {
 }
 
 /**
+ * Die Notiz: ein Zettel mit umgeschlagener Ecke und zwei Zeilen darauf. Die
+ * Ecke ist das, was ihn von jedem anderen Rechteck im Satz unterscheidet.
+ */
+export function ToolbarNoteIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" {...props}>
+      <path d="M11 10h17l9 9v19a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3V13a3 3 0 0 1 3-3Z" />
+      <path d="M28 10v9h9" />
+      <path d="M15 27h15M15 33h10" />
+    </svg>
+  );
+}
+
+/**
  * SVG-Zeichnung einlesen: ein Blatt mit einem Linienzug darauf und dem Pfeil
  * hinein. Gezeichnet statt aus der Bilderreihe, weil es dort kein Bildchen
  * dafuer gibt.
