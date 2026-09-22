@@ -1312,6 +1312,10 @@ export const MESSAGES_EN = {
   "thread.headPan": "Pan head",
   "thread.driveStar": "Star (pointed)",
   "thread.driveSpline": "Spline (12-point)",
+  "editor.tool.alignToWorkplane": "Align to workplane",
+  "status.unlockBeforeAlignWorkplane": "Unlock the selection before aligning it to the workplane",
+  "status.alignedToWorkplaneOne": "Laid the selection flat on the workplane",
+  "status.alignedToWorkplaneMany": "Laid {count} objects flat on the workplane",
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_EN;

@@ -212,3 +212,17 @@ export function ToolbarCenterOnWorkplaneIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * An der Arbeitsebene ausrichten: eine gekippte Ebene, und darauf liegt der
+ * Koerper flach - im Gegensatz zum Zentrieren, wo die Ebene waagerecht bleibt.
+ */
+export function ToolbarAlignToWorkplaneIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" {...props}>
+      <path d="M4 34 20 12h24L28 34Z" />
+      <path d="M17 27 25 17h11l-8 10Z" fill="currentColor" stroke="none" />
+      <path d="M24 44v-6M21 41l3 3 3-3" strokeLinecap="round" />
+    </svg>
+  );
+}

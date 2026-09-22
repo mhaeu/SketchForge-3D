@@ -42,6 +42,7 @@ import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { useLanguage } from "@/lib/useLanguage";
 import {
   ToolbarAlignIcon,
+  ToolbarAlignToWorkplaneIcon,
   ToolbarCenterOnWorkplaneIcon,
   ToolbarChamferIcon,
   ToolbarCaretDownIcon,
@@ -138,6 +139,7 @@ import {
   normalizePlacementWorkplane,
   placementPatchForNewShape,
   placementWorkplaneCoordinates,
+  placementWorkplanePoint,
   placementWorkplaneFromSurface,
   placementWorkplaneIsBase,
   translationToWorkplane,
@@ -8009,6 +8011,48 @@ export function SketchForgeEditor({
     );
   }, [commitShapes, hasSelection, selectedIds, shapes]);
 
+  /**
+   * Legt die Auswahl flach auf die aktuelle Arbeitsebene und schiebt sie in
+   * deren Mitte. Die Drehgriffe treffen einen Winkel selten genau; die Ebene
+   * kennt ihn dagegen exakt, denn sie wurde von einer Flaeche abgenommen.
+   *
+   * Ein einzelnes Objekt landet genau im Ursprung der Ebene. Mehrere behalten
+   * ihre Anordnung zueinander - gerechnet wird sie in den Koordinaten der
+   * Ebene -, und ihre Mitte kommt in den Ursprung.
+   */
+  const alignSelectionToWorkplane = useCallback(() => {
+    if (!hasSelection) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    const selected = new Set(selectedIds);
+    const movable = shapes.filter((shape) => selected.has(shape.id) && !shape.locked && !isReferencePoint(shape));
+    if (movable.length === 0) {
+      setNotice(t("status.unlockBeforeAlignWorkplane"));
+      return;
+    }
+    const workplane = placementWorkplaneRef.current;
+    const places = movable.map((shape) => placementWorkplaneCoordinates(workplane, {
+      x: shape.x,
+      y: (shape.elevation ?? 0) + shape.height / 2,
+      z: shape.z,
+    }));
+    const centreX = places.reduce((total, place) => total + place.x, 0) / places.length;
+    const centreZ = places.reduce((total, place) => total + place.z, 0) / places.length;
+    const patches = new Map(movable.map((shape, index) => [
+      shape.id,
+      placementPatchForNewShape(shape, workplane, placementWorkplanePoint(workplane, places[index].x - centreX, places[index].z - centreZ)),
+    ]));
+    commitShapes(
+      shapes.map((shape) => {
+        const patch = patches.get(shape.id);
+        return patch ? canonicalizeShape({ ...shape, ...patch }) : shape;
+      }),
+      selectedIds,
+      movable.length === 1 ? t("status.alignedToWorkplaneOne") : t("status.alignedToWorkplaneMany", { count: movable.length }),
+    );
+  }, [commitShapes, hasSelection, selectedIds, shapes]);
+
   const activateWorkplaneTool = useCallback(() => {
     setWorkplaneMode((active) => {
       const next = !active;
@@ -9530,6 +9574,7 @@ export function SketchForgeEditor({
         onDuplicate={duplicateSelected}
         onDropToWorkplane={dropSelectedToWorkplane}
         onCenterOnWorkplane={centerSelectionOnWorkplane}
+        onAlignToWorkplane={alignSelectionToWorkplane}
         onGroup={groupSelected}
         onIntersect={intersectSelected}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
@@ -9885,6 +9930,7 @@ function SecondaryToolbar({
   onDuplicate,
   onDropToWorkplane,
   onCenterOnWorkplane,
+  onAlignToWorkplane,
   onGroup,
   onIntersect,
   onFillet,
@@ -9951,6 +9997,7 @@ function SecondaryToolbar({
   onDuplicate: () => void;
   onDropToWorkplane: () => void;
   onCenterOnWorkplane: () => void;
+  onAlignToWorkplane: () => void;
   onGroup: () => void;
   onIntersect: () => void;
   onFillet: () => void;
@@ -10136,6 +10183,7 @@ function SecondaryToolbar({
   const arrangeTools = [
     { label: t("editor.tool.dropToWorkplane"), icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
     { label: t("editor.tool.centerOnWorkplane"), icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
+    { label: t("editor.tool.alignToWorkplane"), icon: ToolbarAlignToWorkplaneIcon, action: onAlignToWorkplane, enabled: hasSelection },
   ];
   const renderToolButton = (tool: (typeof leftTools)[number] | (typeof visibilityTools)[number] | (typeof combineTools)[number] | (typeof modifyTools)[number] | (typeof arrangeTools)[number]) => {
     const { icon: Icon, action, enabled, label } = tool;
