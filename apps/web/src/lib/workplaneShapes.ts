@@ -52,6 +52,9 @@ export function shapeWithParametricSource(shape: WorkplaneShape): WorkplaneShape
     taperTopDepth: source.taperTopDepth,
     taperBottomWidth: source.taperBottomWidth,
     taperBottomDepth: source.taperBottomDepth,
+    extrudeTwist: source.extrudeTwist,
+    extrudeTopOffsetX: source.extrudeTopOffsetX,
+    extrudeTopOffsetZ: source.extrudeTopOffsetZ,
   };
 }
 
@@ -164,6 +167,67 @@ export function shapeTaperScaleAt(shape: WorkplaneShape, normalizedHeight: numbe
   const top = axis === "width" ? taper.topWidth : taper.topDepth;
   const t = Math.min(1, Math.max(0, Number.isFinite(normalizedHeight) ? normalizedHeight : 0));
   return (bottom + (top - bottom) * t) / Math.max(0.01, base);
+}
+
+const DEGREES_TO_RADIANS = Math.PI / 180;
+const EXTRUDE_TWIST_MAX = 720;
+const EXTRUDE_OFFSET_MAX = 80;
+
+/**
+ * Drall und Versatz gelten an denselben Koerpern wie die Verjuengung: Das
+ * Zahnprofil eines Rades, die Wendel eines Gewindes, die Windung einer Feder,
+ * die eigene Deckflaeche der Pyramide und die aufgedruckte Teilung des Lineals
+ * haben alle ihr eigenes "oben", mit dem sich das hier schlagen wuerde.
+ */
+export function shapeSupportsExtrudeDeform(kind: WorkplaneShape["kind"]) {
+  return shapeSupportsTaper(kind);
+}
+
+export function shapeHasExtrudeDeform(shape: WorkplaneShape) {
+  if (!shapeSupportsExtrudeDeform(shape.kind)) return false;
+  return Math.abs(shape.extrudeTwist ?? 0) > 1e-6
+    || Math.abs(shape.extrudeTopOffsetX ?? 0) > 1e-6
+    || Math.abs(shape.extrudeTopOffsetZ ?? 0) > 1e-6;
+}
+
+/**
+ * Beide Verformungen brauchen denselben Umbau Punkt fuer Punkt - wer nur
+ * wissen will, ob er sich die Muehe machen muss, fragt einmal hier.
+ */
+export function shapeHasShapeDeform(shape: WorkplaneShape) {
+  return shapeHasTaper(shape) || shapeHasExtrudeDeform(shape);
+}
+
+/**
+ * Drall und Versatz wachsen von null an der Grundflaeche bis zum vollen Mass
+ * an der Deckflaeche, genau wie Breite und Tiefe der Verjuengung - ein Punkt
+ * auf halber Hoehe dreht und schiebt sich also um die Haelfte.
+ */
+export function shapeExtrudeDeformAt(shape: WorkplaneShape, normalizedHeight: number) {
+  const t = Math.min(1, Math.max(0, Number.isFinite(normalizedHeight) ? normalizedHeight : 0));
+  return {
+    twistRadians: DEGREES_TO_RADIANS * (shape.extrudeTwist ?? 0) * t,
+    offsetX: (shape.extrudeTopOffsetX ?? 0) * t,
+    offsetZ: (shape.extrudeTopOffsetZ ?? 0) * t,
+  };
+}
+
+/**
+ * Setzen, wie es das Merkmalsfeld tut - dieselben Grenzen wie dessen drei
+ * Schieberegler. Nach dem Vorbild von `shapeTaperPatch`: Drall und Versatz
+ * gehoeren dem einzelnen Koerper und stehen in keiner Formvorgabe.
+ */
+export function shapeExtrudeDeformPatch(
+  shape: WorkplaneShape,
+  requested: { twist?: number; offsetX?: number; offsetZ?: number },
+): Partial<WorkplaneShape> {
+  if (!shapeSupportsExtrudeDeform(shape.kind)) return {};
+  const patch: Partial<WorkplaneShape> = {};
+  const limit = (value: number, bound: number) => Math.min(bound, Math.max(-bound, value));
+  if (requested.twist !== undefined) patch.extrudeTwist = limit(requested.twist, EXTRUDE_TWIST_MAX);
+  if (requested.offsetX !== undefined) patch.extrudeTopOffsetX = limit(requested.offsetX, EXTRUDE_OFFSET_MAX);
+  if (requested.offsetZ !== undefined) patch.extrudeTopOffsetZ = limit(requested.offsetZ, EXTRUDE_OFFSET_MAX);
+  return patch;
 }
 
 export function meshYawDegrees(shape: WorkplaneShape) {
@@ -457,6 +521,9 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.taperBottomDepth === b.taperBottomDepth &&
     a.taperTopScale === b.taperTopScale &&
     a.taperBottomScale === b.taperBottomScale &&
+    a.extrudeTwist === b.extrudeTwist &&
+    a.extrudeTopOffsetX === b.extrudeTopOffsetX &&
+    a.extrudeTopOffsetZ === b.extrudeTopOffsetZ &&
     a.teeth === b.teeth &&
     a.toothSize === b.toothSize &&
     a.toothWidth === b.toothWidth &&

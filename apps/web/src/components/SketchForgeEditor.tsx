@@ -98,6 +98,10 @@ import {
   serializeShapesForSync,
   shapeEdgeTreatmentLimit,
   shapeDepth,
+  shapeExtrudeDeformAt,
+  shapeExtrudeDeformPatch,
+  shapeHasExtrudeDeform,
+  shapeHasShapeDeform,
   shapeHasTaper,
   shapeTransformShouldRemainEditable,
   shapeTaperScaleAt,
@@ -1467,6 +1471,9 @@ function shapeFromCadMesh(
     taperBottomDepth: undefined,
     taperTopScale: undefined,
     taperBottomScale: undefined,
+    extrudeTwist: undefined,
+    extrudeTopOffsetX: undefined,
+    extrudeTopOffsetZ: undefined,
     importedMesh: {
       positions: flattenedPositions,
       normals: flattenedNormals.length === flattenedPositions.length ? flattenedNormals : undefined,
@@ -1845,9 +1852,10 @@ async function restoreEdgeTreatmentInShape(shape: WorkplaneShape, path: number[]
 function transformMesh(mesh: MeshData, shape: WorkplaneShape): MeshData {
   const centerY = shape.height / 2;
   const tapered = shapeHasTaper(shape);
+  const deformed = shapeHasExtrudeDeform(shape);
   let minLocalY = 0;
   let maxLocalY = 1;
-  if (tapered && mesh.vertices.length) {
+  if ((tapered || deformed) && mesh.vertices.length) {
     minLocalY = Number.POSITIVE_INFINITY;
     maxLocalY = Number.NEGATIVE_INFINITY;
     mesh.vertices.forEach((vertex) => {
@@ -1874,7 +1882,18 @@ function transformMesh(mesh: MeshData, shape: WorkplaneShape): MeshData {
       const normalizedHeight = (y - minLocalY) / taperHeight;
       const widthScale = tapered ? shapeTaperScaleAt(shape, normalizedHeight, "width") : 1;
       const depthScale = tapered ? shapeTaperScaleAt(shape, normalizedHeight, "depth") : 1;
-      const vertex = new THREE.Vector3(x * widthScale * mirrorX, (y - centerY) * mirrorY, z * depthScale * mirrorZ).applyMatrix4(matrix);
+      let localX = x * widthScale;
+      let localZ = z * depthScale;
+      if (deformed) {
+        const deform = shapeExtrudeDeformAt(shape, normalizedHeight);
+        const cos = Math.cos(deform.twistRadians);
+        const sin = Math.sin(deform.twistRadians);
+        const twistedX = localX * cos - localZ * sin;
+        const twistedZ = localX * sin + localZ * cos;
+        localX = twistedX + deform.offsetX;
+        localZ = twistedZ + deform.offsetZ;
+      }
+      const vertex = new THREE.Vector3(localX * mirrorX, (y - centerY) * mirrorY, localZ * mirrorZ).applyMatrix4(matrix);
       return [vertex.x + shape.x, vertex.y + (shape.elevation ?? 0) + centerY, vertex.z + shape.z] as Vec3;
     }),
     faces: reversedWinding ? mesh.faces.map(([a, b, c]) => [a, c, b] as [number, number, number]) : mesh.faces,
@@ -2461,10 +2480,11 @@ function shapeHasTransformToBake(shape: WorkplaneShape) {
 }
 
 function cadModifierPrimitiveForShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
-  // Taper is a non-affine deformation, so an analytic primitive or stored BREP
-  // cannot represent the final visible surface. Send the baked mesh to the CAD
-  // worker instead so edge selection/treatment matches the viewport exactly.
-  if (shapeHasTaper(shape)) return null;
+  // Taper, twist and lean are all non-affine deformations, so an analytic
+  // primitive or stored BREP cannot represent the final visible surface.
+  // Send the baked mesh to the CAD worker instead so edge selection and
+  // treatment match the viewport exactly.
+  if (shapeHasShapeDeform(shape)) return null;
   return cadModifierPrimitiveForBakedShape(shape)
     // Round kinds go analytic unconditionally: sending their tessellation
     // instead is what makes filleting them produce invalid geometry.
@@ -2569,6 +2589,9 @@ function bakeShapeTransformIntoMesh(shape: WorkplaneShape, force = false): Workp
     taperBottomDepth: undefined,
     taperTopScale: undefined,
     taperBottomScale: undefined,
+    extrudeTwist: undefined,
+    extrudeTopOffsetX: undefined,
+    extrudeTopOffsetZ: undefined,
     // The baked mesh has the rotation permanently baked into its vertex
     // positions and is no longer an axis-aligned parametric thread. Clearing
     // threadParams stops canonicalizeShape from regenerating an unrotated
@@ -7842,7 +7865,7 @@ export function SketchForgeEditor({
     invalidateCadModifierSession();
     const appliedEdgeTreatmentCount = edgeTreatmentFeatureCount(selectedShape);
     const hasAppliedEdgeTreatment = Boolean(selectedShape.importedMesh && selectedShape.edgeTreatments?.length);
-    const sourceParts = (selectedShape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasTaper(selectedShape)
+    const sourceParts = (selectedShape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasShapeDeform(selectedShape)
       ? restoreGroupedChildren(selectedShape)
       : [selectedShape]).flatMap(cadModifierSourceParts);
     const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((shape) => {
@@ -7852,7 +7875,7 @@ export function SketchForgeEditor({
         Math.abs(shapeDepth(shape) - (frame?.depth ?? shapeDepth(shape))) > 1e-6 ||
         Math.abs(shape.height - (frame?.height ?? shape.height)) > 1e-6
       );
-      if (shapeHasTaper(shape)) return { shape, mesh: meshForShape(shape) };
+      if (shapeHasShapeDeform(shape)) return { shape, mesh: meshForShape(shape) };
       const primitive = cadModifierPrimitiveForShape(shape);
       if (primitive) return { shape, primitive };
       return shape.cadBrep && frame && !preserveNeedsRetessellation
@@ -7920,7 +7943,7 @@ export function SketchForgeEditor({
     }
     const appliedEdgeTreatmentCount = edgeTreatmentFeatureCount(shape);
     const hasAppliedEdgeTreatment = Boolean(shape.importedMesh && shape.edgeTreatments?.length);
-    const sourceParts = (shape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasTaper(shape)
+    const sourceParts = (shape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasShapeDeform(shape)
       ? restoreGroupedChildren(shape)
       : [shape]).flatMap(cadModifierSourceParts);
     const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((partShape) => {
@@ -7930,7 +7953,7 @@ export function SketchForgeEditor({
         Math.abs(shapeDepth(partShape) - (frame?.depth ?? shapeDepth(partShape))) > 1e-6 ||
         Math.abs(partShape.height - (frame?.height ?? partShape.height)) > 1e-6
       );
-      if (shapeHasTaper(partShape)) return { shape: partShape, mesh: meshForShape(partShape) };
+      if (shapeHasShapeDeform(partShape)) return { shape: partShape, mesh: meshForShape(partShape) };
       const primitive = cadModifierPrimitiveForShape(partShape);
       if (primitive) return { shape: partShape, primitive };
       return partShape.cadBrep && frame && !preserveNeedsRetessellation

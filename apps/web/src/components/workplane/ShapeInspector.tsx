@@ -25,7 +25,7 @@ import {
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
-import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
@@ -1140,6 +1140,41 @@ export function ShapeInspector({
     : [];
   const taper = shapeTaperDimensions(shape);
   const taperDimensionMax = workspace.shapeCustomizations[shape.kind]?.maxDimension ?? 480;
+  /*
+   * Drall und Versatz gelten an denselben Koerpern wie die Verjuengung - ein
+   * Zahnprofil, eine Gewindewendel, eine Federwindung und die Teilung eines
+   * Lineals haben ihr eigenes "oben", mit dem sich das hier schlagen wuerde.
+   */
+  const supportsDeform = shapeSupportsExtrudeDeform(shape.kind) && shape.kind !== "reference";
+  const twistProperties: ShapePropertyConfig[] = supportsDeform ? [
+    {
+      id: "extrudeTwist",
+      label: t("prop.twist"),
+      value: shape.extrudeTwist ?? 0,
+      min: -720,
+      max: 720,
+      step: 1,
+      onChange: (extrudeTwist) => onUpdate({ extrudeTwist }),
+    },
+    {
+      id: "extrudeTopOffsetX",
+      label: t("prop.widthOffset"),
+      value: shape.extrudeTopOffsetX ?? 0,
+      min: -80,
+      max: 80,
+      step: 0.5,
+      onChange: (extrudeTopOffsetX) => onUpdate({ extrudeTopOffsetX }),
+    },
+    {
+      id: "extrudeTopOffsetZ",
+      label: t("prop.lengthOffset"),
+      value: shape.extrudeTopOffsetZ ?? 0,
+      min: -80,
+      max: 80,
+      step: 0.5,
+      onChange: (extrudeTopOffsetZ) => onUpdate({ extrudeTopOffsetZ }),
+    },
+  ] : [];
   const taperProperties: ShapePropertyConfig[] = shape.kind === "gear" ? [] : [
     {
       id: "topLength",
@@ -1210,6 +1245,7 @@ export function ShapeInspector({
   const [positionOpen, setPositionOpen] = useState(true);
   const [crossOpen, setCrossOpen] = useState(true);
   const [taperOpen, setTaperOpen] = useState(false);
+  const [twistOpen, setTwistOpen] = useState(false);
   const [gearTeethOpen, setGearTeethOpen] = useState(true);
   const [gearHelixOpen, setGearHelixOpen] = useState(true);
   const [colorOpen, setColorOpen] = useState(false);
@@ -1473,6 +1509,25 @@ export function ShapeInspector({
           {taperOpen ? (
             <div className="property-list" id={`taper-${shape.id}`}>
               <ShapePropertyRows properties={taperProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {supportsDeform ? (
+        <div className={`property-card ${twistOpen ? "" : "collapsed"}`}>
+          <button
+            className="property-card-header"
+            type="button"
+            aria-expanded={twistOpen}
+            aria-controls={`twist-${shape.id}`}
+            onClick={() => setTwistOpen((open) => !open)}
+          >
+            <span>{t("inspector.twist")}</span>
+            <ChevronUp className={twistOpen ? "" : "collapsed"} size={25} strokeWidth={2.8} />
+          </button>
+          {twistOpen ? (
+            <div className="property-list" id={`twist-${shape.id}`}>
+              <ShapePropertyRows properties={twistProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
             </div>
           ) : null}
         </div>

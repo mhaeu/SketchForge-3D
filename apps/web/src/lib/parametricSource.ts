@@ -63,6 +63,9 @@ export function parametricSourceForBake(shape: WorkplaneShape): ParametricSource
     taperTopDepth: shape.taperTopDepth,
     taperBottomWidth: shape.taperBottomWidth,
     taperBottomDepth: shape.taperBottomDepth,
+    extrudeTwist: shape.extrudeTwist,
+    extrudeTopOffsetX: shape.extrudeTopOffsetX,
+    extrudeTopOffsetZ: shape.extrudeTopOffsetZ,
   };
 }
 
@@ -117,6 +120,9 @@ export function parametricRebuildPlan(
     taperTopDepth: source.taperTopDepth,
     taperBottomWidth: source.taperBottomWidth,
     taperBottomDepth: source.taperBottomDepth,
+    extrudeTwist: source.extrudeTwist,
+    extrudeTopOffsetX: source.extrudeTopOffsetX,
+    extrudeTopOffsetZ: source.extrudeTopOffsetZ,
     importedMesh: undefined,
     parametricSource: undefined,
     rotation: 0,

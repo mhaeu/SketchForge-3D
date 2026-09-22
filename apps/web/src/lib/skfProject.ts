@@ -932,6 +932,17 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
       }
     }
   }
+  // Drall und Versatz der Deckflaeche: dieselben Grenzen wie die drei
+  // Schieberegler im Merkmalsfeld.
+  if (definition.extrudeTwist !== undefined) {
+    const twist = finiteNumber(definition.extrudeTwist, `${label}.extrudeTwist`);
+    if (Math.abs(twist) > 720) throw new Error(`${label}.extrudeTwist is outside the supported range`);
+  }
+  (["extrudeTopOffsetX", "extrudeTopOffsetZ"] as const).forEach((field) => {
+    if (definition[field] === undefined) return;
+    const offset = finiteNumber(definition[field], `${label}.${field}`);
+    if (Math.abs(offset) > 80) throw new Error(`${label}.${field} is outside the supported range`);
+  });
   if (kind === "pyramid") {
     // Null heisst Spitze, alles darueber ist die Deckflaeche eines Stumpfs.
     (["topWidth", "topDepth"] as const).forEach((field) => {

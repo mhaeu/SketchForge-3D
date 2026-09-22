@@ -253,6 +253,9 @@ export type ParametricSource = {
   taperTopDepth?: number;
   taperBottomWidth?: number;
   taperBottomDepth?: number;
+  extrudeTwist?: number;
+  extrudeTopOffsetX?: number;
+  extrudeTopOffsetZ?: number;
 };
 
 export type CadPrimitiveFrame = {
@@ -321,6 +324,12 @@ export type WorkplaneShape = {
   /** Legacy local-dev taper fields kept for compatibility with in-progress projects. */
   taperTopScale?: number;
   taperBottomScale?: number;
+  /** Dreht die Deckflaeche gegen die Grundflaeche, in Grad - der Drall. */
+  extrudeTwist?: number;
+  /** Schiebt die Deckflaeche entlang der eigenen X-Achse, in mm. */
+  extrudeTopOffsetX?: number;
+  /** Schiebt die Deckflaeche entlang der eigenen Z-Achse, in mm. */
+  extrudeTopOffsetZ?: number;
   teeth?: number;
   toothSize?: number;
   toothWidth?: number;
