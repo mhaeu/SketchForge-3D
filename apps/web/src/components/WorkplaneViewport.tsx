@@ -414,12 +414,19 @@ type DragState = {
 
 type MoveDimensionSession = {
   active: boolean;
-  originX: number;
-  originZ: number;
-  planeY: number;
+  /** Der Punkt, an dem die Bemassung ansetzt - auf der Arbeitsebene. */
+  origin: PlacementPoint;
+  /**
+   * Die beiden Achsen der Arbeitsebene, in Weltkoordinaten. Auf der
+   * Hauptebene sind es die Weltachsen; auf einer gekippten Flaeche misst die
+   * Anzeige damit in dieser Flaeche statt daneben.
+   */
+  xAxis: PlacementPoint;
+  zAxis: PlacementPoint;
+  /** Die Strecke laengs `xAxis` beziehungsweise `zAxis`. */
   deltaX: number;
   deltaZ: number;
-  items: Array<Pick<DragItem, "id" | "startX" | "startZ">>;
+  items: Array<Pick<DragItem, "id" | "startX" | "startZ" | "startElevation">>;
 };
 
 type MoveDimensionOverlayState = MoveDimensionOverlayData & {
@@ -979,9 +986,9 @@ function syncMoveDimensionOverlay(
   const rect = state.renderer.domElement.getBoundingClientRect();
   const projected = session
     ? createMoveDimensionOverlay({
-        originX: session.originX,
-        originZ: session.originZ,
-        planeY: session.planeY,
+        origin: session.origin,
+        xAxis: session.xAxis,
+        zAxis: session.zAxis,
         deltaX: session.deltaX,
         deltaZ: session.deltaZ,
         accuracy,
@@ -1005,7 +1012,12 @@ function syncMoveDimensionWorldLines(
 ) {
   const layer = state.moveDimensionLayer;
   const signature = session
-    ? [session.originX, session.originZ, session.planeY, session.deltaX, session.deltaZ, theme].join(":")
+    ? [
+      session.origin.x, session.origin.y, session.origin.z,
+      session.xAxis.x, session.xAxis.y, session.xAxis.z,
+      session.zAxis.x, session.zAxis.y, session.zAxis.z,
+      session.deltaX, session.deltaZ, theme,
+    ].join(":")
     : "";
   if (layer.userData.moveDimensionSignature === signature) {
     return;
@@ -1017,11 +1029,12 @@ function syncMoveDimensionWorldLines(
     return;
   }
 
-  const y = session.planeY;
-  const origin = new THREE.Vector3(session.originX, y, session.originZ);
-  const xEnd = new THREE.Vector3(session.originX + session.deltaX, y, session.originZ);
-  const zEnd = new THREE.Vector3(session.originX, y, session.originZ + session.deltaZ);
-  const current = new THREE.Vector3(session.originX + session.deltaX, y, session.originZ + session.deltaZ);
+  const origin = new THREE.Vector3(session.origin.x, session.origin.y, session.origin.z);
+  const xAxis = new THREE.Vector3(session.xAxis.x, session.xAxis.y, session.xAxis.z);
+  const zAxis = new THREE.Vector3(session.zAxis.x, session.zAxis.y, session.zAxis.z);
+  const xEnd = origin.clone().addScaledVector(xAxis, session.deltaX);
+  const zEnd = origin.clone().addScaledVector(zAxis, session.deltaZ);
+  const current = xEnd.clone().addScaledVector(zAxis, session.deltaZ);
   const solidColor = theme === "dark" ? "#f1f8fc" : "#111a21";
   const guideColor = theme === "dark" ? "#b8c9d2" : "#65737c";
   const solidPoints: number[] = [];
@@ -1055,8 +1068,8 @@ function syncMoveDimensionWorldLines(
     setObjectRenderLayer(lines, RENDER_LAYER_HELPERS);
     layer.add(lines);
   };
-  const addArrow = (endpoint: THREE.Vector3, axisX: number, axisZ: number, movement: number) => {
-    const direction = new THREE.Vector3(axisX * Math.sign(movement), 0, axisZ * Math.sign(movement));
+  const addArrow = (endpoint: THREE.Vector3, axis: THREE.Vector3, movement: number) => {
+    const direction = axis.clone().multiplyScalar(Math.sign(movement));
     const arrowLength = Math.min(1.1, Math.max(0.26, Math.abs(movement) * 0.5));
     const arrowWidth = arrowLength * 0.72;
     const base = endpoint.clone().addScaledVector(direction, -arrowLength);
@@ -1088,17 +1101,17 @@ function syncMoveDimensionWorldLines(
 
   if (Math.abs(session.deltaX) >= 1e-9) {
     const overrun = Math.min(2, Math.max(0.5, Math.abs(session.deltaX) * 0.15));
-    const start = origin.clone().add(new THREE.Vector3(-Math.sign(session.deltaX) * overrun, 0, 0));
+    const start = origin.clone().addScaledVector(xAxis, -Math.sign(session.deltaX) * overrun);
     addSegment(solidPoints, start, xEnd);
     addSegment(guidePoints, xEnd, current);
-    addArrow(xEnd, 1, 0, session.deltaX);
+    addArrow(xEnd, xAxis, session.deltaX);
   }
   if (Math.abs(session.deltaZ) >= 1e-9) {
     const overrun = Math.min(2, Math.max(0.5, Math.abs(session.deltaZ) * 0.15));
-    const start = origin.clone().add(new THREE.Vector3(0, 0, -Math.sign(session.deltaZ) * overrun));
+    const start = origin.clone().addScaledVector(zAxis, -Math.sign(session.deltaZ) * overrun);
     addSegment(solidPoints, start, zEnd);
     addSegment(guidePoints, zEnd, current);
-    addArrow(zEnd, 0, 1, session.deltaZ);
+    addArrow(zEnd, zAxis, session.deltaZ);
   }
 
   addWideSegments(solidPoints, solidColor, 1.45, 1, 1001);
@@ -2461,15 +2474,36 @@ function selectionFrameCorners(frame: SelectionFrame) {
   return corners;
 }
 
-function moveDimensionAnchorForCamera(state: ThreeState, frame: SelectionFrame) {
-  const planeY = WORKPLANE_LINE_ELEVATION + 0.04;
+/**
+ * Die Ecke, an der die Bemassung ansetzt: die linke sichtbare des Grundrisses,
+ * fallen gelassen auf die Arbeitsebene, die gerade gilt. Auf der Hauptebene
+ * ist das wie bisher die Grundflaeche; auf einer gekippten Flaeche liegt die
+ * Bemassung damit in dieser Flaeche statt darunter im Raster.
+ */
+/**
+ * Wie weit ein Wert laengs einer Achse wandern darf, bis er eine Grenze
+ * reisst. Eine Achse, die in diese Richtung gar nicht zeigt, setzt keine
+ * Grenze - sonst waere jede Bewegung gesperrt, sobald eine Komponente null ist.
+ */
+function axisTravelLimits(start: number, axisComponent: number, half: number) {
+  if (Math.abs(axisComponent) < 1e-9) return { min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY };
+  const lower = (-half - start) / axisComponent;
+  const upper = (half - start) / axisComponent;
+  return { min: Math.min(lower, upper), max: Math.max(lower, upper) };
+}
+
+function moveDimensionAnchorForCamera(state: ThreeState, frame: SelectionFrame, workplane: PlacementWorkplane) {
+  const planeOrigin = new THREE.Vector3(workplane.origin.x, workplane.origin.y, workplane.origin.z);
+  const planeNormal = new THREE.Vector3(workplane.normal.x, workplane.normal.y, workplane.normal.z).normalize();
+  const lift = WORKPLANE_LINE_ELEVATION + 0.04;
   const footprint = [
     framePoint(frame, frame.min.x, frame.min.y, frame.max.z),
     framePoint(frame, frame.max.x, frame.min.y, frame.max.z),
     framePoint(frame, frame.max.x, frame.min.y, frame.min.z),
     framePoint(frame, frame.min.x, frame.min.y, frame.min.z),
   ].map((corner) => {
-    const groundCorner = new THREE.Vector3(corner.x, planeY, corner.z);
+    const above = corner.clone().sub(planeOrigin).dot(planeNormal);
+    const groundCorner = corner.clone().addScaledVector(planeNormal, lift - above);
     return { world: groundCorner, screen: projectToScreen(groundCorner, state) };
   });
 
@@ -3571,11 +3605,22 @@ export function WorkplaneViewport({
       }
 
       const workspaceNow = workspaceRef.current;
-      const starts = session.items.map((item) => axis === "x" ? item.startX : item.startZ);
-      const workspaceExtent = axis === "x" ? workspaceNow.width : workspaceNow.depth;
-      const minimumDelta = Math.max(...starts.map((start) => -workspaceExtent / 2 + 6 - start));
-      const maximumDelta = Math.min(...starts.map((start) => workspaceExtent / 2 - 6 - start));
-      const nextValue = clamp(value, minimumDelta, maximumDelta);
+      const travelAxis = axis === "x" ? session.xAxis : session.zAxis;
+      // Wie weit man laengs dieser Achse gehen darf, ohne dass ein Teil die
+      // Platte verlaesst. Auf der Hauptebene laeuft eine Achse in genau eine
+      // Richtung, dann ist das die alte Rechnung; eine schraege Achse bewegt
+      // beide Richtungen zugleich, also zaehlen beide Grenzen.
+      const limits = session.items.reduce((bounds, item) => {
+        const perAxis = [
+          axisTravelLimits(item.startX, travelAxis.x, workspaceNow.width / 2 - 6),
+          axisTravelLimits(item.startZ, travelAxis.z, workspaceNow.depth / 2 - 6),
+        ];
+        return perAxis.reduce((inner, limit) => ({
+          min: Math.max(inner.min, limit.min),
+          max: Math.min(inner.max, limit.max),
+        }), bounds);
+      }, { min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY });
+      const nextValue = clamp(value, Math.min(limits.min, 0), Math.max(limits.max, 0));
       if (axis === "x") {
         session.deltaX = nextValue;
       } else {
@@ -3584,10 +3629,12 @@ export function WorkplaneViewport({
 
       onInteractionActiveChange?.(true);
       session.items.forEach((item) => {
-        onUpdateShape(item.id, {
-          x: item.startX + session.deltaX,
-          z: item.startZ + session.deltaZ,
-        });
+        const moved = {
+          x: item.startX + session.xAxis.x * session.deltaX + session.zAxis.x * session.deltaZ,
+          y: item.startElevation + session.xAxis.y * session.deltaX + session.zAxis.y * session.deltaZ,
+          z: item.startZ + session.xAxis.z * session.deltaX + session.zAxis.z * session.deltaZ,
+        };
+        onUpdateShape(item.id, { x: moved.x, z: moved.z, elevation: moved.y });
       });
       onInteractionActiveChange?.(false);
       if (threeRef.current) {
@@ -5845,22 +5892,19 @@ export function WorkplaneViewport({
         primaryStartZ: shape.z,
         items,
       };
-      const usesWorldHorizontalAxes = Math.abs(activeWorkplane.normal.y - 1) < 1e-6
-        && Math.abs(activeWorkplane.xAxis.x - 1) < 1e-6
-        && Math.abs(activeWorkplane.zAxis.z - 1) < 1e-6;
-      if (moveDimensionsEnabledRef.current && usesWorldHorizontalAxes) {
+      if (moveDimensionsEnabledRef.current) {
         const dragFrame = selectionFrameForShapes(shapesRef.current, items.map((item) => item.id));
         const moveDimensionAnchor = dragFrame
-          ? moveDimensionAnchorForCamera(state, dragFrame)
+          ? moveDimensionAnchorForCamera(state, dragFrame, activeWorkplane)
           : new THREE.Vector3(shape.x, WORKPLANE_LINE_ELEVATION + 0.04, shape.z);
         moveDimensionSessionRef.current = {
           active: true,
-          originX: moveDimensionAnchor.x,
-          originZ: moveDimensionAnchor.z,
-          planeY: moveDimensionAnchor.y,
+          origin: { x: moveDimensionAnchor.x, y: moveDimensionAnchor.y, z: moveDimensionAnchor.z },
+          xAxis: { ...activeWorkplane.xAxis },
+          zAxis: { ...activeWorkplane.zAxis },
           deltaX: 0,
           deltaZ: 0,
-          items: items.map(({ id: itemId, startX, startZ }) => ({ id: itemId, startX, startZ })),
+          items: items.map(({ id: itemId, startX, startZ, startElevation }) => ({ id: itemId, startX, startZ, startElevation })),
         };
       }
       state.needsRender = true;
@@ -5976,8 +6020,13 @@ export function WorkplaneViewport({
       const deltaZ = point.z - drag.startPoint.z;
       const moveDimensionSession = moveDimensionSessionRef.current;
       if (moveDimensionSession) {
-        moveDimensionSession.deltaX = deltaX;
-        moveDimensionSession.deltaZ = deltaZ;
+        // Gemessen wird laengs der Ebenenachsen. Auf der Hauptebene sind das
+        // die Weltachsen, dort kommt genau `deltaX` und `deltaZ` heraus.
+        const travelled = new THREE.Vector3(deltaX, deltaY, deltaZ);
+        const sessionXAxis = moveDimensionSession.xAxis;
+        const sessionZAxis = moveDimensionSession.zAxis;
+        moveDimensionSession.deltaX = travelled.dot(new THREE.Vector3(sessionXAxis.x, sessionXAxis.y, sessionXAxis.z));
+        moveDimensionSession.deltaZ = travelled.dot(new THREE.Vector3(sessionZAxis.x, sessionZAxis.y, sessionZAxis.z));
         moveDimensionSession.active = true;
       }
 

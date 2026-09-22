@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createMoveDimensionOverlay, formatMoveDimension } from "@/lib/moveDimensionLines";
+import { createMoveDimensionOverlay, formatMoveDimension, pointAlongAxis } from "@/lib/moveDimensionLines";
+import { placementWorkplaneFromSurface } from "@/lib/placementWorkplane";
 
 describe("move dimension lines", () => {
   const project = ({ x, z }: { x: number; y: number; z: number }) => ({ x: 400 + x * 4, y: 300 + z * 4 });
 
   it("creates signed X and Z measurements from the common drag origin", () => {
     const overlay = createMoveDimensionOverlay({
-      originX: 10,
-      originZ: -5,
-      planeY: 0,
+      origin: { x: 10, y: 0, z: -5 },
       deltaX: -14,
       deltaZ: -17,
       accuracy: 2,
@@ -32,9 +31,7 @@ describe("move dimension lines", () => {
   it("uses the workspace accuracy and suppresses near-zero movement", () => {
     expect(formatMoveDimension(-0.0001, 2)).toBe("0.00");
     expect(createMoveDimensionOverlay({
-      originX: 0,
-      originZ: 0,
-      planeY: 0,
+      origin: { x: 0, y: 0, z: 0 },
       deltaX: 0.004,
       deltaZ: -0.004,
       accuracy: 2,
@@ -46,9 +43,7 @@ describe("move dimension lines", () => {
 
   it("shows only the axis that actually moved", () => {
     const overlay = createMoveDimensionOverlay({
-      originX: 0,
-      originZ: 0,
-      planeY: 0,
+      origin: { x: 0, y: 0, z: 0 },
       deltaX: 12.5,
       deltaZ: 0,
       accuracy: 1,
@@ -63,9 +58,7 @@ describe("move dimension lines", () => {
 
   it("keeps a single-axis label on a stable side when projection noise changes sign", () => {
     const makeOverlay = (noise: number) => createMoveDimensionOverlay({
-      originX: 0,
-      originZ: 0,
-      planeY: 0,
+      origin: { x: 0, y: 0, z: 0 },
       deltaX: 12.5,
       deltaZ: 0,
       accuracy: 1,
@@ -83,4 +76,37 @@ describe("move dimension lines", () => {
     expect(below?.labelY).toBeGreaterThan(300);
   });
 
+  /**
+   * Bis hierher zeigte die Anzeige nur auf der Hauptarbeitsebene etwas: sie
+   * rechnete in Weltachsen, und auf einer gekippten Flaeche haetten ihre
+   * Linien neben der Flaeche gelegen statt darin.
+   */
+  it("misst auf einer gekippten Arbeitsebene laengs deren Achsen", () => {
+    // Eine Flaeche, die senkrecht steht: ihre Normale zeigt nach oben-vorn.
+    const upright = placementWorkplaneFromSurface({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }, { x: 1, y: 0, z: 0 });
+    // Ein Zeiger, der die Hoehe sichtbar macht: y geht in die Bildschirm-Y ein.
+    const spatial = ({ x, y, z }: { x: number; y: number; z: number }) => ({ x: 400 + x * 4 + z * 3, y: 300 - y * 4 + z * 2 });
+    const overlay = createMoveDimensionOverlay({
+      origin: { x: 0, y: 0, z: 0 },
+      xAxis: upright.xAxis,
+      zAxis: upright.zAxis,
+      deltaX: 10,
+      deltaZ: 20,
+      accuracy: 2,
+      width: 800,
+      height: 600,
+      project: spatial,
+    });
+    expect(overlay?.lines.map((line) => line.label)).toEqual(["10.00", "20.00"]);
+    // Die Querachse dieser Flaeche zeigt senkrecht nach oben oder unten, also
+    // laeuft die zweite Masslinie im Bild senkrecht - waagerecht waere sie
+    // nur, wenn weiter in Weltachsen gerechnet wuerde.
+    const across = overlay!.lines[1];
+    expect(Math.abs(across.x2 - across.x1)).toBeLessThan(1e-6);
+    expect(Math.abs(across.y2 - across.y1)).toBeGreaterThan(50);
+  });
+
+  it("legt einen Punkt laengs einer Achse ab", () => {
+    expect(pointAlongAxis({ x: 1, y: 2, z: 3 }, { x: 0, y: 1, z: 0 }, 4)).toEqual({ x: 1, y: 6, z: 3 });
+  });
 });

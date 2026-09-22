@@ -39,9 +39,15 @@ type MoveDimensionWorldPoint = {
 };
 
 type CreateMoveDimensionOverlayOptions = {
-  originX: number;
-  originZ: number;
-  planeY: number;
+  /** Der Punkt, an dem die Bemassung ansetzt, in Weltkoordinaten. */
+  origin: MoveDimensionWorldPoint;
+  /**
+   * Die beiden Achsen, an denen gemessen wird. Ohne Angabe sind es die
+   * Weltachsen - auf einer gekippten Arbeitsflaeche sind es deren eigene, und
+   * dann liegen die Masslinien in der Flaeche statt daneben.
+   */
+  xAxis?: MoveDimensionWorldPoint;
+  zAxis?: MoveDimensionWorldPoint;
   deltaX: number;
   deltaZ: number;
   accuracy: number;
@@ -49,6 +55,22 @@ type CreateMoveDimensionOverlayOptions = {
   height: number;
   project: (point: MoveDimensionWorldPoint) => MoveDimensionScreenPoint;
 };
+
+const WORLD_X_AXIS: MoveDimensionWorldPoint = { x: 1, y: 0, z: 0 };
+const WORLD_Z_AXIS: MoveDimensionWorldPoint = { x: 0, y: 0, z: 1 };
+
+/** Ein Punkt, um `distance` laengs `axis` von `origin` entfernt. */
+export function pointAlongAxis(
+  origin: MoveDimensionWorldPoint,
+  axis: MoveDimensionWorldPoint,
+  distance: number,
+): MoveDimensionWorldPoint {
+  return {
+    x: origin.x + axis.x * distance,
+    y: origin.y + axis.y * distance,
+    z: origin.z + axis.z * distance,
+  };
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -100,9 +122,9 @@ export function dimensionLineStart(origin: MoveDimensionScreenPoint, endpoint: M
 }
 
 export function createMoveDimensionOverlay({
-  originX,
-  originZ,
-  planeY,
+  origin: originWorld,
+  xAxis = WORLD_X_AXIS,
+  zAxis = WORLD_Z_AXIS,
   deltaX,
   deltaZ,
   accuracy,
@@ -119,10 +141,11 @@ export function createMoveDimensionOverlay({
     x: Number.isFinite(point.x) ? point.x : width / 2,
     y: Number.isFinite(point.y) ? point.y : height / 2,
   });
-  const origin = safeScreenPoint(project({ x: originX, y: planeY, z: originZ }));
-  const xEndpoint = safeScreenPoint(project({ x: originX + deltaX, y: planeY, z: originZ }));
-  const zEndpoint = safeScreenPoint(project({ x: originX, y: planeY, z: originZ + deltaZ }));
-  const currentAnchor = safeScreenPoint(project({ x: originX + deltaX, y: planeY, z: originZ + deltaZ }));
+  const xEndpointWorld = pointAlongAxis(originWorld, xAxis, deltaX);
+  const origin = safeScreenPoint(project(originWorld));
+  const xEndpoint = safeScreenPoint(project(xEndpointWorld));
+  const zEndpoint = safeScreenPoint(project(pointAlongAxis(originWorld, zAxis, deltaZ)));
+  const currentAnchor = safeScreenPoint(project(pointAlongAxis(xEndpointWorld, zAxis, deltaZ)));
   const lines: MoveDimensionLine[] = [];
   const guides: MoveDimensionGuide[] = [];
   const hasXDimension = Math.abs(deltaX) >= zeroThreshold;
