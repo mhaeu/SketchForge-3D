@@ -12,7 +12,7 @@ import { isSketchPanGesture } from "@/lib/sketchPointerControls";
 import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes";
 import { selectWholeValue } from "@/lib/numberField";
 import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives";
-import { sketchPreviewAngle } from "@/lib/sketchAngle";
+import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngle";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { t } from "@/lib/i18n";
@@ -771,6 +771,16 @@ export function SketchWorkspace({
   const previewAngle = activePoint && hover && ["line", "bezier", "smooth"].includes(tool)
     ? sketchPreviewAngle(profile, activePoint.id, hover)
     : null;
+  /*
+   * Und die Winkel, die schon dastehen: an jeder Ecke, an der zwei gerade
+   * Kanten zusammentreffen. Waehrend gezogen wird, tritt der Winkel an der
+   * aktiven Ecke zurueck - dort steht schon die Vorschau, und zwei Maße
+   * uebereinander liest niemand.
+   */
+  const cornerAngles = useMemo(
+    () => sketchStraightCornerAngles(displayProfile),
+    [displayProfile],
+  );
   const labelOffset = 22 * screenUnit;
   const pointRadius = 5 * screenUnit;
   const controlPointRadius = 6 * screenUnit;
@@ -1111,6 +1121,28 @@ export function SketchWorkspace({
               })()}
             </g>
           ) : null}
+          {selected?.kind === "multiple" ? null : cornerAngles.map((corner) => {
+            if (previewAngle && corner.pointId === activePoint?.id) return null;
+            const radius = 22 * screenUnit;
+            const start = { x: corner.vertex.x + corner.from.x * radius, z: corner.vertex.z + corner.from.z * radius };
+            const end = { x: corner.vertex.x + corner.to.x * radius, z: corner.vertex.z + corner.to.z * radius };
+            const sweep = corner.from.x * corner.to.z - corner.from.z * corner.to.x > 0 ? 1 : 0;
+            const label = `${corner.degrees.toFixed(1).replace(/\.0$/, "")}°`;
+            const pill = dimensionPillSize(label, screenUnit, 10);
+            const labelDistance = radius + 15 * screenUnit;
+            return (
+              <g className="sketch-angle-corner" key={`angle-${corner.pointId}`} pointerEvents="none">
+                <path d={`M ${start.x} ${start.z} A ${radius} ${radius} 0 0 ${sweep} ${end.x} ${end.z}`} fill="none" />
+                <g
+                  className="sketch-segment-dimensions"
+                  transform={`translate(${corner.vertex.x + corner.bisector.x * labelDistance} ${corner.vertex.z + corner.bisector.z * labelDistance})`}
+                >
+                  <rect x={-pill.width / 2} y={-pill.height / 2} width={pill.width} height={pill.height} rx={pill.radius} />
+                  <text y={4 * screenUnit} fontSize={11 * screenUnit}>{label}</text>
+                </g>
+              </g>
+            );
+          })}
           {previewAngle ? (() => {
             // Der Bogen sitzt zwischen den beiden Schenkeln, die Beschriftung
             // auf der Winkelhalbierenden dahinter - so verdeckt sie weder die

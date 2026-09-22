@@ -72,6 +72,76 @@ export type SketchPreviewAngle = {
 };
 
 /**
+ * Alles, was zum Zeichnen eines Winkels gehoert: das Mass, die beiden
+ * Schenkel und die Richtung, in der die Beschriftung steht. Ob der Winkel
+ * gerade gezogen wird oder laengst dasteht, macht dabei keinen Unterschied -
+ * deshalb rechnet beides hier.
+ */
+function cornerGeometry(
+  vertex: SketchPlanePoint,
+  fromPoint: SketchPlanePoint,
+  toPoint: SketchPlanePoint,
+): Omit<SketchPreviewAngle, "vertex"> | null {
+  const degrees = cornerAngleDegrees(fromPoint, vertex, toPoint);
+  if (degrees === null) return null;
+  const from = unit(fromPoint, vertex);
+  const to = unit(toPoint, vertex);
+  if (!from || !to) return null;
+  const sum = { x: from.x + to.x, z: from.z + to.z };
+  const length = Math.hypot(sum.x, sum.z);
+  // Bei einem gestreckten Durchgang heben sich die Schenkel auf; dann steht
+  // die Beschriftung senkrecht darueber statt nirgends.
+  const bisector = length < 1e-6
+    ? { x: -from.z, z: from.x }
+    : { x: sum.x / length, z: sum.z / length };
+  return { degrees, bisector, from, to };
+}
+
+export type SketchCornerAngle = SketchPreviewAngle & { pointId: string };
+
+/** Eine Kante ohne eigene Art ist eine Gerade - so liest sie auch der Rest. */
+function isStraight(segment: { kind?: string }) {
+  return !segment.kind || segment.kind === "line";
+}
+
+/**
+ * Die Winkel, die dauerhaft in der Skizze stehen: an jeder Ecke, an der genau
+ * zwei **gerade** Kanten zusammentreffen.
+ *
+ * Nur gerade Kanten, weil nur dort der Winkel eindeutig ist - an einem Bogen
+ * haengt er am Griff, und der verschiebt sich beim Ziehen, ohne dass sich der
+ * Umriss sichtbar aendert. Ein gestreckter Durchgang faellt weg: 180 Grad an
+ * einer Stelle, die gar keine Ecke ist, waere nur Beiwerk im Bild.
+ */
+export function sketchStraightCornerAngles(profile: SketchProfile, straightLimitDegrees = 0.5): SketchCornerAngle[] {
+  const pointById = new Map(profile.points.map((point) => [point.id, point]));
+  const neighboursByPoint = new Map<string, string[]>();
+  for (const segment of profile.segments) {
+    if (!isStraight(segment) || segment.startId === segment.endId) continue;
+    for (const [id, otherId] of [[segment.startId, segment.endId], [segment.endId, segment.startId]] as const) {
+      const list = neighboursByPoint.get(id);
+      if (list) list.push(otherId);
+      else neighboursByPoint.set(id, [otherId]);
+    }
+  }
+  const corners: SketchCornerAngle[] = [];
+  for (const point of profile.points) {
+    const neighbours = neighboursByPoint.get(point.id);
+    // Genau zwei: an einem Ende laeuft nichts zusammen, und wo sich drei
+    // Kanten treffen, gibt es keinen einzelnen Winkel zu nennen.
+    if (!neighbours || neighbours.length !== 2) continue;
+    const first = pointById.get(neighbours[0]);
+    const second = pointById.get(neighbours[1]);
+    if (!first || !second) continue;
+    const geometry = cornerGeometry(point, first, second);
+    if (!geometry) continue;
+    if (Math.abs(geometry.degrees - 180) < straightLimitDegrees) continue;
+    corners.push({ ...geometry, pointId: point.id, vertex: { x: point.x, z: point.z } });
+  }
+  return corners;
+}
+
+/**
  * Der Winkel, den die Linie, die man gerade zieht, mit der davor einschliesst.
  *
  * Er steht beim Zeichnen neben der Ecke, damit man eine Ecke setzen kann, ohne
@@ -87,19 +157,9 @@ export function sketchPreviewAngle(
   if (!vertex) return null;
   const incoming = incomingCornerPoint(profile, activePointId);
   if (!incoming) return null;
-  const degrees = cornerAngleDegrees(incoming, vertex, hover);
-  if (degrees === null) return null;
-  const from = unit(incoming, vertex);
-  const to = unit(hover, vertex);
-  if (!from || !to) return null;
-  const sum = { x: from.x + to.x, z: from.z + to.z };
-  const length = Math.hypot(sum.x, sum.z);
-  // Bei einem gestreckten Durchgang heben sich die Schenkel auf; dann steht
-  // die Beschriftung senkrecht darueber statt nirgends.
-  const bisector = length < 1e-6
-    ? { x: -from.z, z: from.x }
-    : { x: sum.x / length, z: sum.z / length };
-  return { degrees, vertex: { x: vertex.x, z: vertex.z }, bisector, from, to };
+  const geometry = cornerGeometry(vertex, incoming, hover);
+  if (!geometry) return null;
+  return { ...geometry, vertex: { x: vertex.x, z: vertex.z } };
 }
 
 function unit(point: SketchPlanePoint, vertex: SketchPlanePoint): SketchPlanePoint | null {

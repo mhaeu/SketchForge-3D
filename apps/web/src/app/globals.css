@@ -3832,6 +3832,24 @@ svg.sketch-reference-icon {
   vector-effect: non-scaling-stroke;
 }
 
+/* Die Winkel, die dauerhaft dastehen, treten gegen die Vorschau zurueck: man
+   soll sie ablesen koennen, ohne dass sie mit der Zeichnung um
+   Aufmerksamkeit streiten. */
+.sketch-angle-corner > path {
+  stroke: #7d93a4;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.sketch-angle-corner .sketch-segment-dimensions rect {
+  fill: rgba(255, 255, 255, 0.88);
+  stroke: rgba(220, 229, 235, 0.7);
+}
+
+.sketch-angle-corner .sketch-segment-dimensions text {
+  fill: #4a5d6d;
+}
+
 .sketch-segment-dimensions rect {
   fill: rgba(255, 255, 255, 0.94);
   stroke: rgba(220, 229, 235, 0.86);
