@@ -58,6 +58,8 @@ export type CadModifierComponentMesh = {
   displayEdges: CadModifierDisplayEdge[];
 };
 
+export type CadModifierDeflection = { linear: number; angular: number };
+
 export type CadModifierWorkerRequest =
   | { type: "prepare"; requestId: number; parts: CadModifierMeshPart[]; sharpAngle: number; suppressTreatmentDetailEdges?: boolean }
   | {
@@ -68,6 +70,9 @@ export type CadModifierWorkerRequest =
       amount: number;
       quality: CadModifierQuality;
       chamferAngle: number;
+      // Die feinste Abweichung, die die Kantenbearbeitungen dieses Koerpers
+      // bisher gebraucht haben - eine Untergrenze fuer diesen Durchgang.
+      minDeflection?: CadModifierDeflection;
       /**
        * Endradius fuer "variableFillet". Bei den anderen Arten ohne Wirkung.
        */
@@ -94,6 +99,9 @@ export type CadModifierWorkerResponse =
       brep: string;
       displayEdges: CadModifierDisplayEdge[];
       components?: CadModifierComponentMesh[];
+      // Womit wirklich vernetzt wurde - `minDeflection` schon eingerechnet,
+      // damit der Aufrufer es als neue Untergrenze weitertragen kann.
+      deflection: CadModifierDeflection;
     }
   | { type: "disposed"; requestId: number }
   | { type: "error"; requestId: number; message: string; resetSession?: boolean };

@@ -4,7 +4,10 @@ import {
   CAD_MODIFIER_MAX_PREPARE_TIMEOUT_MS,
   CAD_MODIFIER_REQUEST_TIMEOUT_MS,
   CAD_MODIFIER_RUNTIME_BASE,
+  cadModifierBaseDeflection,
   cadModifierPrepareTimeoutMs,
+  cadModifierTessellationDeflection,
+  SKETCH_CAD_DEFLECTION,
   cadModifierTopologyEdgeIsSelectable,
   cadTransformRequiresGeneralTransform,
   cadModifierTimeoutMessage,
@@ -88,5 +91,39 @@ describe("CAD modifier runtime state", () => {
     expect(cadModifierTopologyEdgeIsSelectable(hiddenDetailEdge)).toBe(true);
     expect(selectableCadModifierEdge(hiddenDetailEdge, 25)).toBe(true);
     expect(selectableCadModifierEdge(hiddenDetailEdge, 60)).toBe(false);
+  });
+});
+
+/**
+ * Ein Koerper merkt sich die feinste Vernetzung, die eine seiner
+ * Kantenbearbeitungen gebraucht hat. Ohne diese Untergrenze taste eine
+ * spaetere Verrundung mit groesserem Halbmesser den ganzen Koerper groeber ab
+ * als zuvor - im Netz sieht man das als Wellen.
+ */
+describe("tessellation deflection", () => {
+  it("gets finer with the quality and with a smaller radius", () => {
+    expect(cadModifierBaseDeflection("draft", 6).linear).toBeGreaterThan(cadModifierBaseDeflection("standard", 6).linear);
+    expect(cadModifierBaseDeflection("standard", 6).linear).toBeGreaterThan(cadModifierBaseDeflection("fine", 6).linear);
+    expect(cadModifierBaseDeflection("fine", 12).linear).toBeGreaterThan(cadModifierBaseDeflection("fine", 1).linear);
+  });
+
+  it("never gets coarser than what the body already needed", () => {
+    const fine = cadModifierTessellationDeflection("fine", 1);
+    const laterCoarse = cadModifierTessellationDeflection("standard", 6, fine);
+    expect(laterCoarse.linear).toBeLessThanOrEqual(fine.linear);
+    expect(laterCoarse.angular).toBeLessThanOrEqual(fine.angular);
+    // Ohne Vorgeschichte bleibt es bei dem, was dieser Durchgang selbst waehlt.
+    expect(cadModifierTessellationDeflection("standard", 6)).toEqual(cadModifierBaseDeflection("standard", 6));
+  });
+
+  it("still lets a later pass go finer", () => {
+    const coarse = cadModifierTessellationDeflection("draft", 6);
+    const later = cadModifierTessellationDeflection("fine", 1, coarse);
+    expect(later.linear).toBeLessThan(coarse.linear);
+  });
+
+  it("starts a sketch body at the fineness the sketch itself was built with", () => {
+    const afterFillet = cadModifierTessellationDeflection("standard", 6, SKETCH_CAD_DEFLECTION);
+    expect(afterFillet.linear).toBeLessThanOrEqual(SKETCH_CAD_DEFLECTION.linear);
   });
 });

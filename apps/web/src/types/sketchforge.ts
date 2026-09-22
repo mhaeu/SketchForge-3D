@@ -362,6 +362,11 @@ export type WorkplaneShape = {
   edgeResizeMode?: "scale" | "preserve";
   cadBrep?: string;
   cadBrepFrame?: CadBrepFrame;
+  // Die feinste Vernetzung, die eine Kantenbearbeitung dieses Koerpers bisher
+  // gebraucht hat. Sie wird als Untergrenze weitergetragen, damit eine spaetere
+  // Verrundung mit groesserem Halbmesser eine schon fein gerundete Stelle nicht
+  // groeber nachvernetzt.
+  cadMeshDeflection?: { linear: number; angular: number };
   cadPrimitiveFrame?: CadPrimitiveFrame;
   groupedShapes?: WorkplaneShape[];
   groupedBaseWidth?: number;

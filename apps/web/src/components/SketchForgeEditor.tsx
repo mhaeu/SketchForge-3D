@@ -111,6 +111,7 @@ import {
   defaultCadModifierTangentChain,
   selectableCadModifierEdge,
   type CadModifierRequestPhase,
+  SKETCH_CAD_DEFLECTION,
 } from "@/lib/cadModifierRuntime";
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
 import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
@@ -159,7 +160,7 @@ import {
   type SketchForgeMcpShapeSummary,
   type SketchForgeMcpViewFace,
 } from "@/lib/sketchforgeMcpProtocol";
-import type { CadModifierComponentMesh, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
+import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import type { SketchCadBuildResponse } from "@/lib/sketchCadTypes";
 import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, ProjectAsset, ShapeAsset, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
@@ -633,7 +634,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
     cadDisplayEdges: undefined,
     cadDisplayEdgesVersion: undefined,
   });
-  const shape = shapeFromCadMesh(source, response.positions, response.normals, response.indices, response.brep);
+  const shape = shapeFromCadMesh(source, response.positions, response.normals, response.indices, response.brep, SKETCH_CAD_DEFLECTION);
   if (!shape) throw new Error(t("status.sketchWorkerEmpty"));
   return { ...shape, sketchProfile: cloneSketchProfile(profile), sketchOperation: "extrude" as const };
 }
@@ -1371,6 +1372,7 @@ function shapeFromCadMesh(
   normals: Float32Array,
   indices: Uint32Array,
   brep: string,
+  deflection?: CadModifierDeflection,
 ): WorkplaneShape | null {
   if (positions.length < 9 || indices.length < 3) return null;
   let minX = Number.POSITIVE_INFINITY;
@@ -1440,6 +1442,7 @@ function shapeFromCadMesh(
     },
     imagePlate: undefined,
     cadBrep: brep,
+    cadMeshDeflection: deflection ?? source.cadMeshDeflection,
     cadBrepFrame: {
       x: cleanNearZero(centerX, 0.0005),
       z: cleanNearZero(centerZ, 0.0005),
@@ -1548,13 +1551,13 @@ function cadDisplayEdgesForShape(shape: WorkplaneShape, edges: CadModifierDispla
     }));
 }
 
-function cadModifierComponentPreviews(sourceParts: WorkplaneShape[], components: CadModifierComponentMesh[] | undefined): EdgeModifierComponentPreview[] {
+function cadModifierComponentPreviews(sourceParts: WorkplaneShape[], components: CadModifierComponentMesh[] | undefined, deflection?: CadModifierDeflection): EdgeModifierComponentPreview[] {
   if (!components?.length) return [];
   const previews: EdgeModifierComponentPreview[] = [];
   components.forEach((component) => {
     const source = sourceParts[component.owner] ?? sourceParts[0];
     if (!source) return;
-    const shape = shapeFromCadMesh(source, component.positions, component.normals, component.indices, component.brep);
+    const shape = shapeFromCadMesh(source, component.positions, component.normals, component.indices, component.brep, deflection);
     if (!shape) return;
     previews.push({
       owner: component.owner,
@@ -5799,13 +5802,13 @@ export function SketchForgeEditor({
         if (message.requestId !== cadModifierLatestPreviewRef.current) return;
         const base = cadModifierBaseShapeRef.current;
         const sourceParts = cadModifierSourcePartsRef.current.length ? cadModifierSourcePartsRef.current : (base ? [base] : []);
-        const rawPreview = base ? shapeFromCadMesh(base, message.positions, message.normals, message.indices, message.brep) : null;
+        const rawPreview = base ? shapeFromCadMesh(base, message.positions, message.normals, message.indices, message.brep, message.deflection) : null;
         const preview = rawPreview ? {
           ...rawPreview,
           cadDisplayEdges: cadDisplayEdgesForShape(rawPreview, message.displayEdges),
           cadDisplayEdgesVersion: 2 as const,
         } : null;
-        const componentPreviews = cadModifierComponentPreviews(sourceParts, message.components);
+        const componentPreviews = cadModifierComponentPreviews(sourceParts, message.components, message.deflection);
         setEdgeModifier((current) => current ? {
           ...current,
           preview,
@@ -7694,11 +7697,12 @@ export function SketchForgeEditor({
       chamferAngle,
       endAmount,
       flipTaper,
+      minDeflection: shape.cadMeshDeflection,
     }, [], 30000);
     if (previewResponse.type !== "preview") {
       throw new Error(t("status.cadNoEdgePreview"));
     }
-    const rawPreview = shapeFromCadMesh(shape, previewResponse.positions, previewResponse.normals, previewResponse.indices, previewResponse.brep);
+    const rawPreview = shapeFromCadMesh(shape, previewResponse.positions, previewResponse.normals, previewResponse.indices, previewResponse.brep, previewResponse.deflection);
     if (!rawPreview) {
       throw new Error(t("status.emptyEdgeResult"));
     }
@@ -7730,7 +7734,7 @@ export function SketchForgeEditor({
       prepared: true,
       error: null,
       preview,
-      componentPreviews: cadModifierComponentPreviews(sourceParts, previewResponse.components),
+      componentPreviews: cadModifierComponentPreviews(sourceParts, previewResponse.components, previewResponse.deflection),
     };
     const createdAt = Date.now();
     const groupedModifiedShape = groupedShapeWithComponentEdgeTreatment(shape, preview, sourceParts, session, feature, createdAt);
@@ -7844,6 +7848,8 @@ export function SketchForgeEditor({
         chamferAngle: edgeModifier.chamferAngle,
         endAmount: edgeModifier.endAmount,
         flipTaper: edgeModifier.flipTaper,
+        // Die feinste Vernetzung, die dieser Koerper bisher gebraucht hat.
+        minDeflection: cadModifierBaseShapeRef.current?.cadMeshDeflection,
       });
       if (requestId === null) {
         const message = cadModifierWorkerFailureMessage();

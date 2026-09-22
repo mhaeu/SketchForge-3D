@@ -1,7 +1,44 @@
-import type { CadModifierEdge } from "@/lib/cadModifierTypes";
+import type { CadModifierDeflection, CadModifierEdge, CadModifierQuality } from "@/lib/cadModifierTypes";
 import { t } from "@/lib/i18n";
 
 export const CAD_MODIFIER_RUNTIME_BASE = "/occt";
+
+/**
+ * Die Abweichung, mit der eine Skizze das eine Mal vernetzt wird, wenn aus ihr
+ * ein Koerper entsteht (sketchCad.worker.ts). Kantenbearbeitungen danach
+ * nehmen diesen Wert als Untergrenze mit, damit eine spaetere Verrundung mit
+ * groesserem Halbmesser keine Stelle groeber nachvernetzt, die die Skizze
+ * selbst schon feiner gebraucht hat.
+ */
+export const SKETCH_CAD_DEFLECTION: CadModifierDeflection = { linear: 0.05, angular: 0.16 };
+
+/** Wie fein eine einzelne Kantenbearbeitung den ganzen Koerper vernetzt - ohne Untergrenze. */
+export function cadModifierBaseDeflection(quality: CadModifierQuality, amount: number): CadModifierDeflection {
+  if (quality === "draft") return { linear: Math.max(0.12, amount / 3), angular: 0.42 };
+  if (quality === "fine") return { linear: Math.max(0.025, amount / 12), angular: 0.1 };
+  return { linear: Math.max(0.055, amount / 7), angular: 0.2 };
+}
+
+/**
+ * Ein Koerper merkt sich die feinste Vernetzung, die eine seiner bisherigen
+ * Kantenbearbeitungen gebraucht hat. Ohne diese Untergrenze sucht sich eine
+ * spaetere Verrundung mit groesserem Halbmesser eine groebere Abweichung fuer
+ * den GANZEN Koerper und tastet eine laengst fein gerundete Stelle neu ab -
+ * das sind die Wellen im Netz, die nach mehreren Verrundungen nacheinander
+ * auftauchen.
+ */
+export function cadModifierTessellationDeflection(
+  quality: CadModifierQuality,
+  amount: number,
+  minDeflection?: CadModifierDeflection,
+): CadModifierDeflection {
+  const base = cadModifierBaseDeflection(quality, amount);
+  if (!minDeflection) return base;
+  return {
+    linear: Math.min(base.linear, minDeflection.linear),
+    angular: Math.min(base.angular, minDeflection.angular),
+  };
+}
 export const CAD_MODIFIER_REQUEST_TIMEOUT_MS = 30_000;
 export const CAD_MODIFIER_MAX_PREPARE_TIMEOUT_MS = 180_000;
 export const CAD_MODIFIER_MAX_SHARP_ANGLE = 90;
