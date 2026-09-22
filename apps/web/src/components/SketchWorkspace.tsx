@@ -13,6 +13,8 @@ import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes"
 import { selectWholeValue } from "@/lib/numberField";
 import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives";
 import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngle";
+import { alignSketchPoint, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
+import { rotateSketchPoints } from "@/lib/sketchRotation";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { t } from "@/lib/i18n";
@@ -69,6 +71,17 @@ type PointerAction =
   | { kind: "move-point"; pointerId: number; pointId: string; current: { x: number; z: number } }
   | { kind: "move-selection"; pointerId: number; origin: { x: number; z: number }; current: { x: number; z: number }; startPoints: SketchPoint[] }
   | { kind: "resize-selection"; pointerId: number; handle: ResizeHandle; current: { x: number; z: number }; startPoints: SketchPoint[]; bounds: SelectionBounds }
+  | {
+    kind: "rotate-selection";
+    pointerId: number;
+    /** Die Mitte, um die gedreht wird - sie bleibt waehrend des Zugs stehen. */
+    pivot: { x: number; z: number };
+    /** Der Winkel, unter dem der Griff gefasst wurde. */
+    startAngle: number;
+    degrees: number;
+    startPoints: SketchPoint[];
+    current: { x: number; z: number };
+  }
   | { kind: "move-handle"; pointerId: number; pointId: string; handle: "in" | "out"; current: { x: number; z: number } }
   | { kind: "pan"; pointerId: number; clientX: number; clientY: number }
   | { kind: "marquee"; pointerId: number; origin: { x: number; z: number }; current: { x: number; z: number } }
@@ -520,6 +533,11 @@ export function SketchWorkspace({
       const resizedById = new Map(resized.map((point) => [point.id, point]));
       return { ...profile, points: profile.points.map((point) => resizedById.get(point.id) ?? point) };
     }
+    if (pointerAction?.kind === "rotate-selection") {
+      const rotated = rotateSketchPoints(pointerAction.startPoints, pointerAction.degrees);
+      const rotatedById = new Map(rotated.map((point) => [point.id, point]));
+      return { ...profile, points: profile.points.map((point) => rotatedById.get(point.id) ?? point) };
+    }
     if (pointerAction?.kind === "move-point") {
       const source = profile.points.find((point) => point.id === pointerAction.pointId);
       if (!source) return profile;
@@ -613,7 +631,20 @@ export function SketchWorkspace({
     return lines;
   }, [gridStep, workspace.depth]);
 
-  const pointFromEvent = (event: { clientX: number; clientY: number }) => {
+  /**
+   * Die Punkte, an denen sich gerade ausrichten laesst, und was davon
+   * eingerastet ist. Der gezogene Punkt selbst faellt heraus - sonst klebte
+   * er an seiner eigenen alten Stelle.
+   */
+  const alignmentTargets = useMemo(
+    () => displayProfile.points.map((point) => ({ id: point.id, x: point.x, z: point.z })),
+    [displayProfile.points],
+  );
+  const alignmentExclusion = pointerAction?.kind === "move-point" ? pointerAction.pointId : null;
+  const [alignmentGuides, setAlignmentGuides] = useState<SketchAlignmentGuide[]>([]);
+
+  /** Der Zeiger in Zeichenkoordinaten, ohne Raster - zum Drehen. */
+  const localFromEvent = (event: { clientX: number; clientY: number }) => {
     const svg = svgRef.current;
     const matrix = svg?.getScreenCTM();
     if (!svg || !matrix) return null;
@@ -621,11 +652,32 @@ export function SketchWorkspace({
     screenPoint.x = event.clientX;
     screenPoint.y = event.clientY;
     const local = screenPoint.matrixTransform(matrix.inverse());
+    return { x: local.x, z: local.y };
+  };
+
+  const pointFromEvent = (event: { clientX: number; clientY: number }) => {
+    const local = localFromEvent(event);
+    if (!local) return null;
     const step = snapStep(snap);
     return {
       x: clamp(snapValue(local.x, step), -workspace.width / 2, workspace.width / 2),
-      z: clamp(snapValue(local.y, step), -workspace.depth / 2, workspace.depth / 2),
+      z: clamp(snapValue(local.z, step), -workspace.depth / 2, workspace.depth / 2),
     };
+  };
+
+  /**
+   * Derselbe Punkt, aber an den anderen ausgerichtet. Das Einrasten kommt
+   * nach dem Raster: Wer einen Punkt an einem anderen ausrichten will, meint
+   * diesen anderen Punkt und nicht die naechste Rasterlinie daneben. Der
+   * Spielraum ist ein paar Bildpunkte breit, damit es kurz fasst und nicht
+   * klebt.
+   */
+  const alignedPointFromEvent = (event: { clientX: number; clientY: number }) => {
+    const raw = pointFromEvent(event);
+    if (!raw) return null;
+    const aligned = alignSketchPoint(raw, alignmentTargets, 7 * screenUnit, alignmentExclusion);
+    setAlignmentGuides(aligned.guides);
+    return aligned.point;
   };
 
   useEffect(() => {
@@ -662,7 +714,7 @@ export function SketchWorkspace({
       return;
     }
     if (event.button !== 0 || (event.target !== event.currentTarget && (event.target as Element).closest("[data-sketch-entity]"))) return;
-    const point = pointFromEvent(event);
+    const point = alignedPointFromEvent(event);
     if (!point) return;
     event.preventDefault();
     if (tool === "bezier") {
@@ -690,12 +742,24 @@ export function SketchWorkspace({
       setPointerAction({ ...pointerAction, clientX: event.clientX, clientY: event.clientY });
       return;
     }
-    const point = pointFromEvent(event);
+    if (pointerAction?.kind === "rotate-selection") {
+      const local = localFromEvent(event);
+      if (!local) return;
+      // Frei gedreht wird in ganzen Grad; mit Umschalt in Fuenfzehnerschritten,
+      // damit sich ein rechter Winkel ohne Zielen treffen laesst.
+      const angle = Math.atan2(local.z - pointerAction.pivot.z, local.x - pointerAction.pivot.x) * 180 / Math.PI;
+      const step = event.shiftKey ? 15 : 1;
+      const degrees = Math.round((angle - pointerAction.startAngle) / step) * step;
+      setPointerAction({ ...pointerAction, degrees, current: { x: local.x, z: local.z } });
+      return;
+    }
+    const point = alignedPointFromEvent(event);
     setHover(point);
     if (point && pointerAction) setPointerAction({ ...pointerAction, current: point });
   };
 
   const finishPointerAction = (event: ReactPointerEvent<SVGSVGElement>) => {
+    setAlignmentGuides([]);
     const action = pointerAction;
     if (!action || action.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -731,6 +795,13 @@ export function SketchWorkspace({
         translateSketchPoints(action.startPoints, action.current.x - action.origin.x, action.current.z - action.origin.z),
         t("sketch.shapeMoved"),
       );
+    } else if (action.kind === "rotate-selection") {
+      if (action.degrees !== 0) {
+        onTransformPoints(
+          rotateSketchPoints(action.startPoints, action.degrees),
+          t("status.sketchRotated", { degrees: String(Math.abs(action.degrees)) }),
+        );
+      }
     } else if (action.kind === "resize-selection") {
       onTransformPoints(resizeSketchPoints(action.startPoints, action.bounds, action.handle, action.current, lockAspect), t("sketch.shapeResized"));
     } else if (action.kind === "move-point") {
@@ -1084,6 +1155,58 @@ export function SketchWorkspace({
                   <rect x={-depthPill.width / 2} y={-depthPill.height / 2} width={depthPill.width} height={depthPill.height} rx={depthPill.radius} />
                   <text y={5 * screenUnit} fontSize={13 * screenUnit}>{depthLabel}</text>
                 </g>
+                {(() => {
+                  // Der Drehgriff sitzt ueber dem Rahmen, an einem kurzen
+                  // Stiel - weit genug weg, dass er nicht mit den Ecken
+                  // verwechselt wird.
+                  const stem = 30 * screenUnit;
+                  const handleZ = selectedGeometryBounds.minZ - stem;
+                  const turning = pointerAction?.kind === "rotate-selection" ? pointerAction.degrees : null;
+                  const label = turning === null ? null : `${turning}°`;
+                  const pill = label ? dimensionPillSize(label, screenUnit, 12) : null;
+                  return (
+                    <g className="sketch-geometry-rotate">
+                      <line x1={selectedGeometryBounds.cx} y1={selectedGeometryBounds.minZ} x2={selectedGeometryBounds.cx} y2={handleZ} pointerEvents="none" />
+                      <circle
+                        data-sketch-entity="selection-rotate"
+                        className="sketch-geometry-rotate-handle"
+                        cx={selectedGeometryBounds.cx}
+                        cy={handleZ}
+                        r={handleSize * 0.62}
+                        onPointerDown={(event) => {
+                          if (event.button === 1) {
+                            beginPan(event);
+                            return;
+                          }
+                          if (event.button !== 0 || selected?.kind !== "multiple") return;
+                          const startPoints = selected.pointIds
+                            .map((id) => profile.points.find((entry) => entry.id === id))
+                            .filter((entry): entry is SketchPoint => Boolean(entry))
+                            .map((entry) => ({ ...entry, handleIn: entry.handleIn ? { ...entry.handleIn } : undefined, handleOut: entry.handleOut ? { ...entry.handleOut } : undefined }));
+                          const bounds = boundsForSketchPoints(startPoints);
+                          const local = localFromEvent(event);
+                          if (!bounds || !local) return;
+                          const pivot = { x: bounds.cx, z: bounds.cz };
+                          beginEntityDrag(event, {
+                            kind: "rotate-selection",
+                            pointerId: event.pointerId,
+                            pivot,
+                            startAngle: Math.atan2(local.z - pivot.z, local.x - pivot.x) * 180 / Math.PI,
+                            degrees: 0,
+                            startPoints,
+                            current: { x: local.x, z: local.z },
+                          });
+                        }}
+                      />
+                      {label && pill ? (
+                        <g className="sketch-segment-dimensions" pointerEvents="none" transform={`translate(${selectedGeometryBounds.cx + 40 * screenUnit} ${handleZ})`}>
+                          <rect x={-pill.width / 2} y={-pill.height / 2} width={pill.width} height={pill.height} rx={pill.radius} />
+                          <text y={4 * screenUnit} fontSize={12 * screenUnit}>{label}</text>
+                        </g>
+                      ) : null}
+                    </g>
+                  );
+                })()}
                 {selectionResizeHandles.map((handle) => (
                   <rect
                     key={`selection-handle-${handle.id}`}
@@ -1146,6 +1269,26 @@ export function SketchWorkspace({
               </g>
             );
           })}
+          {alignmentGuides.length > 0 ? (
+            <g className="sketch-alignment-guides" pointerEvents="none">
+              {alignmentGuides.map((guide) => {
+                // Die Linie laeuft durch beide Punkte und ein Stueck darueber
+                // hinaus, damit man sie als Achse liest und nicht als Strecke.
+                const overshoot = 12 * screenUnit;
+                const along = guide.axis === "x" ? "z" : "x";
+                const low = Math.min(guide.from[along], guide.to[along]) - overshoot;
+                const high = Math.max(guide.from[along], guide.to[along]) + overshoot;
+                return guide.axis === "x" ? (
+                  <line key="guide-x" x1={guide.to.x} y1={low} x2={guide.to.x} y2={high} />
+                ) : (
+                  <line key="guide-z" x1={low} y1={guide.to.z} x2={high} y2={guide.to.z} />
+                );
+              })}
+              {alignmentGuides.map((guide) => (
+                <circle key={`anchor-${guide.axis}`} cx={guide.from.x} cy={guide.from.z} r={4 * screenUnit} />
+              ))}
+            </g>
+          ) : null}
           {previewAngle ? (() => {
             // Der Bogen sitzt zwischen den beiden Schenkeln, die Beschriftung
             // auf der Winkelhalbierenden dahinter - so verdeckt sie weder die

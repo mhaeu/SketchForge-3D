@@ -3835,6 +3835,43 @@ svg.sketch-reference-icon {
 /* Die Winkel, die dauerhaft dastehen, treten gegen die Vorschau zurueck: man
    soll sie ablesen koennen, ohne dass sie mit der Zeichnung um
    Aufmerksamkeit streiten. */
+/* Der Drehgriff der Auswahl: derselbe Ton wie ihr Rahmen, aber rund - eckig
+   sind die Griffe, mit denen man die Groesse zieht. */
+.sketch-geometry-rotate > line {
+  stroke: #169fce;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.sketch-geometry-rotate-handle {
+  fill: #ffffff;
+  stroke: #169fce;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: grab;
+}
+
+.sketch-geometry-rotate-handle:active {
+  cursor: grabbing;
+}
+
+/* Hilfslinien beim Ausrichten: gestrichelt und in einem Ton, den die
+   Zeichnung sonst nicht benutzt - sie gehoeren nicht zum Umriss, sie sagen
+   nur, woran er gerade haengt. */
+.sketch-alignment-guides > line {
+  stroke: #e0762a;
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.sketch-alignment-guides > circle {
+  fill: #e0762a;
+  stroke: #ffffff;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 .sketch-angle-corner > path {
   stroke: #7d93a4;
   stroke-width: 1.2;
