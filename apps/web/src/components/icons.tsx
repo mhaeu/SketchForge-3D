@@ -226,3 +226,21 @@ export function ToolbarAlignToWorkplaneIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * SVG-Zeichnung einlesen: ein Blatt mit einem Linienzug darauf und dem Pfeil
+ * hinein. Gezeichnet statt aus der Bilderreihe, weil es dort kein Bildchen
+ * dafuer gibt.
+ */
+export function SketchImportSvgIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" {...props}>
+      <path d="M12 6h16l8 8v28H12Z" />
+      <path d="M28 6v8h8" />
+      <path d="M17 34c3-10 5-14 7-14s4 4 7 14" />
+      <circle cx="17" cy="34" r="2.4" fill="currentColor" stroke="none" />
+      <circle cx="31" cy="34" r="2.4" fill="currentColor" stroke="none" />
+      <circle cx="24" cy="20" r="2.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

@@ -1925,6 +1925,13 @@ button {
   height: 32px;
 }
 
+/* Der gezeichnete SVG-Knopf sitzt in derselben Reihe wie die Bildchen und
+   bringt seine Groesse selbst mit. */
+svg.sketch-reference-icon {
+  width: 34px;
+  height: 34px;
+}
+
 .sketch-reference-icon {
   --sketch-icon-offset-y: 0;
   --sketch-icon-scale: 1;

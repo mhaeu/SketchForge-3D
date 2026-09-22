@@ -176,7 +176,8 @@ function pathStyleAndNode(path: THREE.ShapePath) {
   return { style: userData?.style ?? {}, node: userData?.node };
 }
 
-function pathIsVisible(path: THREE.ShapePath) {
+/** Ob die Zeichnung diesen Pfad ueberhaupt zeigt - der Skizzen-Import fragt mit. */
+export function pathIsVisible(path: THREE.ShapePath) {
   const { style, node } = pathStyleAndNode(path);
   const visibility = style.visibility?.trim().toLowerCase();
   if (visibility === "hidden" || visibility === "collapse") return false;
@@ -199,7 +200,8 @@ function pathHasVisibleStroke(path: THREE.ShapePath) {
   return strokeAlpha(style.stroke) > MIN_VISIBLE_ALPHA;
 }
 
-function subPathIsClosed(path: THREE.Path) {
+/** Ob ein Teilpfad in sich zurueckláeuft; der Skizzen-Import schliesst ihn dann auch. */
+export function subPathIsClosed(path: THREE.Path) {
   const points = path.getPoints(SVG_CURVE_SEGMENTS);
   if (points.length < 3) return false;
   if (path.autoClose) return true;

@@ -1315,4 +1315,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.unlockBeforeAlignWorkplane": "Entsperre die Auswahl, bevor du sie an der Arbeitsebene ausrichtest",
   "status.alignedToWorkplaneOne": "Auswahl flach auf die Arbeitsebene gelegt",
   "status.alignedToWorkplaneMany": "{count} Objekte flach auf die Arbeitsebene gelegt",
+  "sketch.importSvg": "SVG-Zeichnung einlesen",
+  "sketch.importSvgHint": "Eine SVG-Zeichnung als Punkte und Strecken in die Skizze holen",
+  "status.svgSketchAdded": "{name}: {count} Linienzüge in die Skizze übernommen",
+  "status.svgSketchFailed": "Die SVG-Zeichnung ließ sich nicht in die Skizze übernehmen",
 };

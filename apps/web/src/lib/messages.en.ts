@@ -1316,6 +1316,10 @@ export const MESSAGES_EN = {
   "status.unlockBeforeAlignWorkplane": "Unlock the selection before aligning it to the workplane",
   "status.alignedToWorkplaneOne": "Laid the selection flat on the workplane",
   "status.alignedToWorkplaneMany": "Laid {count} objects flat on the workplane",
+  "sketch.importSvg": "Import SVG drawing",
+  "sketch.importSvgHint": "Read an SVG drawing into the sketch as points and lines",
+  "status.svgSketchAdded": "{name}: {count} contours added to the sketch",
+  "status.svgSketchFailed": "The SVG drawing could not be read into the sketch",
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_EN;

@@ -42,6 +42,7 @@ import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { useLanguage } from "@/lib/useLanguage";
 import {
   ToolbarAlignIcon,
+  SketchImportSvgIcon,
   ToolbarAlignToWorkplaneIcon,
   ToolbarCenterOnWorkplaneIcon,
   ToolbarChamferIcon,
@@ -148,6 +149,7 @@ import {
 } from "@/lib/placementWorkplane";
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
 import { placeSketchExtrusion } from "@/lib/sketchPlacement";
+import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
 import {
   SKETCHFORGE_MCP_HEARTBEAT_MS,
   SKETCHFORGE_MCP_POLL_RETRY_MS,
@@ -5608,6 +5610,7 @@ export function SketchForgeEditor({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const projectFileInputRef = useRef<HTMLInputElement | null>(null);
   const sketchImageInputRef = useRef<HTMLInputElement | null>(null);
+  const sketchSvgInputRef = useRef<HTMLInputElement | null>(null);
   const booleanAutomationRunRef = useRef<string | null>(null);
   const projectHydratingRef = useRef(false);
   const projectInteractionActiveRef = useRef(false);
@@ -6817,6 +6820,31 @@ export function SketchForgeEditor({
     }, t("status.sketchImageRemoved"));
     setSketchSelection(null);
   }, [commitSketchProfile, sketchProfile]);
+
+  /**
+   * Eine SVG-Zeichnung in die Zeichenebene holen: ihre Umrisse werden zu
+   * Punkten und Strecken und liegen danach in der Skizze wie von Hand
+   * gezeichnet - anders als ein Bild, das nur als Vorlage darunter liegt.
+   */
+  const addSketchSvgFile = useCallback(async (file: File) => {
+    if (!sketchActive) {
+      setNotice(t("status.chooseSelectFirst"));
+      return;
+    }
+    try {
+      const source = await file.text();
+      const geometry = sketchGeometryFromSvg(source);
+      commitSketchProfile(
+        sketchProfileWithSvg(sketchProfile, geometry),
+        t("status.svgSketchAdded", { name: file.name, count: geometry.contours }),
+      );
+      setSketchSelection(null);
+      setSketchActivePointId(null);
+      setSketchTool("select");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t("status.svgSketchFailed"));
+    }
+  }, [commitSketchProfile, sketchActive, sketchProfile]);
 
   const addSketchImageFile = useCallback(async (file: File) => {
     if (!sketchActive || sketchTool !== "select") {
@@ -9555,6 +9583,7 @@ export function SketchForgeEditor({
         onEditSketch={beginSketchEdit}
         onSketchTool={setActiveSketchTool}
         onSketchPrimitive={(primitive) => addSketchPrimitive(primitive, { x: 0, z: 0 })}
+        onSketchSvg={() => sketchSvgInputRef.current?.click()}
         onSketchImage={() => {
           if (sketchTool !== "select") {
             setNotice(t("status.chooseSelectFirst"));
@@ -9781,6 +9810,17 @@ export function SketchForgeEditor({
         }}
       />
       <input
+        ref={sketchSvgInputRef}
+        className="hidden-file-input"
+        type="file"
+        accept=".svg,image/svg+xml"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) void addSketchSvgFile(file);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
         ref={projectFileInputRef}
         className="hidden-file-input"
         type="file"
@@ -9918,6 +9958,7 @@ function SecondaryToolbar({
   onSketchTool,
   onSketchPrimitive,
   onSketchImage,
+  onSketchSvg,
   onSketchUndo,
   onSketchRedo,
   onSketchFinish,
@@ -9985,6 +10026,7 @@ function SecondaryToolbar({
   onSketchTool: (tool: SketchTool) => void;
   onSketchPrimitive: (primitive: SketchPrimitive) => void;
   onSketchImage: () => void;
+  onSketchSvg: () => void;
   onSketchUndo: () => void;
   onSketchRedo: () => void;
   onSketchFinish: () => void;
@@ -10562,6 +10604,15 @@ function SecondaryToolbar({
                       disabled={sketchTool !== "select"}
                     >
                       <SketchReferenceIcon name="image" />
+                    </button>
+                    <button
+                      className="toolbar-icon sketch-tool-icon"
+                      type="button"
+                      aria-label={t("sketch.importSvg")}
+                      title={t("sketch.importSvgHint")}
+                      onClick={onSketchSvg}
+                    >
+                      <SketchImportSvgIcon className="sketch-reference-icon" />
                     </button>
                     <button
                       className={`toolbar-icon sketch-tool-icon ${sketchLockAspect ? "active" : ""} ${sketchTool === "select" ? "" : "disabled"}`}
