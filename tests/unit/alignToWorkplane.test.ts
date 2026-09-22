@@ -24,10 +24,11 @@ const shape = (id: string, x: number, z: number, elevation: number, height = 10)
 });
 
 /**
- * "An der Arbeitsebene ausrichten" legt die Auswahl flach auf die gerade
- * gewaehlte Ebene und schiebt sie in deren Mitte. Gerechnet wird das aus den
- * Bausteinen, die auch eine neu eingefuegte Form auf die Ebene setzen - hier
- * wird nachgerechnet, dass dabei wirklich Flaeche auf Ebene liegt.
+ * Die Bausteine, die eine Form auf eine Arbeitsebene setzen: gedreht wie die
+ * Ebene und aufsitzend statt schwebend. Ein neu eingefuegter Koerper geht
+ * diesen Weg, und hier wird nachgerechnet, dass dabei wirklich Flaeche auf
+ * Ebene liegt. (Das Ausrichten unter "Anordnen" dreht inzwischen nur noch -
+ * dessen eigene Rechnung steht in workplaneArrange.test.ts.)
  */
 describe("aligning a selection to the current workplane", () => {
   const tilted = placementWorkplaneFromSurface({ x: 12, y: 6, z: -4 }, { x: 0.4, y: 0.7, z: 0.59 }, { x: 1, y: 0, z: 0 });

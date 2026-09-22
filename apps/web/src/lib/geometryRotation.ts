@@ -43,10 +43,10 @@ type ShapeRotation = { rotation: number; rotationX?: number; rotationZ?: number 
  * drei Winkel, die der Datensatz fuehrt.
  */
 export function composedShapeRotation(outer: ShapeRotation, inner: ShapeRotation) {
-  return rotationPatchFromQuaternion(quaternionForShape(outer).multiply(quaternionForShape(inner)));
+  return rotationPatchFromQuaternion(shapeRotationQuaternion(outer).multiply(shapeRotationQuaternion(inner)));
 }
 
-function quaternionForShape(shape: ShapeRotation) {
+export function shapeRotationQuaternion(shape: ShapeRotation) {
   return new THREE.Quaternion().setFromEuler(
     new THREE.Euler(
       THREE.MathUtils.degToRad(shape.rotationX ?? 0),
@@ -57,7 +57,7 @@ function quaternionForShape(shape: ShapeRotation) {
   );
 }
 
-function rotationPatchFromQuaternion(quaternion: THREE.Quaternion) {
+export function rotationPatchFromQuaternion(quaternion: THREE.Quaternion) {
   const euler = new THREE.Euler().setFromQuaternion(quaternion, "XYZ");
   return {
     rotationX: cleanRotationDegrees(THREE.MathUtils.radToDeg(euler.x)),
@@ -72,7 +72,7 @@ export function rotatedGeometryShapePatch(
   pivot: THREE.Vector3 | null,
 ): Partial<WorkplaneShape> {
   const patch: Partial<WorkplaneShape> = rotationPatchFromQuaternion(
-    rotationDelta.clone().multiply(quaternionForShape(shape)),
+    rotationDelta.clone().multiply(shapeRotationQuaternion(shape)),
   );
 
   if (pivot) {

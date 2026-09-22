@@ -41,7 +41,7 @@ import {
 import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
 import { meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
 import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
-import { workplaneCenteringOffset } from "@/lib/workplaneCentering";
+import { workplaneAlignRotation, workplaneCentringShift } from "@/lib/workplaneArrange";
 import { t, type MessageKey } from "@/lib/i18n";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { useLanguage } from "@/lib/useLanguage";
@@ -159,7 +159,6 @@ import {
   placementPatchForNewShape,
   placementWorkplaneCoordinates,
   placementWorkplaneFingerprint,
-  placementWorkplanePoint,
   placementWorkplaneFromSurface,
   placementWorkplaneIsBase,
   translationToWorkplane,
@@ -2833,6 +2832,9 @@ function shapeAabb(shape: WorkplaneShape): Cuboid {
     maxZ: shape.z + halfDepth,
   };
 }
+
+/** Ein Koerper ohne Gedaechtnis traegt keine gebackene Drehung. */
+const NO_BAKED_ROTATION = { rotation: 0, rotationX: 0, rotationZ: 0 };
 
 function boundsForShapes(shapes: WorkplaneShape[]): Cuboid {
   const bounds = shapes.map(meshAabb);
@@ -8415,21 +8417,31 @@ export function SketchForgeEditor({
       setNotice(t("status.unlockBeforeCenter"));
       return;
     }
-    const offset = workplaneCenteringOffset(boundsForShapes(movable));
-    if (!offset) {
+    // Zentriert wird auf der Arbeitsebene, die gerade gilt - auf der
+    // Hauptebene ist das wie bisher die Mitte der Platte.
+    const workplane = placementWorkplaneRef.current;
+    const centre = selectionCenterOnWorkplane(movable, workplane);
+    if (![centre.x, centre.y, centre.z].every(Number.isFinite)) {
       setNotice(t("status.nothingMeasurable"));
       return;
     }
-    const offsetX = cleanNearZero(offset.x);
-    const offsetZ = cleanNearZero(offset.z);
-    if (offsetX === 0 && offsetZ === 0) {
+    const shift = workplaneCentringShift({ x: centre.x, y: centre.y, z: centre.z }, workplane);
+    const offsetX = cleanNearZero(shift.x);
+    const offsetY = cleanNearZero(shift.y);
+    const offsetZ = cleanNearZero(shift.z);
+    if (offsetX === 0 && offsetY === 0 && offsetZ === 0) {
       setNotice(t("status.alreadyCentered"));
       return;
     }
     const movableIds = new Set(movable.map((shape) => shape.id));
     commitShapes(
       shapes.map((shape) => (movableIds.has(shape.id)
-        ? { ...shape, x: cleanNearZero(shape.x + offsetX), z: cleanNearZero(shape.z + offsetZ) }
+        ? {
+          ...shape,
+          x: cleanNearZero(shape.x + offsetX),
+          z: cleanNearZero(shape.z + offsetZ),
+          elevation: cleanNearZero((shape.elevation ?? 0) + offsetY),
+        }
         : shape)),
       selectedIds,
       movable.length === 1 ? t("status.centeredOne") : t("status.centeredMany", { count: movable.length }),
@@ -8456,17 +8468,21 @@ export function SketchForgeEditor({
       setNotice(t("status.unlockBeforeAlignWorkplane"));
       return;
     }
+    /*
+     * Ausrichten dreht nur - verschoben wird nichts. Jeder Koerper dreht sich
+     * um seine eigene Mitte, damit eine Auswahl ihre Anordnung behaelt; wer
+     * sie auch noch zusammenruecken will, nimmt danach das Zentrieren.
+     *
+     * Die Drehung, die schon im Netz steckt, wird herausgerechnet. Sonst
+     * kaeme die Lage der Ebene oben auf die alte Drehung, und ein schon
+     * gedrehter Koerper laege hinterher irgendwo - auf der Hauptebene sogar
+     * gar nicht, weil dort die Lage der Ebene eine Null ist und eine Null
+     * nichts aendert.
+     */
     const workplane = placementWorkplaneRef.current;
-    const places = movable.map((shape) => placementWorkplaneCoordinates(workplane, {
-      x: shape.x,
-      y: (shape.elevation ?? 0) + shape.height / 2,
-      z: shape.z,
-    }));
-    const centreX = places.reduce((total, place) => total + place.x, 0) / places.length;
-    const centreZ = places.reduce((total, place) => total + place.z, 0) / places.length;
-    const patches = new Map(movable.map((shape, index) => [
+    const patches = new Map(movable.map((shape) => [
       shape.id,
-      placementPatchForNewShape(shape, workplane, placementWorkplanePoint(workplane, places[index].x - centreX, places[index].z - centreZ)),
+      workplaneAlignRotation(workplane, shape.parametricSource ?? NO_BAKED_ROTATION),
     ]));
     commitShapes(
       shapes.map((shape) => {
