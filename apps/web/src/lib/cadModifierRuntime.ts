@@ -97,6 +97,18 @@ export function selectableCadModifierEdge(
   return edge.selectable && edge.manifold && !edge.boundary && edge.angle + 1e-3 >= sharpAngle;
 }
 
+/**
+ * Dieselbe Kante, ohne die Schwelle: jede, die sich grundsaetzlich bearbeiten
+ * laesst - unabhaengig davon, ob der Schieberegler sie gerade zeigt. So bleibt
+ * eine feinere Kante im Bild sicht- und anklickbar, statt bis zum Verschieben
+ * des Reglers unsichtbar zu sein.
+ */
+export function cadModifierCandidateEdge(
+  edge: Pick<CadModifierEdge, "selectable" | "manifold" | "boundary">,
+) {
+  return edge.selectable && edge.manifold && !edge.boundary;
+}
+
 export function edgeModifierSelectionStatus(prepared: boolean, selectedCount: number, availableCount: number) {
   return prepared
     ? t("edge.selectionStatus", { selected: selectedCount, available: availableCount })

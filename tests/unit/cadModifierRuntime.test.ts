@@ -5,6 +5,7 @@ import {
   CAD_MODIFIER_REQUEST_TIMEOUT_MS,
   CAD_MODIFIER_RUNTIME_BASE,
   cadModifierBaseDeflection,
+  cadModifierCandidateEdge,
   cadModifierPrepareTimeoutMs,
   cadModifierTessellationDeflection,
   SKETCH_CAD_DEFLECTION,
@@ -125,5 +126,37 @@ describe("tessellation deflection", () => {
   it("starts a sketch body at the fineness the sketch itself was built with", () => {
     const afterFillet = cadModifierTessellationDeflection("standard", 6, SKETCH_CAD_DEFLECTION);
     expect(afterFillet.linear).toBeLessThanOrEqual(SKETCH_CAD_DEFLECTION.linear);
+  });
+});
+
+/**
+ * Eine Kante unterhalb der eingestellten Schwelle war frueher weder zu sehen
+ * noch anzuklicken - der Klick verfiel stumm, bis man den Schieberegler von
+ * Hand bewegte. Sie bleibt jetzt sichtbar (gedaempft) und waehlbar.
+ */
+describe("edges below the sharp-angle threshold", () => {
+  const edge = (angle: number, extra: Partial<{ selectable: boolean; manifold: boolean; boundary: boolean }> = {}) => ({
+    angle,
+    selectable: true,
+    manifold: true,
+    boundary: false,
+    ...extra,
+  });
+
+  it("counts every edge that could be treated at all", () => {
+    expect(cadModifierCandidateEdge(edge(5))).toBe(true);
+    expect(cadModifierCandidateEdge(edge(80))).toBe(true);
+    expect(cadModifierCandidateEdge(edge(80, { selectable: false }))).toBe(false);
+    expect(cadModifierCandidateEdge(edge(80, { manifold: false }))).toBe(false);
+    expect(cadModifierCandidateEdge(edge(80, { boundary: true }))).toBe(false);
+  });
+
+  it("is wider than what the threshold currently shows", () => {
+    const shallow = edge(12);
+    expect(selectableCadModifierEdge(shallow, 30)).toBe(false);
+    expect(cadModifierCandidateEdge(shallow)).toBe(true);
+    // Ein Klick senkt die Schwelle auf den Winkel der Kante - danach zaehlt sie.
+    const lowered = Math.max(1, Math.min(30, Math.floor(shallow.angle)));
+    expect(selectableCadModifierEdge(shallow, lowered)).toBe(true);
   });
 });
