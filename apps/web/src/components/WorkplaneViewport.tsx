@@ -4366,6 +4366,7 @@ export function WorkplaneViewport({
     const shape = shapesRef.current.find((entry) => entry.id === id);
     if (!edit || !shape) {
       setEditingDimension(null);
+      setPinnedMeasureKey(null);
       return;
     }
     const value = parseMeasurementInput(edit.value);
@@ -4392,6 +4393,7 @@ export function WorkplaneViewport({
         });
       }
       setEditingDimension(null);
+      setPinnedMeasureKey(null);
       return;
     }
     if (Number.isFinite(value) && value > 0) {
@@ -4426,6 +4428,7 @@ export function WorkplaneViewport({
           onResizeRegionChangeRef.current(next.region);
         }
         setEditingDimension(null);
+        setPinnedMeasureKey(null);
         return;
       }
       if (edit.axis === "width") {
@@ -4477,6 +4480,9 @@ export function WorkplaneViewport({
 
   const cancelDimensionEdit = useCallback(() => {
     setEditingDimension(null);
+    // Ohne das bliebe die eben bearbeitete Achse angeheftet, und die beiden
+    // anderen Masse waeren wieder verschwunden.
+    setPinnedMeasureKey(null);
   }, []);
 
   const beginRotationEdit = useCallback((handleKey: string, x: number, y: number) => {
@@ -7150,6 +7156,21 @@ function syncTransformOverlay(
       return [handleKey, Array.from(axes).map((axis) => makeFootprintDimensionMark(handleKey, axis))];
     }),
   );
+  /*
+   * Welche Kante die Kamera gerade sieht. Die Masse einer einzelnen Auswahl
+   * stehen dauerhaft an diesen Kanten - sonst muesste man erst einen Griff
+   * ueberfahren, um zu erfahren, wie gross das Objekt ist.
+   *
+   * Eine Breite wird an der vorderen oder hinteren Kante gezeichnet
+   * ("right-mid" bzw. "left-mid"), eine Laenge an der rechten oder linken
+   * ("near-mid" bzw. "far-mid") - siehe makeFootprintDimensionMark.
+   */
+  const cameraView = state.camera.position.clone().sub(frame.center);
+  const widthDimensionKey = cameraView.dot(zFootAxis) >= 0 ? "right-mid" : "left-mid";
+  const depthDimensionKey = cameraView.dot(xFootAxis) >= 0 ? "near-mid" : "far-mid";
+  const alwaysVisibleDimensionKeys = frame.singleShape
+    ? [widthDimensionKey, depthDimensionKey, heightHandleKey]
+    : [];
   const dimensionMarks = {
     ...footprintDimensionMarks,
     [heightHandleKey]: [makeDimensionMark("height", heightHandleKey, "height", heightLabel, lowerCenterWorld, upperCenterWorld, rightOut, project)],
@@ -7283,6 +7304,7 @@ function syncTransformOverlay(
     handles,
     rotateHandles,
     dimensions: dimensionMarks,
+    alwaysVisibleDimensionKeys,
     rotationWheel: rotationWheels.y,
     rotationWheels,
     rotationPlaneCenters,

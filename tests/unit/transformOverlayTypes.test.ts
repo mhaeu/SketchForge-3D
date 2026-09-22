@@ -255,3 +255,32 @@ describe("rotation handle projection", () => {
     expect(snappedWheelRotation(-157, 179, direction, 22.5)).toEqual({ delta: expected, pointerAngle: -157.5 });
   });
 });
+
+/**
+ * Die Masse einer einzelnen Auswahl stehen dauerhaft an den Kanten, die die
+ * Kamera sieht - ohne dass man erst einen Griff ueberfaehrt. Welche Kante das
+ * ist, entscheidet dieselbe Regel wie fuer die Griffe selbst; hier wird sie
+ * nachgerechnet.
+ */
+describe("dimension labels that stay on screen", () => {
+  // Breite an der vorderen oder hinteren Kante, Laenge an der rechten oder
+  // linken - so vergibt makeFootprintDimensionMark die Griffnamen.
+  const keysForCamera = (towardsNear: number, towardsRight: number) => [
+    towardsNear >= 0 ? "right-mid" : "left-mid",
+    towardsRight >= 0 ? "near-mid" : "far-mid",
+    "top-height",
+  ];
+
+  it("takes the near and right edges when the camera stands there", () => {
+    expect(keysForCamera(1, 1)).toEqual(["right-mid", "near-mid", "top-height"]);
+  });
+
+  it("swaps to the far and left edges from the other corner", () => {
+    expect(keysForCamera(-1, -1)).toEqual(["left-mid", "far-mid", "top-height"]);
+  });
+
+  it("names one handle per axis, so no measurement is drawn twice", () => {
+    const keys = keysForCamera(1, -1);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});

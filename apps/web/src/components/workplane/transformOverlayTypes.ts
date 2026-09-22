@@ -185,6 +185,12 @@ export type TransformOverlayState = {
   handles: Array<{ key: string; className: string; kind: TransformHandleKind; x: number; y: number; title: string; angle?: number }>;
   rotateHandles: Array<{ key: string; className: string; x: number; y: number; plane: RotationPlaneBasis }>;
   dimensions: Record<string, DimensionMark[]>;
+  /**
+   * Die Griffe, deren Masse bei einer einzelnen Auswahl stehen bleiben, auch
+   * ohne dass man einen Griff ueberfaehrt: Breite, Laenge und Hoehe, jeweils
+   * an der Kante, die die Kamera gerade sieht. Bei mehreren Formen leer.
+   */
+  alwaysVisibleDimensionKeys: string[];
   rotationWheel: RotationWheelView | null;
   rotationWheels: Record<RotationAxis, RotationWheelView>;
   rotationPlaneCenters: Record<RotationAxis, { x: number; y: number; z: number }>;

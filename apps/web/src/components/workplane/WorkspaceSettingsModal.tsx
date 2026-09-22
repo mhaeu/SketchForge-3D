@@ -564,6 +564,11 @@ export function WorkspaceSettingsModal({
                       />
                     </label>
                   </div>
+                  <WorkspaceToggle
+                    label={t("workspace.showGrid")}
+                    checked={workspace.showGrid}
+                    onChange={(showGrid) => patchWorkspace({ showGrid })}
+                  />
                   <WorkspaceSelect label={t("workspace.gridBlockSize")} value={workspace.gridBlockPreset} options={GRID_BLOCK_PRESETS} onChange={setGridBlockPreset} />
                   <GridColorControl color={gridColor} onChange={(nextGridColor) => patchWorkspace({ gridColor: nextGridColor })} />
                   {workspace.gridBlockPreset === "Custom" ? (

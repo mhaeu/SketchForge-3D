@@ -61,7 +61,11 @@ export function TransformOverlay({
   onCommitRotationEdit,
   onCancelRotationEdit,
 }: TransformOverlayProps) {
-  const marks = measureKey ? (box.dimensions[measureKey] ?? []) : [];
+  // Ohne ueberfahrenen oder angehefteten Griff zeigt eine einzelne Auswahl
+  // trotzdem ihre drei Masse - lesbar und anklickbar, ohne vorher zu suchen.
+  const marks = measureKey
+    ? (box.dimensions[measureKey] ?? [])
+    : (box.alwaysVisibleDimensionKeys ?? []).flatMap((key) => box.dimensions[key] ?? []);
   const visibleMarks = (hideDimensionMarks ? [] : marks).filter((mark) => mark.key !== editingDimension?.key);
   const handleMeasureKey = (handle: TransformOverlayState["handles"][number]) => measureKeyForHandle(handle.kind, handle.key, box);
   const protractorTicks = Array.from({ length: 16 }, (_, index) => {

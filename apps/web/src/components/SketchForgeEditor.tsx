@@ -9844,7 +9844,7 @@ export function SketchForgeEditor({
           event.currentTarget.value = "";
         }}
       />
-      <div className="editor-toast" role="status">
+      <div className="editor-toast" role="status" title={notice}>
         {notice}
       </div>
       <pre data-codex-state hidden>

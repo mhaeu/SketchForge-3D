@@ -3404,6 +3404,8 @@ svg.sketch-reference-icon {
   display: none;
 }
 
+/* Eine lange Meldung wird umgebrochen statt abgeschnitten - abgeschnitten
+   stand dort die halbe Auskunft, und gerade die langen sagen etwas. */
 .editor-toast {
   position: fixed;
   left: 64px;
@@ -3411,15 +3413,15 @@ svg.sketch-reference-icon {
   z-index: 50;
   max-width: min(420px, calc(100vw - 380px));
   padding: 8px 12px;
-  overflow: hidden;
   color: #2b455c;
   font-size: 13px;
   font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #cfdce5;
-  border-radius: 3px;
+  border-radius: 10px;
   box-shadow: 0 2px 10px rgba(28, 48, 68, 0.14);
   pointer-events: none;
 }
