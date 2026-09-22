@@ -177,7 +177,8 @@ export type SketchProfile = {
   circles?: SketchCircle[];
 };
 
-export type SketchOperation = "extrude" | "revolve";
+/** Was aus der Zeichnung wird: hochziehen, um eine Achse drehen, oder einem Pfad folgen. */
+export type SketchOperation = "extrude" | "revolve" | "sweep";
 
 export type GearType = "spur" | "helical" | "bevel";
 

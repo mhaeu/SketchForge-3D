@@ -15,6 +15,7 @@ import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives"
 import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngle";
 import { alignSketchPoint, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
+import { sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
@@ -924,7 +925,7 @@ export function SketchWorkspace({
 
   return (
     <main className="sketch-workspace-stage">
-      <div className="sketch-mode-badge">{operation === "revolve" ? t("sketch.revolveBadge") : t("sketch.viewBadge")}</div>
+      <div className="sketch-mode-badge">{operation === "revolve" ? t("sketch.revolveBadge") : operation === "sweep" ? t("sketch.sweepBadge") : t("sketch.viewBadge")}</div>
       {operation === "revolve" ? <SketchRevolvePreview positions={revolvePreviewPositions} /> : null}
       <div className="camera-controls sketch-camera-controls" aria-label={t("sketch.viewControls")}>
         <button aria-label={t("sketch.resetView")} onClick={() => { setZoom(1); setPan({ x: 0, z: 0 }); }}><Home size={28} /></button>
@@ -1126,6 +1127,28 @@ export function SketchWorkspace({
               pointerEvents="none"
             />
           ) : null}
+          {operation === "sweep" ? (() => {
+            /*
+             * Im Folgen-Modus sagt die Zeichnung selbst, was wofuer gilt: Was
+             * geschlossen ist, ist die Form; der offene Zug ist der Weg. Damit
+             * das nicht geraten werden muss, traegt er seinen Namen und eine
+             * eigene Farbe - und er steht senkrecht auf der Zeichenebene, auch
+             * wenn er hier flach danebenliegt.
+             */
+            const spine = sweepSpinePath(displayProfile);
+            if (!spine) return null;
+            const label = spine.points[Math.floor(spine.points.length / 2)] ?? spine.points[0];
+            return (
+              <g className="sketch-sweep-path" pointerEvents="none">
+                {spine.steps.map(({ segment, from, to }) => (
+                  <line key={`sweep-${segment.id}`} x1={from.x} y1={from.z} x2={to.x} y2={to.z} />
+                ))}
+                {label ? (
+                  <text x={label.x} y={label.z - 14 * screenUnit} fontSize={12 * screenUnit}>{t("sketch.pathBadge")}</text>
+                ) : null}
+              </g>
+            );
+          })() : null}
           <g className="sketch-circles">
             {(displayProfile.circles ?? []).map((circle) => {
               const chosen = selected?.kind === "circle" && selected.id === circle.id;

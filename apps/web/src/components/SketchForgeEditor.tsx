@@ -641,7 +641,17 @@ function ensureSketchCadWorker() {
   return worker;
 }
 
-async function cadShapeFromSketchProfile(profile: SketchProfile, height: number, existing?: WorkplaneShape | null) {
+/**
+ * Der Koerper aus der Zeichnung: hochgezogen oder einem Pfad folgend. Beides
+ * geht denselben Weg durch den CAD-Kern, nur der Auftrag unterscheidet sich -
+ * und beim Folgen braucht es keine Hoehe, die steckt im Pfad.
+ */
+async function cadShapeFromSketchProfile(
+  profile: SketchProfile,
+  height: number,
+  existing?: WorkplaneShape | null,
+  operation: "extrude" | "sweep" = "extrude",
+) {
   const safeHeight = Math.max(MIN_SHAPE_DIMENSION, height);
   const worker = ensureSketchCadWorker();
   const requestId = ++sketchCadRequestId;
@@ -651,13 +661,16 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
       reject(new Error(t("status.sketchWorkerTimeout")));
     }, 30_000);
     sketchCadPending.set(requestId, { resolve, reject, timer });
-    worker.postMessage({ type: "build", requestId, profile: expandSketchCircles(cloneSketchProfile(profile)), height: safeHeight });
+    const prepared = expandSketchCircles(cloneSketchProfile(profile));
+    worker.postMessage(operation === "sweep"
+      ? { type: "sweep", requestId, profile: prepared }
+      : { type: "build", requestId, profile: prepared, height: safeHeight });
   });
   if (response.type === "error") throw new Error(response.message);
   const source = canonicalizeShape({
     ...(existing ?? {
-      id: createLocalId("sketch-extrusion"),
-      name: t("shape.sketchExtrusion"),
+      id: createLocalId(operation === "sweep" ? "sketch-sweep" : "sketch-extrusion"),
+      name: operation === "sweep" ? t("shape.sketchSweep") : t("shape.sketchExtrusion"),
       kind: "mesh" as const,
       color: "#d41721",
       x: 0,
@@ -669,7 +682,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
       rotation: 0,
     }),
     sketchProfile: cloneSketchProfile(profile),
-    sketchOperation: "extrude",
+    sketchOperation: operation,
     edgeTreatments: undefined,
     edgeTreatmentHistory: undefined,
     cadDisplayEdges: undefined,
@@ -677,7 +690,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
   });
   const shape = shapeFromCadMesh(source, response.positions, response.normals, response.indices, response.brep, SKETCH_CAD_DEFLECTION);
   if (!shape) throw new Error(t("status.sketchWorkerEmpty"));
-  return { ...shape, sketchProfile: cloneSketchProfile(profile), sketchOperation: "extrude" as const };
+  return { ...shape, sketchProfile: cloneSketchProfile(profile), sketchOperation: operation };
 }
 
 async function shapeFromRevolvedSketchProfile(
@@ -6875,7 +6888,13 @@ export function SketchForgeEditor({
     setSketchMeasureStart(null);
     setSketchMeasurement(null);
     setEditingSketchShapeId(editingId);
-    setNotice(editingId ? t("status.editingSketch", { operation }) : operation === "revolve" ? t("status.revolveStarted") : t("status.sketchStarted"));
+    setNotice(editingId
+      ? t("status.editingSketch", { operation })
+      : operation === "revolve"
+        ? t("status.revolveStarted")
+        : operation === "sweep"
+          ? t("status.sweepStarted")
+          : t("status.sketchStarted"));
   }, []);
 
   const beginSketchEdit = useCallback(() => {
@@ -7431,11 +7450,17 @@ export function SketchForgeEditor({
         resolved = await shapeFromRevolvedSketchProfile(sketchProfile, sketchRevolveSettings, existing);
       } else {
         setNotice(t("status.buildingSketch"));
-        const extrusion = await cadShapeFromSketchProfile(sketchProfile, height, existing);
-        resolved = placeSketchExtrusion(extrusion, activeSketchWorkplane, existing);
+        const built = await cadShapeFromSketchProfile(sketchProfile, height, existing, sketchOperation === "sweep" ? "sweep" : "extrude");
+        resolved = placeSketchExtrusion(built, activeSketchWorkplane, existing);
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : sketchOperation === "revolve" ? t("status.cannotRevolve") : t("status.cannotExtrude"));
+      setNotice(error instanceof Error
+        ? error.message
+        : sketchOperation === "revolve"
+          ? t("status.cannotRevolve")
+          : sketchOperation === "sweep"
+            ? t("status.cannotSweep")
+            : t("status.cannotExtrude"));
       return;
     }
     if (!resolved) {
@@ -11348,7 +11373,7 @@ function SecondaryToolbar({
                   <div className="toolbar-section-tools">
                     <button className="sketch-command-button primary" type="button" onClick={onSketchFinish}>
                       <Check />
-                      <span>{sketchOperation === "revolve" ? t("sketch.finishRevolve") : t("sketch.finishSketch")}</span>
+                      <span>{sketchOperation === "revolve" ? t("sketch.finishRevolve") : sketchOperation === "sweep" ? t("sketch.finishSweep") : t("sketch.finishSketch")}</span>
                     </button>
                     <button className="sketch-command-button cancel" type="button" onClick={onSketchCancel}>
                       <X />
@@ -11383,6 +11408,10 @@ function SecondaryToolbar({
                         <button type="button" role="menuitem" onClick={() => startSketch("revolve")}>
                           <strong>{t("sketch.revolveBadge")}</strong>
                           <span>{t("sketch.revolveHint")}</span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => startSketch("sweep")}>
+                          <strong>{t("sketch.sweepBadge")}</strong>
+                          <span>{t("sketch.sweepHint")}</span>
                         </button>
                       </div>
                     ) : null}

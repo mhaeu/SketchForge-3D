@@ -3835,6 +3835,24 @@ svg.sketch-reference-icon {
 /* Die Winkel, die dauerhaft dastehen, treten gegen die Vorschau zurueck: man
    soll sie ablesen koennen, ohne dass sie mit der Zeichnung um
    Aufmerksamkeit streiten. */
+/* Der Pfad im Folgen-Modus: er liegt in der Zeichnung flach neben der Form,
+   gemeint ist er aber senkrecht dazu - deshalb hebt er sich ab und traegt
+   seinen Namen. */
+.sketch-sweep-path > line {
+  stroke: #8a4fd6;
+  stroke-width: 3;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.85;
+}
+
+.sketch-sweep-path > text {
+  fill: #8a4fd6;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-anchor: middle;
+}
+
 /* Ein echter Kreis: gezeichnet wie eine Kante, aber ohne Stuetzpunkte - an
    ihm gibt es nur seine Groesse zu aendern. */
 .sketch-circle {

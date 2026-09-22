@@ -1,11 +1,22 @@
 import type { SketchProfile } from "@/types/sketchforge";
 
-export type SketchCadBuildRequest = {
-  type: "build";
-  requestId: number;
-  profile: SketchProfile;
-  height: number;
-};
+export type SketchCadBuildRequest =
+  | {
+    type: "build";
+    requestId: number;
+    profile: SketchProfile;
+    height: number;
+  }
+  | {
+    /**
+     * Folgen: die Form wandert den Pfad entlang, statt gerade hochgezogen zu
+     * werden. Beides steht in derselben Zeichnung - der geschlossene Umriss
+     * ist die Form, der offene Zug der Weg.
+     */
+    type: "sweep";
+    requestId: number;
+    profile: SketchProfile;
+  };
 
 export type SketchCadBuildResponse =
   | {
