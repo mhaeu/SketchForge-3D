@@ -86,6 +86,8 @@ import {
 } from "@/components/workplane/TransformOverlay";
 import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, MeasurementAccuracy, ShapeAsset, WorkplaneNote, WorkplaneNoteAnchor, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { NOTE_TEXT_LIMIT } from "@/lib/workplaneNotes";
+import { OriginDimensionOverlay } from "@/components/workplane/OriginDimensionOverlay";
+import { computeOriginAxisDistance, createOriginDimensionOverlay, type OriginDimensionOverlayData } from "@/lib/originDimensionLines";
 import { REFERENCE_POINT_ARM_MM, REFERENCE_POINT_MARKER_MM, referencePointPosition, isReferencePoint } from "@/lib/referencePoint";
 import type { CadModifierEdge } from "@/lib/cadModifierTypes";
 
@@ -96,6 +98,7 @@ const MAX_GRID_BLOCK_SIZE = 200;
 const WORKSPACE_DEFAULTS_STORAGE_PREFIX = "sketchForge.workspaceDefault.";
 const MOVE_DIMENSIONS_ENABLED_STORAGE_KEY = "sketchForge.editor.moveDimensionsEnabled";
 const SIZE_DIMENSIONS_ENABLED_STORAGE_KEY = "sketchForge.editor.sizeDimensionsEnabled";
+const ORIGIN_DIMENSIONS_ENABLED_STORAGE_KEY = "sketchForge.editor.originDimensionsEnabled";
 const DEFAULT_WORKSPACE = DEFAULT_WORKPLANE_WORKSPACE;
 const CAMERA_FOV = 38;
 const CAMERA_HOME = new THREE.Vector3(118, 96, 118);
@@ -325,6 +328,18 @@ function readSizeDimensionsEnabled() {
   return window.localStorage.getItem(SIZE_DIMENSIONS_ENABLED_STORAGE_KEY) !== "false";
 }
 
+/**
+ * Ob eine einzelne Auswahl ihren Abstand zum Nullpunkt der Arbeitsflaeche
+ * zeigt. Beim Ausrichten nach dem Raster ist das die Zahl, die man sucht -
+ * beim freien Modellieren steht sie im Weg, deshalb ein Schalter.
+ */
+function readOriginDimensionsEnabled() {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  return window.localStorage.getItem(ORIGIN_DIMENSIONS_ENABLED_STORAGE_KEY) !== "false";
+}
+
 type ShapeRenderRecord = {
   object: THREE.Group;
   shape: WorkplaneShape;
@@ -345,6 +360,7 @@ type ThreeState = {
   helperLayer: THREE.Group;
   transformGuideLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
+  originDimensionLayer: THREE.Group;
   modifierLayer: THREE.Group;
   shapeRecords: Map<string, ShapeRenderRecord>;
   officialShapeLayerActive: boolean;
@@ -812,6 +828,143 @@ function projectToScreen(point: THREE.Vector3, state: ThreeState) {
     x: ((projected.x + 1) / 2) * rect.width,
     y: ((1 - projected.y) / 2) * rect.height,
   };
+}
+
+/**
+ * Die beiden Abstandslinien zum Nullpunkt in der Szene: je ein Strich mit
+ * Pfeilspitze, vom Ursprung der Arbeitsflaeche bis zur naechsten Kante der
+ * Form. Sie liegen in einer eigenen Ebene, damit sie mit dem Schalter in
+ * einem Zug verschwinden.
+ */
+function syncOriginDimensionWorldLines(state: ThreeState, frame: OriginDimensionFrame | null, theme: ResolvedAppTheme) {
+  const layer = state.originDimensionLayer;
+  const signature = frame
+    ? [frame.origin.x, frame.origin.y, frame.origin.z, frame.distanceX, frame.distanceZ, theme].join(":")
+    : "";
+  if (layer.userData.originDimensionSignature === signature) {
+    return;
+  }
+  layer.userData.originDimensionSignature = signature;
+  disposeChildren(layer);
+  if (!frame || (frame.distanceX === null && frame.distanceZ === null)) {
+    state.needsRender = true;
+    return;
+  }
+
+  const origin = frame.origin;
+  const solidColor = theme === "dark" ? "#f1f8fc" : "#111a21";
+  const solidPoints: number[] = [];
+
+  const addSegment = (points: number[], start: THREE.Vector3, end: THREE.Vector3) => {
+    points.push(start.x, start.y, start.z, end.x, end.y, end.z);
+  };
+  const addWideSegments = (points: number[], color: string, linewidth: number, opacity: number, renderOrder: number) => {
+    if (points.length === 0) {
+      return;
+    }
+    const geometry = new LineSegmentsGeometry();
+    geometry.setPositions(points);
+    const material = new LineMaterial({
+      color,
+      linewidth,
+      worldUnits: false,
+      transparent: true,
+      opacity,
+      depthTest: false,
+      depthWrite: false,
+      alphaToCoverage: false,
+    });
+    material.toneMapped = false;
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    material.resolution.set(Math.max(1, rect.width), Math.max(1, rect.height));
+    const lines = new LineSegments2(geometry, material);
+    lines.renderOrder = renderOrder;
+    lines.frustumCulled = false;
+    setObjectRenderLayer(lines, RENDER_LAYER_HELPERS);
+    layer.add(lines);
+  };
+  const addArrow = (endpoint: THREE.Vector3, direction: THREE.Vector3, magnitude: number) => {
+    const arrowLength = Math.min(1.1, Math.max(0.26, magnitude * 0.5));
+    const arrowWidth = arrowLength * 0.72;
+    const base = endpoint.clone().addScaledVector(direction, -arrowLength);
+    const perpendicular = new THREE.Vector3(-direction.z, 0, direction.x).multiplyScalar(arrowWidth / 2);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute([
+        endpoint.x, endpoint.y, endpoint.z,
+        base.x + perpendicular.x, base.y, base.z + perpendicular.z,
+        base.x - perpendicular.x, base.y, base.z - perpendicular.z,
+      ], 3),
+    );
+    const arrowMaterial = new THREE.MeshBasicMaterial({
+      color: solidColor,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 1,
+      depthTest: false,
+      depthWrite: false,
+    });
+    arrowMaterial.toneMapped = false;
+    const arrow = new THREE.Mesh(geometry, arrowMaterial);
+    arrow.renderOrder = 1002;
+    arrow.frustumCulled = false;
+    setObjectRenderLayer(arrow, RENDER_LAYER_HELPERS);
+    layer.add(arrow);
+  };
+
+  const addLeg = (endpoint: THREE.Vector3 | null) => {
+    if (!endpoint) return;
+    const delta = endpoint.clone().sub(origin);
+    const length = delta.length();
+    if (length < 1e-9) return;
+    const direction = delta.multiplyScalar(1 / length);
+    const overrun = Math.min(2, Math.max(0.5, length * 0.15));
+    const start = origin.clone().addScaledVector(direction, -overrun);
+    addSegment(solidPoints, start, endpoint);
+    addArrow(endpoint, direction, length);
+  };
+
+  addLeg(frame.xEndpoint);
+  addLeg(frame.zEndpoint);
+
+  addWideSegments(solidPoints, solidColor, 1.45, 1, 1001);
+  state.needsRender = true;
+}
+
+function syncOriginDimensionOverlay(
+  state: ThreeState | null,
+  shape: WorkplaneShape | null,
+  workplane: PlacementWorkplane,
+  accuracy: MeasurementAccuracy,
+  theme: ResolvedAppTheme,
+  overlayRef: MutableRefObject<OriginDimensionOverlayData | null>,
+  setOverlay: Dispatch<SetStateAction<OriginDimensionOverlayData | null>>,
+) {
+  if (!state) {
+    return;
+  }
+  const frame = shape ? originFrameForShape(shape, workplane, accuracy) : null;
+  syncOriginDimensionWorldLines(state, frame, theme);
+  const rect = state.renderer.domElement.getBoundingClientRect();
+  const next = frame && (frame.distanceX !== null || frame.distanceZ !== null)
+    ? createOriginDimensionOverlay({
+        originWorld: { x: frame.origin.x, y: frame.origin.y, z: frame.origin.z },
+        xEndpointWorld: frame.xEndpoint ? { x: frame.xEndpoint.x, y: frame.xEndpoint.y, z: frame.xEndpoint.z } : null,
+        zEndpointWorld: frame.zEndpoint ? { x: frame.zEndpoint.x, y: frame.zEndpoint.y, z: frame.zEndpoint.z } : null,
+        distanceX: frame.distanceX,
+        distanceZ: frame.distanceZ,
+        accuracy,
+        width: rect.width,
+        height: rect.height,
+        project: ({ x, y, z }) => projectToScreen(new THREE.Vector3(x, y, z), state),
+      })
+    : null;
+  if (JSON.stringify(overlayRef.current) === JSON.stringify(next)) {
+    return;
+  }
+  overlayRef.current = next;
+  setOverlay(next);
 }
 
 function syncMoveDimensionOverlay(
@@ -2036,6 +2189,75 @@ function importedShapeProjectionBounds(
   return { min, max };
 }
 
+/**
+ * Der Rahmen einer Form, gemessen in einem beliebigen Achsenkreuz und von
+ * einem beliebigen Ursprung aus. Sowohl der Auswahlrahmen als auch die
+ * Abstandsanzeige zum Nullpunkt rechnen damit - vorher stand dieselbe
+ * Eckenschleife zweimal da.
+ */
+function projectShapeExtent(
+  shape: WorkplaneShape,
+  xAxis: THREE.Vector3,
+  yAxis: THREE.Vector3,
+  zAxis: THREE.Vector3,
+  origin: THREE.Vector3,
+): { min: THREE.Vector3; max: THREE.Vector3 } {
+  const importedBounds = importedShapeProjectionBounds(shape, xAxis, yAxis, zAxis);
+  if (importedBounds) {
+    const originProjection = new THREE.Vector3(origin.dot(xAxis), origin.dot(yAxis), origin.dot(zAxis));
+    return { min: importedBounds.min.sub(originProjection), max: importedBounds.max.sub(originProjection) };
+  }
+  const center = shapeCenter(shape);
+  const extents = shapeLocalExtents(shape);
+  const shapeQuaternion = quaternionForShape(shape);
+  const min = new THREE.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  const max = new THREE.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+  [-1, 1].forEach((xSign) => {
+    [-1, 1].forEach((ySign) => {
+      [-1, 1].forEach((zSign) => {
+        const point = new THREE.Vector3(xSign * extents.x, ySign * extents.y, zSign * extents.z).applyQuaternion(shapeQuaternion).add(center);
+        const local = point.sub(origin);
+        local.set(local.dot(xAxis), local.dot(yAxis), local.dot(zAxis));
+        min.min(local);
+        max.max(local);
+      });
+    });
+  });
+  return { min, max };
+}
+
+type OriginDimensionFrame = {
+  origin: THREE.Vector3;
+  distanceX: number | null;
+  distanceZ: number | null;
+  xEndpoint: THREE.Vector3 | null;
+  zEndpoint: THREE.Vector3 | null;
+};
+
+/**
+ * Abstand einer einzelnen Form zum Ursprung der Arbeitsflaeche, immer entlang
+ * deren eigener Achsen - anders als `selectionFrameForShapes` weicht das nie
+ * auf die Drehung der Form selbst aus, weil der Abstand zum Nullpunkt am
+ * Raster gemessen wird und nicht an der Neigung des Objekts.
+ */
+function originFrameForShape(shape: WorkplaneShape, workplane: PlacementWorkplane, accuracy: MeasurementAccuracy): OriginDimensionFrame {
+  const origin = new THREE.Vector3(workplane.origin.x, workplane.origin.y, workplane.origin.z);
+  const xAxis = new THREE.Vector3(workplane.xAxis.x, workplane.xAxis.y, workplane.xAxis.z).normalize();
+  const yAxis = new THREE.Vector3(workplane.normal.x, workplane.normal.y, workplane.normal.z).normalize();
+  const zAxis = new THREE.Vector3(workplane.zAxis.x, workplane.zAxis.y, workplane.zAxis.z).normalize();
+  const { min, max } = projectShapeExtent(shape, xAxis, yAxis, zAxis, origin);
+  const eps = 0.5 * 10 ** -accuracy;
+  const distanceX = computeOriginAxisDistance((min.x + max.x) / 2, (max.x - min.x) / 2, eps);
+  const distanceZ = computeOriginAxisDistance((min.z + max.z) / 2, (max.z - min.z) / 2, eps);
+  return {
+    origin,
+    distanceX,
+    distanceZ,
+    xEndpoint: distanceX !== null ? origin.clone().addScaledVector(xAxis, distanceX) : null,
+    zEndpoint: distanceZ !== null ? origin.clone().addScaledVector(zAxis, distanceZ) : null,
+  };
+}
+
 function selectionFrameForShapes(
   shapes: WorkplaneShape[],
   selectedIds: string[],
@@ -2071,27 +2293,9 @@ function selectionFrameForShapes(
   }
 
   selected.forEach((shape) => {
-    const importedBounds = importedShapeProjectionBounds(shape, xAxis, yAxis, zAxis);
-    if (importedBounds) {
-      const originProjection = new THREE.Vector3(origin.dot(xAxis), origin.dot(yAxis), origin.dot(zAxis));
-      localMin.min(importedBounds.min.sub(originProjection));
-      localMax.max(importedBounds.max.sub(originProjection));
-      return;
-    }
-    const center = shapeCenter(shape);
-    const extents = shapeLocalExtents(shape);
-    const shapeQuaternion = quaternionForShape(shape);
-    [-1, 1].forEach((xSign) => {
-      [-1, 1].forEach((ySign) => {
-        [-1, 1].forEach((zSign) => {
-          const point = new THREE.Vector3(xSign * extents.x, ySign * extents.y, zSign * extents.z).applyQuaternion(shapeQuaternion).add(center);
-          const offset = point.sub(origin);
-          const local = new THREE.Vector3(offset.dot(xAxis), offset.dot(yAxis), offset.dot(zAxis));
-          localMin.min(local);
-          localMax.max(local);
-        });
-      });
-    });
+    const bounds = projectShapeExtent(shape, xAxis, yAxis, zAxis, origin);
+    localMin.min(bounds.min);
+    localMax.max(bounds.max);
   });
 
   const localCenter = localMin.clone().add(localMax).multiplyScalar(0.5);
@@ -3077,6 +3281,8 @@ export function WorkplaneViewport({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [moveDimensionOverlay, setMoveDimensionOverlay] = useState<MoveDimensionOverlayState | null>(null);
   const [moveDimensionsEnabled, setMoveDimensionsEnabled] = useState(true);
+  const [originDimensionOverlay, setOriginDimensionOverlay] = useState<OriginDimensionOverlayData | null>(null);
+  const [originDimensionsEnabled, setOriginDimensionsEnabled] = useState(true);
   const [sizeDimensionsEnabled, setSizeDimensionsEnabled] = useState(true);
   const [challengeTutorialCollapsed, setChallengeTutorialCollapsed] = useState(false);
 
@@ -3108,6 +3314,8 @@ export function WorkplaneViewport({
   const moveDimensionSessionRef = useRef<MoveDimensionSession | null>(null);
   const moveDimensionOverlayRef = useRef<MoveDimensionOverlayState | null>(null);
   const moveDimensionsEnabledRef = useRef(true);
+  const originDimensionOverlayRef = useRef<OriginDimensionOverlayData | null>(null);
+  const originDimensionsEnabledRef = useRef(true);
   const marqueeRef = useRef<MarqueeState | null>(null);
   // Redraws the buttons and overlay labels when the language changes.
   useLanguage();
@@ -3167,6 +3375,24 @@ export function WorkplaneViewport({
       workplaneModeRef.current || (modifierActiveRef.current && !modifierPreviewActiveRef.current) ? [] : ids
     ),
     [],
+  );
+
+  /**
+   * Nur bei genau einer ausgewaehlten Form, und nur wenn gerade nichts anderes
+   * den Bildschirm belegt: Waehrend eines Zugs steht schon das Massband da,
+   * und zwei Bemassungen uebereinander liest niemand.
+   */
+  const originDimensionShapeFor = useCallback(
+    (shapesList: WorkplaneShape[], ids = selectedIdsRef.current) => {
+      if (!originDimensionsEnabledRef.current) return null;
+      const rendered = renderSelectionIds(ids);
+      if (rendered.length !== 1) return null;
+      if (alignModeRef.current || mirrorModeRef.current) return null;
+      if (rulerModeRef.current || rulerDeleteModeRef.current || rulerMoveModeRef.current) return null;
+      if (transformRef.current || dragRef.current) return null;
+      return shapesList.find((shape) => shape.id === rendered[0] && !shape.hidden) ?? null;
+    },
+    [renderSelectionIds],
   );
 
   useEffect(() => {
@@ -3240,6 +3466,66 @@ export function WorkplaneViewport({
       return next;
     });
   }, []);
+
+  const clearOriginDimensions = useCallback(() => {
+    originDimensionOverlayRef.current = null;
+    setOriginDimensionOverlay(null);
+    if (threeRef.current) {
+      syncOriginDimensionWorldLines(threeRef.current, null, resolvedThemeRef.current);
+    }
+  }, []);
+
+  /** Beim Wiedereinschalten soll eine schon ausgewaehlte Form sofort wieder
+   *  ihre Bemassung zeigen, nicht erst bei der naechsten Auswahl. */
+  const refreshOriginDimensions = useCallback(() => {
+    if (!threeRef.current) return;
+    syncOriginDimensionOverlay(
+      threeRef.current,
+      originDimensionShapeFor(shapesRef.current),
+      placementWorkplaneRef.current,
+      workspaceRef.current.accuracy,
+      resolvedThemeRef.current,
+      originDimensionOverlayRef,
+      setOriginDimensionOverlay,
+    );
+    threeRef.current.needsRender = true;
+  }, [originDimensionShapeFor]);
+
+  useEffect(() => {
+    const applyStoredPreference = () => {
+      const enabled = readOriginDimensionsEnabled();
+      originDimensionsEnabledRef.current = enabled;
+      setOriginDimensionsEnabled(enabled);
+      if (!enabled) {
+        clearOriginDimensions();
+      } else {
+        refreshOriginDimensions();
+      }
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === ORIGIN_DIMENSIONS_ENABLED_STORAGE_KEY) {
+        applyStoredPreference();
+      }
+    };
+    applyStoredPreference();
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [clearOriginDimensions, refreshOriginDimensions]);
+
+  const changeOriginDimensionsEnabled = useCallback((enabled: boolean) => {
+    originDimensionsEnabledRef.current = enabled;
+    setOriginDimensionsEnabled(enabled);
+    try {
+      window.localStorage.setItem(ORIGIN_DIMENSIONS_ENABLED_STORAGE_KEY, String(enabled));
+    } catch {
+      // Ohne Speicher gilt die Stellung wenigstens fuer diese Sitzung.
+    }
+    if (!enabled) {
+      clearOriginDimensions();
+    } else {
+      refreshOriginDimensions();
+    }
+  }, [clearOriginDimensions, refreshOriginDimensions]);
 
   const changeMoveDimensionsEnabled = useCallback((enabled: boolean) => {
     moveDimensionsEnabledRef.current = enabled;
@@ -3410,9 +3696,18 @@ export function WorkplaneViewport({
       );
       syncAlignOverlay(threeRef.current, alignReferenceShapesRef.current, selectedIdsRef.current, alignModeRef.current, alignAnchorIdRef.current, alignHandlesRef.current, alignOverlayRef, setAlignOverlay);
       syncMirrorOverlay(threeRef.current, mirrorReferenceShapesRef.current, selectedIdsRef.current, mirrorModeRef.current, mirrorOverlayRef, setMirrorOverlay);
+      syncOriginDimensionOverlay(
+        threeRef.current,
+        originDimensionShapeFor(shapes),
+        placementWorkplaneRef.current,
+        workspaceRef.current.accuracy,
+        resolvedThemeRef.current,
+        originDimensionOverlayRef,
+        setOriginDimensionOverlay,
+      );
       threeRef.current.needsRender = true;
     }
-  }, [shapes]);
+  }, [originDimensionShapeFor, shapes]);
 
   useEffect(() => {
     alignReferenceShapesRef.current = alignReferenceShapes;
@@ -3472,9 +3767,18 @@ export function WorkplaneViewport({
       );
       syncAlignOverlay(threeRef.current, alignReferenceShapesRef.current, selectedIds, alignModeRef.current, alignAnchorIdRef.current, alignHandlesRef.current, alignOverlayRef, setAlignOverlay);
       syncMirrorOverlay(threeRef.current, mirrorReferenceShapesRef.current, selectedIds, mirrorModeRef.current, mirrorOverlayRef, setMirrorOverlay);
+      syncOriginDimensionOverlay(
+        threeRef.current,
+        originDimensionShapeFor(shapesRef.current, selectedIds),
+        placementWorkplaneRef.current,
+        workspaceRef.current.accuracy,
+        resolvedThemeRef.current,
+        originDimensionOverlayRef,
+        setOriginDimensionOverlay,
+      );
       threeRef.current.needsRender = true;
     }
-  }, [clearMoveDimensions, selectedIds]);
+  }, [clearMoveDimensions, originDimensionShapeFor, selectedIds]);
 
   useEffect(() => {
     modifierActiveRef.current = modifierActive;
@@ -3593,6 +3897,7 @@ export function WorkplaneViewport({
     if (state) {
       state.modifierLayer.visible = !workplaneMode;
       state.moveDimensionLayer.visible = !workplaneMode;
+      state.originDimensionLayer.visible = !workplaneMode;
       state.needsRender = true;
     }
     if (workplaneMode) {
@@ -3716,6 +4021,15 @@ export function WorkplaneViewport({
         syncMirrorOverlay(state, mirrorReferenceShapesRef.current, selectedIdsRef.current, mirrorModeRef.current, mirrorOverlayRef, setMirrorOverlay);
         syncRulerOverlay(state, rulerModelRef.current, rulerOverlayRef, setRulerOverlay, workspaceRef.current.accuracy);
         syncNoteOverlay(state, notesRef.current, notesVisibleRef.current, noteOverlayRef, setNoteOverlay);
+        syncOriginDimensionOverlay(
+          state,
+          originDimensionShapeFor(previewShapes),
+          placementWorkplaneRef.current,
+          workspaceRef.current.accuracy,
+          resolvedThemeRef.current,
+          originDimensionOverlayRef,
+          setOriginDimensionOverlay,
+        );
         syncMoveDimensionOverlay(
           state,
           moveDimensionSessionRef.current,
@@ -3760,6 +4074,7 @@ export function WorkplaneViewport({
       disposeChildren(state.helperLayer);
       disposeChildren(state.transformGuideLayer);
       disposeChildren(state.moveDimensionLayer);
+      disposeChildren(state.originDimensionLayer);
       disposeChildren(state.modifierLayer);
       state.renderer.dispose();
       host.replaceChildren();
@@ -6273,6 +6588,9 @@ export function WorkplaneViewport({
             onPointerLeave={handlePointerLeave}
           />
           {!workplaneMode && marqueeRect ? <div className="selection-marquee" style={marqueeRect} /> : null}
+          {!workplaneMode && originDimensionsEnabled && originDimensionOverlay ? (
+            <OriginDimensionOverlay overlay={originDimensionOverlay} />
+          ) : null}
           {!workplaneMode && moveDimensionsEnabled && moveDimensionOverlay ? (
             <MoveDimensionOverlay
               overlay={moveDimensionOverlay}
@@ -6385,11 +6703,13 @@ export function WorkplaneViewport({
           snap={snap}
           themePreference={themePreference}
           moveDimensionsEnabled={moveDimensionsEnabled}
+          originDimensionsEnabled={originDimensionsEnabled}
           showProjectNameInToolbar={showProjectNameInToolbar}
           onWorkspaceChange={setWorkspace}
           onSnapChange={setSnap}
           onThemePreferenceChange={onThemePreferenceChange}
           onMoveDimensionsEnabledChange={changeMoveDimensionsEnabled}
+          onOriginDimensionsEnabledChange={changeOriginDimensionsEnabled}
           onShowProjectNameInToolbarChange={onShowProjectNameInToolbarChange}
           onMakeDefault={makeWorkspaceDefault}
           onClose={() => setSettingsOpen(false)}
@@ -6496,10 +6816,13 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const moveDimensionLayer = new THREE.Group();
   moveDimensionLayer.name = "MoveDimensions";
   moveDimensionLayer.layers.set(RENDER_LAYER_HELPERS);
+  const originDimensionLayer = new THREE.Group();
+  originDimensionLayer.name = "OriginDimensions";
+  originDimensionLayer.layers.set(RENDER_LAYER_HELPERS);
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, moveDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -6512,7 +6835,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     const height = Math.max(1, host.clientHeight);
     renderer.setSize(width, height);
     updateCameraViewport(state.camera, width, height);
-    [state.transformGuideLayer, state.moveDimensionLayer].forEach((layer) => {
+    [state.transformGuideLayer, state.moveDimensionLayer, state.originDimensionLayer].forEach((layer) => {
       layer.traverse((child) => {
         const material = (child as THREE.Mesh).material;
         const materials = Array.isArray(material) ? material : material ? [material] : [];
@@ -6537,6 +6860,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     helperLayer,
     transformGuideLayer,
     moveDimensionLayer,
+    originDimensionLayer,
     modifierLayer,
     shapeRecords: new Map<string, ShapeRenderRecord>(),
     officialShapeLayerActive: false,

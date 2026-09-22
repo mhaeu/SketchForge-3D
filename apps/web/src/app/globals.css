@@ -4415,6 +4415,21 @@ svg.sketch-reference-icon {
   appearance: textfield;
 }
 
+/* Die Abstaende zum Nullpunkt: nur zum Ablesen, deshalb faengt hier nichts
+   den Zeiger ab. */
+.origin-dimension-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.origin-dimension-value {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.92;
+}
+
 /* --- Notizen ---------------------------------------------------------------
    Eine Notiz ist HTML ueber der Leinwand, keine Textur darin: So bleibt die
    Schrift bei jeder Zoomstufe scharf, laesst sich markieren und kopieren. Die

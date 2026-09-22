@@ -60,7 +60,7 @@ export function formatMoveDimension(value: number, accuracy: number) {
   return normalized.toFixed(accuracy);
 }
 
-function dimensionLabelPosition(
+export function dimensionLabelPosition(
   origin: MoveDimensionScreenPoint,
   endpoint: MoveDimensionScreenPoint,
   otherEndpoint: MoveDimensionScreenPoint,
@@ -88,7 +88,7 @@ function dimensionLabelPosition(
   };
 }
 
-function dimensionLineStart(origin: MoveDimensionScreenPoint, endpoint: MoveDimensionScreenPoint) {
+export function dimensionLineStart(origin: MoveDimensionScreenPoint, endpoint: MoveDimensionScreenPoint) {
   const dx = endpoint.x - origin.x;
   const dy = endpoint.y - origin.y;
   const length = Math.max(1, Math.hypot(dx, dy));

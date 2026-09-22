@@ -225,11 +225,13 @@ export function WorkspaceSettingsModal({
   snap,
   themePreference,
   moveDimensionsEnabled,
+  originDimensionsEnabled,
   showProjectNameInToolbar,
   onWorkspaceChange,
   onSnapChange,
   onThemePreferenceChange,
   onMoveDimensionsEnabledChange,
+  onOriginDimensionsEnabledChange,
   onShowProjectNameInToolbarChange,
   onMakeDefault,
   onClose,
@@ -238,11 +240,13 @@ export function WorkspaceSettingsModal({
   snap: GridSize;
   themePreference: AppThemePreference;
   moveDimensionsEnabled: boolean;
+  originDimensionsEnabled: boolean;
   showProjectNameInToolbar: boolean;
   onWorkspaceChange: (next: WorkspaceSettings) => void;
   onSnapChange: (next: GridSize) => void;
   onThemePreferenceChange?: (preference: AppThemePreference) => void;
   onMoveDimensionsEnabledChange: (enabled: boolean) => void;
+  onOriginDimensionsEnabledChange: (enabled: boolean) => void;
   onShowProjectNameInToolbarChange?: (show: boolean) => void;
   onMakeDefault: () => void;
   onClose: () => void;
@@ -453,6 +457,11 @@ export function WorkspaceSettingsModal({
                     label={t("workspace.showMoveDimensions")}
                     checked={moveDimensionsEnabled}
                     onChange={onMoveDimensionsEnabledChange}
+                  />
+                  <WorkspaceToggle
+                    label={t("workspace.showOriginDimensions")}
+                    checked={originDimensionsEnabled}
+                    onChange={onOriginDimensionsEnabledChange}
                   />
                   <WorkspaceToggle
                     label={t("workspace.selectBeforeMoving")}
