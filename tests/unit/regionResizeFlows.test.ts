@@ -22,6 +22,15 @@ function openEdges(positions: number[]) {
   return [...counts.entries()].filter(([, count]) => count !== 2).map(([edge]) => edge);
 }
 
+function signedVolume(positions: number[]) {
+  let total = 0;
+  for (let i = 0; i + 8 < positions.length; i += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = positions.slice(i, i + 9);
+    total += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
+  return total;
+}
+
 // Mirrors bakeShapeTransformIntoMesh: the geometry as a triangle soup in the
 // mesh frame (x/z centred, y from the underside), sized to its bounds.
 function meshShape(geometry: THREE.BufferGeometry): WorkplaneShape {
@@ -123,5 +132,63 @@ describe("region resize keeps real meshes closed through handle sequences", () =
       }
     }
     }
+  }
+});
+
+/**
+ * Ein Zug am Lift-Pfeil meldet waehrend der Bewegung immer wieder dasselbe
+ * Ausgangsobjekt und denselben Ausgangsbereich, nur mit einem neuen Ziel. Die
+ * Vorbereitung dazu bleibt liegen, damit nicht bei jedem Bildpunkt neu
+ * geschnitten werden muss - und genau daran lag der Fehler: Sie hing an der
+ * **Richtung** des Zugs, ihr Schluessel nannte aber nur, welche Flaechen sich
+ * bewegen. Wer erst hinauf und dann hinunter zog, bekam die Vorbereitung der
+ * alten Richtung, und wer weiter zog, als es Material gab, schob den
+ * Teilbereich durch den Rest des Koerpers hindurch.
+ */
+describe("ein Zug, der die Richtung wechselt", () => {
+  const liveDrag = (shape: WorkplaneShape, region: ResizeRegion, delta: number) =>
+    regionResizedShape(shape, region, { ...region, minY: region.minY + delta, maxY: region.maxY + delta }, "stretch");
+
+  for (const [shapeName, build] of Object.entries(geometries)) {
+    it(`${shapeName}: hinauf und dann weit hinunter ergibt dasselbe wie ein frischer Zug`, () => {
+      const shape = meshShape(build());
+      const full = fullShapeRegion(shape);
+      const region = tightenRegionToShape(shape, { ...full, minY: full.maxY / 3, maxY: (full.maxY * 2) / 3 });
+
+      // Erst ein Stueck hinauf - das legt die Vorbereitung an.
+      expect(liveDrag(shape, region, 3)).not.toBeNull();
+      // Dann weit hinunter, weiter als unter dem Kasten Material steht.
+      const reversed = liveDrag(shape, region, -full.maxY * 2)!;
+
+      // Derselbe Zug an einem Koerper, dessen Punkte dieser Rechnung noch nie
+      // untergekommen sind - also ohne alte Vorbereitung.
+      const untouched = meshShape(build());
+      const fresh = liveDrag(untouched, region, -full.maxY * 2)!;
+
+      expect(reversed.patch.height).toBeCloseTo(fresh.patch.height!, 6);
+      expect(signedVolume(reversed.patch.importedMesh!.positions))
+        .toBeCloseTo(signedVolume(fresh.patch.importedMesh!.positions), 6);
+      expect(openEdges(reversed.patch.importedMesh!.positions)).toEqual([]);
+    });
+
+    it(`${shapeName}: ein Zug weit ueber das Material hinaus laesst den Koerper heil`, () => {
+      const shape = meshShape(build());
+      const startVolume = signedVolume(shape.importedMesh!.positions);
+      const full = fullShapeRegion(shape);
+      const region = tightenRegionToShape(shape, { ...full, minY: full.maxY / 3, maxY: (full.maxY * 2) / 3 });
+
+      let previous = startVolume;
+      for (const delta of [-1, -full.maxY / 2, -full.maxY, -full.maxY * 3]) {
+        const next = liveDrag(shape, region, delta)!;
+        const volume = signedVolume(next.patch.importedMesh!.positions);
+        // Der Kasten schiebt sich nicht durch den Rest: Der Koerper wird
+        // dabei laenger, nie duenner als er war, und bleibt geschlossen.
+        expect(volume).toBeGreaterThan(startVolume - 1e-6);
+        expect(volume).toBeGreaterThan(previous - 1e-6);
+        expect(next.patch.height!).toBeGreaterThan(shape.height - 1e-6);
+        expect(openEdges(next.patch.importedMesh!.positions)).toEqual([]);
+        previous = volume;
+      }
+    });
   }
 });

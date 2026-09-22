@@ -193,8 +193,24 @@ type Prepared = {
 
 let lastPrepared: { positions: number[]; from: ResizeRegion; faces: string; result: Prepared } | null = null;
 
+/**
+ * Der Schluessel, unter dem die Vorbereitung liegen bleibt.
+ *
+ * Er muss alles nennen, woran sie haengt - und dazu gehoert die **Richtung**:
+ * Wandern beide Flaechen einer Achse (der Kasten wird verschoben), dann fuehrt
+ * die eine und die andere folgt, und daran entscheidet sich, welches Material
+ * ausserhalb mitgenommen wird. Stand hier nur, *welche* Flaechen wandern,
+ * wurde beim Umkehren der Bewegung die alte Vorbereitung weiterbenutzt: Das
+ * Mitgenommene gehoerte zur alten Richtung, und wer weiter zog, als es
+ * Material gab, schob den Teilbereich durch den Rest des Koerpers hindurch.
+ */
 function faceKey(maps: Record<Axis, AxisMap>) {
-  return AXES.map((axis) => `${maps[axis].minMoved ? 1 : 0}${maps[axis].maxMoved ? 1 : 0}`).join("");
+  return AXES.map((axis) => {
+    const map = maps[axis];
+    const min = map.minMoved ? (map.to[0] < map.from[0] ? "-" : "+") : "0";
+    const max = map.maxMoved ? (map.to[1] > map.from[1] ? "+" : "-") : "0";
+    return `${min}${max}`;
+  }).join("");
 }
 
 function prepare(positions: number[], from: ResizeRegion, maps: Record<Axis, AxisMap>): Prepared {
