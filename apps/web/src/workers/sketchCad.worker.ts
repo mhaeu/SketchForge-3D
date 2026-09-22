@@ -16,6 +16,13 @@ function kernel() {
     .then((module) => {
       const KernelConstructor = OcctKernel as unknown as new (rawModule: unknown) => OcctKernel;
       return new KernelConstructor(module);
+    })
+    .catch((error) => {
+      // Ein fehlgeschlagener Versuch wird verworfen, damit ein kurzer
+      // Netzaussetzer beim Laden des Kerns nicht die ganze Sitzung vergiftet -
+      // der naechste Aufruf laedt neu.
+      kernelPromise = null;
+      throw error;
     });
   return kernelPromise;
 }

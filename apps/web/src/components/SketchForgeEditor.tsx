@@ -808,6 +808,12 @@ function getManifoldRuntime() {
     .then((runtime) => {
       runtime.setup();
       return runtime;
+    })
+    .catch((error) => {
+      // Wie beim CAD-Kern: ein fehlgeschlagener Ladeversuch wird verworfen,
+      // sonst scheitert jede Verschneidung bis zum Neuladen der Seite.
+      manifoldRuntimePromise = null;
+      throw error;
     });
   return manifoldRuntimePromise;
 }
@@ -5209,6 +5215,79 @@ function rotationFromQuaternion(quaternion: THREE.Quaternion) {
   };
 }
 
+type ShapeTransformSnapshot = {
+  x: number;
+  z: number;
+  elevation: number;
+  rotationQuaternion: THREE.Quaternion;
+};
+
+type ShapeMoveDelta = {
+  dx: number;
+  dz: number;
+  delevation: number;
+  rotationDelta: THREE.Quaternion;
+};
+
+const ZERO_MOVE_DELTA: ShapeMoveDelta = { dx: 0, dz: 0, delevation: 0, rotationDelta: new THREE.Quaternion() };
+
+/**
+ * Lage und Drehung einer Form, wie sie gerade dasteht.
+ *
+ * Die Drehung backt bei fast jeder Form sofort ins Netz - danach steht
+ * `rotation` wieder auf 0, obwohl sich der Koerper sichtbar gedreht hat. Fuer
+ * die Kette beim Duplizieren heisst das: der Versatz wird immer erkannt, die
+ * Drehung nur bei Text und Gruppen, die sie als Feld weiterfuehren.
+ */
+function shapeTransformSnapshot(shape: WorkplaneShape): ShapeTransformSnapshot {
+  return {
+    x: shape.x,
+    z: shape.z,
+    elevation: shape.elevation ?? 0,
+    rotationQuaternion: quaternionForShape(shape),
+  };
+}
+
+function shapeMoveDeltaBetween(from: ShapeTransformSnapshot, to: ShapeTransformSnapshot): ShapeMoveDelta {
+  return {
+    dx: to.x - from.x,
+    dz: to.z - from.z,
+    delevation: to.elevation - from.elevation,
+    rotationDelta: to.rotationQuaternion.clone().multiply(from.rotationQuaternion.clone().invert()),
+  };
+}
+
+function isZeroMoveDelta(delta: ShapeMoveDelta) {
+  const epsilon = 1e-6;
+  return Math.abs(delta.dx) < epsilon && Math.abs(delta.dz) < epsilon && Math.abs(delta.delevation) < epsilon
+    && 1 - Math.abs(delta.rotationDelta.w) < epsilon;
+}
+
+/**
+ * Verschiebt und dreht eine Kopie um denselben Betrag, den ihre Vorlage seit
+ * ihrer eigenen Entstehung erfahren hat. Die Verschiebung ist ein einfaches
+ * Feld; die Drehung nicht, weil sie bei den meisten Formen sofort backt. Bei
+ * Text und Gruppen bleibt sie ein Feld und wird weitergeschrieben, bei allem
+ * anderen wird derselbe Weg benutzt, der auch einen echten Dreh-Griff backt -
+ * so trifft sie die Eckpunkte der Kopie und nicht nur ein Feld, das gleich
+ * wieder auf 0 faellt.
+ */
+function applyShapeMoveDelta(shape: WorkplaneShape, delta: ShapeMoveDelta): WorkplaneShape {
+  const moved: WorkplaneShape = {
+    ...shape,
+    x: shape.x + delta.dx,
+    z: shape.z + delta.dz,
+    elevation: (shape.elevation ?? 0) + delta.delevation,
+  };
+  if (isZeroMoveDelta({ ...ZERO_MOVE_DELTA, rotationDelta: delta.rotationDelta })) {
+    return moved;
+  }
+  if (shapeTransformShouldRemainEditable(moved)) {
+    return { ...moved, ...rotationFromQuaternion(delta.rotationDelta.clone().multiply(quaternionForShape(moved))) };
+  }
+  return bakeShapeTransformIntoMesh({ ...moved, ...rotationFromQuaternion(delta.rotationDelta) });
+}
+
 function cleanShapePatch(patch: ShapeUpdatePatch): Partial<WorkplaneShape> {
   const { bakeTransform: _bakeTransform, ...rest } = patch;
   const next = { ...rest };
@@ -7282,6 +7361,18 @@ export function SketchForgeEditor({
     );
   }, [commitShapes, hasSelection, selectedIds, shapes]);
 
+  /*
+   * Die Kette beim Duplizieren: Wer eine Kopie anlegt, sie verschiebt und
+   * wieder dupliziert, bekommt denselben Versatz noch einmal - aus
+   * wiederholtem Druecken wird so eine Reihe. Gemerkt wird das nur fuer die
+   * Sitzung, nicht im Projekt: an der zuletzt erzeugten Kopie (`chainId`) und
+   * ihrem Stand bei der Entstehung (`baseline`), damit sich der seither
+   * zurueckgelegte Weg im Moment des naechsten Duplizierens ausrechnen laesst.
+   * Hat sich die Kopie nicht bewegt, wird der zuletzt benutzte Versatz erneut
+   * angewandt - genau das macht das blosse Weiterdruecken aus.
+   */
+  const smartDuplicateRef = useRef<{ chainId: string; baseline: ShapeTransformSnapshot; delta: ShapeMoveDelta } | null>(null);
+
   const duplicateSelected = useCallback(() => {
     if (!hasSelection) {
       setNotice(t("status.selectShapeFirst"));
@@ -7289,14 +7380,25 @@ export function SketchForgeEditor({
     }
     // Upstream fix (62502b7): duplicates are placed at the same position as the
     // original, not offset. The reference point must never be duplicated at all.
-    const duplicates = selectedShapes
-      .filter((shape) => !isReferencePoint(shape))
-      .map((shape) => cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"));
-    if (duplicates.length === 0) {
+    const duplicable = selectedShapes.filter((shape) => !isReferencePoint(shape));
+    if (duplicable.length === 0) {
       setNotice(t("status.referenceNoDuplicate"));
       return;
     }
-    commitShapes([...shapes, ...duplicates], duplicates.map((shape) => shape.id), duplicates.length === 1 ? t("status.duplicatedOne") : t("status.duplicatedMany", { count: duplicates.length }));
+    if (duplicable.length === 1) {
+      const shape = duplicable[0];
+      const chain = smartDuplicateRef.current;
+      const continuing = chain?.chainId === shape.id;
+      const movedSinceCreation = continuing ? shapeMoveDeltaBetween(chain.baseline, shapeTransformSnapshot(shape)) : ZERO_MOVE_DELTA;
+      const delta = continuing && isZeroMoveDelta(movedSinceCreation) ? chain.delta : movedSinceCreation;
+      const duplicate = applyShapeMoveDelta(cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"), delta);
+      commitShapes([...shapes, duplicate], [duplicate.id], t("status.duplicatedOne"));
+      smartDuplicateRef.current = { chainId: duplicate.id, baseline: shapeTransformSnapshot(duplicate), delta };
+      return;
+    }
+    smartDuplicateRef.current = null;
+    const duplicates = duplicable.map((shape) => cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"));
+    commitShapes([...shapes, ...duplicates], duplicates.map((shape) => shape.id), t("status.duplicatedMany", { count: duplicates.length }));
   }, [commitShapes, hasSelection, selectedShapes, shapes]);
 
   const copySelected = useCallback(() => {
