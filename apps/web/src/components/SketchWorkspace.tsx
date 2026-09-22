@@ -12,6 +12,7 @@ import { isSketchPanGesture } from "@/lib/sketchPointerControls";
 import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes";
 import { selectWholeValue } from "@/lib/numberField";
 import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives";
+import { sketchPreviewAngle } from "@/lib/sketchAngle";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { t } from "@/lib/i18n";
@@ -761,6 +762,15 @@ export function SketchWorkspace({
   const measurementLabel = formatDimension(measurementLength, workspace.accuracy);
   const previewLength = activePoint && hover ? Math.hypot(hover.x - activePoint.x, hover.z - activePoint.z) : 0;
   const previewLabel = formatDimension(previewLength, workspace.accuracy);
+  /*
+   * Der Winkel zur zuletzt gezeichneten Kante, waehrend man die naechste
+   * zieht. Er steht neben der Ecke, damit man sie setzen kann, ohne sie
+   * hinterher nachzumessen; ohne eine Kante davor gibt es nichts zu
+   * vergleichen, dann steht auch nichts da.
+   */
+  const previewAngle = activePoint && hover && ["line", "bezier", "smooth"].includes(tool)
+    ? sketchPreviewAngle(profile, activePoint.id, hover)
+    : null;
   const labelOffset = 22 * screenUnit;
   const pointRadius = 5 * screenUnit;
   const controlPointRadius = 6 * screenUnit;
@@ -1101,6 +1111,42 @@ export function SketchWorkspace({
               })()}
             </g>
           ) : null}
+          {previewAngle ? (() => {
+            // Der Bogen sitzt zwischen den beiden Schenkeln, die Beschriftung
+            // auf der Winkelhalbierenden dahinter - so verdeckt sie weder die
+            // Ecke noch eine der Linien.
+            const radius = 30 * screenUnit;
+            const start = {
+              x: previewAngle.vertex.x + previewAngle.from.x * radius,
+              z: previewAngle.vertex.z + previewAngle.from.z * radius,
+            };
+            const end = {
+              x: previewAngle.vertex.x + previewAngle.to.x * radius,
+              z: previewAngle.vertex.z + previewAngle.to.z * radius,
+            };
+            // Welchen der beiden Boegen SVG zeichnet, entscheidet das
+            // Vorzeichen des Kreuzprodukts - gemeint ist immer der kleinere,
+            // der zwischen den Schenkeln liegt.
+            const sweep = previewAngle.from.x * previewAngle.to.z - previewAngle.from.z * previewAngle.to.x > 0 ? 1 : 0;
+            const label = `${previewAngle.degrees.toFixed(1).replace(/\.0$/, "")}°`;
+            const pill = dimensionPillSize(label, screenUnit, 12);
+            const labelDistance = radius + 18 * screenUnit;
+            return (
+              <g className="sketch-angle-preview" pointerEvents="none">
+                <path
+                  d={`M ${start.x} ${start.z} A ${radius} ${radius} 0 0 ${sweep} ${end.x} ${end.z}`}
+                  fill="none"
+                />
+                <g
+                  className="sketch-segment-dimensions preview"
+                  transform={`translate(${previewAngle.vertex.x + previewAngle.bisector.x * labelDistance} ${previewAngle.vertex.z + previewAngle.bisector.z * labelDistance})`}
+                >
+                  <rect x={-pill.width / 2} y={-pill.height / 2} width={pill.width} height={pill.height} rx={pill.radius} />
+                  <text y={5 * screenUnit} fontSize={13 * screenUnit}>{label}</text>
+                </g>
+              </g>
+            );
+          })() : null}
           {pointerAction?.kind === "bezier" ? (
             <g className="sketch-drag-handles" pointerEvents="none">
               <line x1={pointerAction.origin.x * 2 - pointerAction.current.x} y1={pointerAction.origin.z * 2 - pointerAction.current.z} x2={pointerAction.current.x} y2={pointerAction.current.z} />

@@ -3823,6 +3823,15 @@ svg.sketch-reference-icon {
   vector-effect: non-scaling-stroke;
 }
 
+/* Der Winkelbogen beim Zeichnen: derselbe Ton wie die Vorschaulinie, nur
+   duenner - er soll die Ecke zeigen und nicht mit ihr um Aufmerksamkeit
+   streiten. */
+.sketch-angle-preview > path {
+  stroke: #169fce;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 .sketch-segment-dimensions rect {
   fill: rgba(255, 255, 255, 0.94);
   stroke: rgba(220, 229, 235, 0.86);
