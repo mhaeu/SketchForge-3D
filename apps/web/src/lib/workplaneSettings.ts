@@ -161,9 +161,9 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
       const pick = <T extends string>(value: unknown, allowed: readonly T[], previous: T | undefined) => (
         value === undefined ? previous : allowed.includes(value as T) ? (value as T) : previous
       );
-      entry.threadRole = pick(source.threadRole, ["rod", "screw", "nut", "bore"] as const, fallbackEntry?.threadRole);
-      entry.threadHead = pick(source.threadHead, ["cylinder", "countersunk", "hex"] as const, fallbackEntry?.threadHead);
-      entry.threadDrive = pick(source.threadDrive, ["none", "hex", "slot", "phillips", "pozidriv", "torx"] as const, fallbackEntry?.threadDrive);
+      entry.threadRole = pick(source.threadRole, ["rod", "screw", "setScrew", "nut", "bore"] as const, fallbackEntry?.threadRole);
+      entry.threadHead = pick(source.threadHead, ["cylinder", "pan", "countersunk", "hex"] as const, fallbackEntry?.threadHead);
+      entry.threadDrive = pick(source.threadDrive, ["none", "hex", "slot", "phillips", "pozidriv", "torx", "star", "spline"] as const, fallbackEntry?.threadDrive);
       entry.threadHand = pick(source.threadHand, ["right", "left"] as const, fallbackEntry?.threadHand);
       entry.threadProfile = pick(source.threadProfile, ["v", "trapezoidal", "round"] as const, fallbackEntry?.threadProfile);
       entry.threadDiameter = optionalShapeNumber(source.threadDiameter, fallbackEntry?.threadDiameter, MIN_THREAD_DIAMETER, MAX_THREAD_DIAMETER);

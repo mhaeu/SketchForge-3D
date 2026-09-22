@@ -25,12 +25,12 @@ export type ShapeKind =
   | "reference"
   | "loft";
 
-/** Was fuer ein Koerper das Gewinde ist. */
-export type ThreadRole = "rod" | "screw" | "nut" | "bore";
-/** Die Kopfform der Schraube. */
-export type ThreadHead = "cylinder" | "countersunk" | "hex";
-/** Der Angriff im Kopf: Innensechskant, Schlitz, Kreuz, Torx. */
-export type ThreadDrive = "none" | "hex" | "slot" | "phillips" | "pozidriv" | "torx";
+/** Was fuer ein Koerper das Gewinde ist - Stange, Schraube, Gewindestift, Mutter, Loch. */
+export type ThreadRole = "rod" | "screw" | "setScrew" | "nut" | "bore";
+/** Die Kopfform der Schraube: Zylinder-, Linsen-, Senk- oder Sechskantkopf. */
+export type ThreadHead = "cylinder" | "pan" | "countersunk" | "hex";
+/** Der Angriff im Kopf: Innensechskant, Schlitz, Kreuz, Torx, Stern, Innenvielzahn. */
+export type ThreadDrive = "none" | "hex" | "slot" | "phillips" | "pozidriv" | "torx" | "star" | "spline";
 /** Die Gangrichtung. */
 export type ThreadHand = "right" | "left";
 /** Das Gewindeprofil im Querschnitt. */

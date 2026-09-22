@@ -201,11 +201,26 @@ export function defaultThreadPitch(diameter: number) {
 }
 
 export function normalizeThreadRole(value?: string): ThreadRole {
-  return value === "screw" || value === "nut" || value === "bore" ? value : DEFAULT_THREAD_ROLE;
+  return value === "screw" || value === "setScrew" || value === "nut" || value === "bore" ? value : DEFAULT_THREAD_ROLE;
+}
+
+/** Ein Koerper mit Kopf - nur der traegt Kopfhoehe, Kopfform und Kopffase. */
+export function threadHasHead(role: ThreadRole) {
+  return role === "screw";
+}
+
+/**
+ * Wo ein Angriff hingehoert: in den Schraubenkopf, sofern der nicht selbst
+ * ein Sechskant ist, und in die Stirnflaeche des Gewindestifts - der hat gar
+ * keinen Kopf, nur den Angriff.
+ */
+export function threadTakesDrive(role: ThreadRole, head: ThreadHead) {
+  if (role === "setScrew") return true;
+  return role === "screw" && head !== "hex";
 }
 
 export function normalizeThreadHead(value?: string): ThreadHead {
-  return value === "countersunk" || value === "hex" ? value : DEFAULT_THREAD_HEAD;
+  return value === "pan" || value === "countersunk" || value === "hex" ? value : DEFAULT_THREAD_HEAD;
 }
 
 export function normalizeThreadHand(value?: string): ThreadHand {
@@ -323,8 +338,9 @@ export function threadSettings(shape: ThreadShapeFields): ThreadSettings {
   return {
     ...head,
     // Ein Sechskantkopf wird von aussen gefasst; ein Angriff im Kopf waere
-    // dort eine Vertiefung, die kein Werkzeug je sucht.
-    drive: head.head === "hex" ? "none" : normalizeThreadDrive(shape.threadDrive),
+    // dort eine Vertiefung, die kein Werkzeug je sucht. Der Gewindestift hat
+    // dagegen nichts anderes.
+    drive: threadTakesDrive(head.role, head.head) ? normalizeThreadDrive(shape.threadDrive) : "none",
     hand: normalizeThreadHand(shape.threadHand),
     profile,
     clearance: normalizeThreadClearance(shape.threadClearance),
@@ -346,10 +362,13 @@ type HeadShape = Pick<ThreadSettings, "role" | "head" | "diameter" | "pitch">;
 
 /** Die Kopfhoehe nach Norm, gemessen von der Aufstandsflaeche bis zum Schaftbeginn. */
 export function defaultThreadHeadHeight(settings: HeadShape) {
-  if (settings.role !== "screw") return 0;
+  if (!threadHasHead(settings.role)) return 0;
   const spec = threadSizeSpec(settings.diameter, settings.pitch);
   if (settings.head === "countersunk") return (spec.countersunkDiameter - settings.diameter) / 2;
   if (settings.head === "hex") return spec.headHeight * 0.7;
+  // Der Linsenkopf ist flacher und breiter als der Zylinderkopf - ISO 7380
+  // gibt ihm gut die halbe Nenngroesse an Hoehe.
+  if (settings.head === "pan") return settings.diameter * 0.55;
   return spec.headHeight;
 }
 
@@ -358,7 +377,7 @@ export function threadHeadHeightLimits(settings: HeadShape) {
 }
 
 export function normalizeThreadHeadHeight(value: number | undefined, settings: HeadShape) {
-  if (settings.role !== "screw") return 0;
+  if (!threadHasHead(settings.role)) return 0;
   const limits = threadHeadHeightLimits(settings);
   return clamp(finite(value, defaultThreadHeadHeight(settings)), limits.min, limits.max);
 }
@@ -371,6 +390,9 @@ export function normalizeThreadHeadHeight(value: number | undefined, settings: H
 export function threadHeadDiameter(settings: Pick<ThreadSettings, "role" | "head" | "diameter" | "pitch" | "headHeight">) {
   const spec = threadSizeSpec(settings.diameter, settings.pitch);
   if (settings.head === "countersunk") return settings.diameter + settings.headHeight * 2;
+  // Der Linsenkopf steht etwas weiter ueber als der Zylinderkopf (ISO 7380
+  // gegen ISO 4762), damit die Kuppe Platz hat.
+  if (settings.head === "pan") return spec.headDiameter * 1.12;
   return spec.headDiameter;
 }
 
@@ -387,7 +409,20 @@ function headRingRadii(settings: Pick<ThreadSettings, "role" | "head" | "diamete
   if (settings.role === "nut" || settings.head === "hex") {
     return { inscribed: spec.acrossFlats / 2, circumscribed: spec.acrossFlats / Math.sqrt(3) };
   }
+  if (settings.head === "pan") {
+    const crown = panCrownRadius(spec.headDiameter * 1.12 / 2);
+    return { inscribed: crown, circumscribed: crown };
+  }
   return { inscribed: spec.headDiameter / 2, circumscribed: spec.headDiameter / 2 };
+}
+
+/**
+ * Die ebene Kuppe des Linsenkopfs. Ganz rund waere er eine Spitze, und in
+ * einer Spitze sitzt kein Angriff; echte Linsenkoepfe haben oben genauso eine
+ * Flaeche, in der der Innensechskant steht.
+ */
+function panCrownRadius(headRadius: number) {
+  return headRadius * 0.62;
 }
 
 /**
@@ -416,7 +451,10 @@ function chamferRimHeight(settings: HeadChamferShape) {
  * Der Senkkopf bekommt keine: sein Kegel ist die Fase.
  */
 export function threadHeadChamferLimits(settings: HeadChamferShape) {
-  const gilt = settings.role === "nut" || (settings.role === "screw" && settings.head !== "countersunk");
+  // Der Senkkopf ist ein Kegel und der Linsenkopf eine Kuppe - beide haben
+  // keine scharfe Aussenkante, die man brechen koennte.
+  const gilt = settings.role === "nut"
+    || (settings.role === "screw" && settings.head !== "countersunk" && settings.head !== "pan");
   if (!gilt) return { min: 0, max: 0 };
   const spec = threadSizeSpec(settings.diameter, settings.pitch);
   const { inscribed, circumscribed } = headRingRadii(settings);
@@ -444,6 +482,8 @@ export function threadNaturalHeight(settings: Pick<ThreadSettings, "role" | "hea
   if (settings.role === "nut") return threadSizeSpec(settings.diameter, settings.pitch).nutHeight;
   if (settings.role === "screw") return settings.headHeight + settings.diameter * 4;
   if (settings.role === "bore") return settings.diameter * 3;
+  // Ein Gewindestift ist ueblich so lang wie dick bis doppelt so lang.
+  if (settings.role === "setScrew") return settings.diameter * 1.2;
   return settings.diameter * 5;
 }
 
@@ -556,9 +596,10 @@ function scaledFromNearest<T extends { diameter: number }>(rows: readonly T[], d
 }
 
 export function normalizeThreadDrive(value?: string): ThreadDrive {
-  return value === "none" || value === "slot" || value === "phillips" || value === "pozidriv" || value === "torx"
-    ? value
-    : DEFAULT_THREAD_DRIVE;
+  return value === "none" || value === "slot" || value === "phillips" || value === "pozidriv"
+    || value === "torx" || value === "star" || value === "spline"
+      ? value
+      : DEFAULT_THREAD_DRIVE;
 }
 
 /**
@@ -577,6 +618,17 @@ export function threadDriveSpec(drive: ThreadDrive, diameter: number, pitch: num
     const { row, factor, exact } = scaledFromNearest(TORX_BY_DIAMETER, diameter);
     const across = TORX_ACROSS_POINTS[row.label] * factor;
     return { label: exact ? row.label : `${row.label} (${trimNumber(across)} mm)`, across, depth: limit(diameter * 0.5) };
+  }
+  if (drive === "star" || drive === "spline") {
+    /*
+     * Der spitze Stern und der Innenvielzahn sind eigene Profile, aber sie
+     * werden in derselben Groesse gebaut wie der Torx, der zum Gewinde
+     * gehoert: das Werkzeug greift ueber dieselbe Eckenweite. Eine
+     * Normbezeichnung steht bewusst nicht dabei - angegeben wird das Mass.
+     */
+    const { row, factor } = scaledFromNearest(TORX_BY_DIAMETER, diameter);
+    const across = TORX_ACROSS_POINTS[row.label] * factor;
+    return { label: `${trimNumber(across)} mm`, across, depth: limit(diameter * 0.5) };
   }
   if (drive === "slot") {
     const { row, factor } = scaledFromNearest(SLOT_BY_DIAMETER, diameter);
@@ -663,7 +715,7 @@ export function threadDriveProfile(drive: ThreadDrive, spec: ThreadDriveSpec | n
      */
     const major = spec.across / 2;
     const minor = major * 0.8;
-    const lobe = major * 0.22;
+    const lobe = major * 0.19;
     const centre = major - lobe;
     const sector = Math.PI / 3;
     const lobeRadius = (fromLobe: number) => {
@@ -678,6 +730,40 @@ export function threadDriveProfile(drive: ThreadDrive, spec: ThreadDriveSpec | n
         return Math.max(minor, lobeRadius(phase > sector / 2 ? phase - sector : phase));
       },
       corners: Array.from({ length: 6 }, (_, index) => index * sector).flatMap((centreAngle) => [centreAngle - crease, centreAngle + crease]),
+      depth: spec.depth,
+      floorScale: 0.92,
+    };
+  }
+  if (drive === "star" || drive === "spline") {
+    /*
+     * Ein Stern mit geraden Flanken: von der Spitze laeuft eine Gerade in den
+     * Grund, und dort beginnt die naechste. Der echte Torx ist bewusst
+     * verrundet - dieses Profil ist das, was im Baumarkt als spitzer Stern
+     * im Regal liegt, und der Innenvielzahn dasselbe mit zwoelf Zaehnen und
+     * tieferem Grund.
+     */
+    const teeth = drive === "star" ? 6 : 12;
+    const major = spec.across / 2;
+    const minor = major * (drive === "star" ? 0.72 : 0.68);
+    const sector = (Math.PI * 2) / teeth;
+    const half = sector / 2;
+    // Die Flanke als Gerade zwischen Spitze und Grund, in Normalform: der
+    // Halbmesser unter einem Winkel ist der Abstand der Geraden, geteilt durch
+    // den Kosinus zwischen Strahl und Lot.
+    const tip = { x: major, y: 0 };
+    const valley = { x: Math.cos(half) * minor, y: Math.sin(half) * minor };
+    const edge = { x: valley.x - tip.x, y: valley.y - tip.y };
+    const edgeLength = Math.hypot(edge.x, edge.y) || 1;
+    const normal = { x: edge.y / edgeLength, y: -edge.x / edgeLength };
+    const distance = Math.abs(tip.x * normal.x + tip.y * normal.y);
+    return {
+      radiusAt: (angle) => {
+        const phase = wrapUnit(angle / sector) * sector;
+        const fromTip = Math.abs(phase > half ? sector - phase : phase);
+        const along = Math.cos(fromTip) * normal.x + Math.sin(fromTip) * normal.y;
+        return Math.abs(along) < 1e-9 ? major : Math.min(major, distance / Math.abs(along));
+      },
+      corners: Array.from({ length: teeth * 2 }, (_, index) => index * half),
       depth: spec.depth,
       floorScale: 0.92,
     };
@@ -1146,6 +1232,17 @@ export function createThreadGeometry(options: ThreadGeometryOptions) {
         const crown = threadHeadDiameter(settings) / 2;
         return crown + (settings.diameter / 2 - crown) * progress;
       }
+      if (settings.head === "pan") {
+        /*
+         * Die Linse: von der ebenen Kuppe bei y = 0 waechst der Halbmesser
+         * ueber einen Viertelkreis bis zur Aufstandsflaeche. Der Koerper steht
+         * auf seinem Kopf, deshalb ist y = 0 oben.
+         */
+        const outer = threadHeadDiameter(settings) / 2;
+        const crown = panCrownRadius(outer);
+        const progress = headHeight > 0 ? Math.min(1, Math.max(0, y / headHeight)) : 1;
+        return crown + (outer - crown) * Math.sqrt(Math.max(0, 1 - (1 - progress) * (1 - progress)));
+      }
       return spec.headDiameter / 2;
     };
     // Dieselbe Fase wie an der Mutter, nur in der Hoehe des Kopfes.
@@ -1213,7 +1310,29 @@ export function createThreadGeometry(options: ThreadGeometryOptions) {
   } else {
     const rod = threadWall(builder, angles, 0, height, major, minor, settings.pitch, handSign, false, limitRadius, subdivisions, bandHeight, profile.points);
     capFan(builder, rod.bottomEdge, 0, false);
-    capFan(builder, rod.topEdge, height, true);
+    /*
+     * Der Gewindestift hat keinen Kopf, nur den Angriff in der oberen
+     * Stirnflaeche - derselbe Umriss wie im Schraubenkopf, nur andersherum
+     * eingesenkt und am Gewinde beschnitten statt an einer Kopfflanke.
+     */
+    const stiftProfile = settings.role === "setScrew"
+      ? threadDriveProfile(settings.drive, threadDriveSpec(settings.drive, settings.diameter, settings.pitch, height))
+      : null;
+    const stiftDepth = stiftProfile ? Math.min(stiftProfile.depth, height * 0.6) : 0;
+    if (stiftProfile && stiftDepth > 0.05) {
+      const rim = Math.max(0.12, settings.diameter * 0.06);
+      const driveAngles = recessAngles(stiftProfile.corners, segments);
+      const drivePlaces = driveAngles.map((angle, index) => (index === driveAngles.length - 1 ? driveAngles[0] : angle));
+      const mouthRadius = (angle: number) => Math.max(0.05, Math.min(stiftProfile.radiusAt(angle), minor - rim));
+      const driveMouth = ring(builder, drivePlaces, mouthRadius, height);
+      const driveFloor = ring(builder, drivePlaces, (angle) => mouthRadius(angle) * stiftProfile.floorScale, height - stiftDepth);
+      const rodAngles = angles.map((_, index) => (index / segments) * Math.PI * 2);
+      bridgeRings(builder, driveMouth, driveAngles, rod.topEdge, rodAngles, true);
+      wall(builder, driveFloor, driveMouth, true);
+      capFan(builder, driveFloor, height - stiftDepth, true);
+    } else {
+      capFan(builder, rod.topEdge, height, true);
+    }
   }
 
   const natural = threadNaturalFootprint(settings);

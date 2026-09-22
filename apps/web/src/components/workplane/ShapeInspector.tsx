@@ -60,6 +60,7 @@ import {
   threadPitchLimits,
   threadSettings,
   threadSizeFor,
+  threadTakesDrive,
   threadUsesInchPitch,
   threadsPerInchToPitch,
   type ThreadSettings,
@@ -236,12 +237,14 @@ type OptionKeys = ReadonlyArray<{ value: string; label: MessageKey }>;
 const THREAD_ROLE_OPTIONS: OptionKeys = [
   { value: "rod", label: "thread.rod" },
   { value: "screw", label: "thread.screw" },
+  { value: "setScrew", label: "thread.setScrew" },
   { value: "nut", label: "thread.nut" },
   { value: "bore", label: "thread.bore" },
 ];
 
 const THREAD_HEAD_OPTIONS: OptionKeys = [
   { value: "cylinder", label: "thread.headCylinder" },
+  { value: "pan", label: "thread.headPan" },
   { value: "countersunk", label: "thread.headCountersunk" },
   { value: "hex", label: "thread.headHex" },
 ];
@@ -258,6 +261,8 @@ const THREAD_DRIVE_LABELS: Record<Exclude<ThreadDrive, "none">, MessageKey> = {
   phillips: "thread.drivePhillips",
   pozidriv: "thread.drivePozidriv",
   torx: "thread.driveTorx",
+  star: "thread.driveStar",
+  spline: "thread.driveSpline",
 };
 
 /** Turns a list of option keys into the wording of the current language. */
@@ -271,7 +276,9 @@ function translatedOptions(options: OptionKeys): SelectPropertyOption[] {
  * in the option is the whole point - it is what one buys the bit for.
  */
 function threadDriveOptions(settings: ThreadSettings): SelectPropertyOption[] {
-  const headHeight = Math.max(0.2, settings.headHeight);
+  // A set screw carries the recess in its own face, so its depth is measured
+  // against the body rather than against a head it does not have.
+  const headHeight = Math.max(0.2, settings.role === "setScrew" ? settings.diameter : settings.headHeight);
   return [
     { value: "none", label: t("common.none") },
     ...(Object.keys(THREAD_DRIVE_LABELS) as Array<Exclude<ThreadDrive, "none">>).map((drive) => {
@@ -371,18 +378,18 @@ function threadProperties(shape: WorkplaneShape, onUpdate: ShapeInspectorUpdate)
       options: translatedOptions(THREAD_HEAD_OPTIONS),
       onChange: (head) => applyThread({ head: normalizeThreadHead(head) }),
     });
-    // A hex head is gripped from the outside; a recess in it would be one no
-    // tool ever looks for.
-    if (settings.head !== "hex") {
-      properties.push({
-        type: "select",
-        id: "drive",
-        label: t("prop.threadDrive"),
-        value: settings.drive,
-        options: threadDriveOptions(settings),
-        onChange: (drive) => applyThread({ drive: normalizeThreadDrive(drive) }),
-      });
-    }
+  }
+  // A hex head is gripped from the outside; a recess in it would be one no
+  // tool ever looks for. A set screw has nothing else.
+  if (threadTakesDrive(settings.role, settings.head)) {
+    properties.push({
+      type: "select",
+      id: "drive",
+      label: t("prop.threadDrive"),
+      value: settings.drive,
+      options: threadDriveOptions(settings),
+      onChange: (drive) => applyThread({ drive: normalizeThreadDrive(drive) }),
+    });
   }
   properties.push(
     {

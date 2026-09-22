@@ -1307,4 +1307,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "loft.triangle": "Dreieck",
   "loft.pentagon": "Fünfeck",
   "loft.hexagon": "Sechseck",
+  "thread.setScrew": "Gewindestift",
+  "thread.headPan": "Linsenkopf",
+  "thread.driveStar": "Stern (spitz)",
+  "thread.driveSpline": "Innenvielzahn (12 Zähne)",
 };

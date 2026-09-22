@@ -1308,6 +1308,10 @@ export const MESSAGES_EN = {
   "loft.triangle": "Triangle",
   "loft.pentagon": "Pentagon",
   "loft.hexagon": "Hexagon",
+  "thread.setScrew": "Set screw",
+  "thread.headPan": "Pan head",
+  "thread.driveStar": "Star (pointed)",
+  "thread.driveSpline": "Spline (12-point)",
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_EN;

@@ -25,6 +25,7 @@ import {
   MIN_THREAD_DIAMETER,
   MIN_THREAD_QUALITY,
   threadPitchLimits,
+  threadTakesDrive,
 } from "@/lib/threadGeometry";
 import {
   DEFAULT_SPRING_QUALITY,
@@ -68,11 +69,13 @@ const GEAR_TYPE_OPTIONS: Array<{ value: GearType; label: MessageKey }> = [
 const THREAD_ROLE_OPTIONS = [
   { value: "rod", label: "thread.rod" as MessageKey },
   { value: "screw", label: "thread.screw" as MessageKey },
+  { value: "setScrew", label: "thread.setScrew" as MessageKey },
   { value: "nut", label: "thread.nut" as MessageKey },
   { value: "bore", label: "thread.bore" as MessageKey },
 ];
 const THREAD_HEAD_OPTIONS = [
   { value: "cylinder", label: "thread.headCylinder" as MessageKey },
+  { value: "pan", label: "thread.headPan" as MessageKey },
   { value: "countersunk", label: "thread.headCountersunk" as MessageKey },
   { value: "hex", label: "thread.headHex" as MessageKey },
 ];
@@ -83,6 +86,8 @@ const THREAD_DRIVE_OPTIONS = [
   { value: "phillips", label: "thread.drivePhillips" as MessageKey },
   { value: "pozidriv", label: "thread.drivePozidriv" as MessageKey },
   { value: "torx", label: "thread.driveTorx" as MessageKey },
+  { value: "star", label: "thread.driveStar" as MessageKey },
+  { value: "spline", label: "thread.driveSpline" as MessageKey },
 ];
 const THREAD_HAND_OPTIONS = [
   { value: "right", label: "thread.right" as MessageKey },

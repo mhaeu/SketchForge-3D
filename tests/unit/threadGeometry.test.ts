@@ -7,6 +7,7 @@ import {
   normalizeThreadPitch,
   normalizeThreadQuality,
   threadNaturalFootprint,
+  threadNaturalHeight,
   threadSettings,
   threadSizeFor,
   defaultThreadChamfer,
@@ -561,9 +562,15 @@ describe("thread drives", () => {
     }
   });
 
-  it("leaves a hex head alone - it is gripped from the outside", () => {
-    expect(threadSettings({ threadHead: "hex", threadDrive: "torx" }).drive).toBe("none");
-    expect(threadSettings({ threadHead: "cylinder", threadDrive: "torx" }).drive).toBe("torx");
+  it("puts a drive only where one belongs", () => {
+    // The hex head is gripped from the outside, a rod and a nut have no face
+    // to put one in - the set screw has nothing else.
+    expect(threadSettings({ threadRole: "screw", threadHead: "hex", threadDrive: "torx" }).drive).toBe("none");
+    expect(threadSettings({ threadRole: "screw", threadHead: "cylinder", threadDrive: "torx" }).drive).toBe("torx");
+    expect(threadSettings({ threadRole: "screw", threadHead: "pan", threadDrive: "star" }).drive).toBe("star");
+    expect(threadSettings({ threadRole: "rod", threadDrive: "torx" }).drive).toBe("none");
+    expect(threadSettings({ threadRole: "nut", threadDrive: "torx" }).drive).toBe("none");
+    expect(threadSettings({ threadRole: "setScrew", threadDrive: "spline" }).drive).toBe("spline");
   });
 
   it("gives the torx six pointed lobes instead of a wave", () => {
@@ -597,5 +604,103 @@ describe("thread drives", () => {
     expect(normalizeThreadDrive("gibberish")).toBe("hex");
     expect(normalizeThreadDrive(undefined)).toBe("hex");
     expect(normalizeThreadDrive("pozidriv")).toBe("pozidriv");
+  });
+});
+
+/**
+ * Was im Baumarkt als spitzer Stern im Regal liegt, ist nicht der genormte
+ * Torx: der ist nach ISO 10664 bewusst verrundet. Beide stehen deshalb
+ * nebeneinander zur Wahl - und daneben der Innenvielzahn mit zwoelf Zaehnen.
+ */
+describe("pointed drives, pan head and set screw", () => {
+  const closed = (geometry: ReturnType<typeof createThreadGeometry>) => {
+    const position = geometry.getAttribute("position") as unknown as Position;
+    return [...edgeUseCounts(position).values()].every((uses) => uses === 2) && signedVolume(position) > 0;
+  };
+
+  it.each(["star", "spline"] as const)("gives the %s drive straight flanks and sharp tips", (drive) => {
+    const spec = threadDriveSpec(drive, 5, 0.8, 5)!;
+    const profile = threadDriveProfile(drive, spec)!;
+    const teeth = drive === "star" ? 6 : 12;
+    const pitch = 360 / teeth;
+    const radiusAt = (degrees: number) => profile.radiusAt((degrees * Math.PI) / 180);
+
+    // Die Spitze sitzt auf dem Eckenmass, der Grund dazwischen.
+    expect(radiusAt(0)).toBeCloseTo(spec.across / 2, 6);
+    expect(radiusAt(pitch)).toBeCloseTo(spec.across / 2, 6);
+    expect(radiusAt(pitch / 2)).toBeLessThan(spec.across / 2 * 0.8);
+
+    // Gerade Flanke heisst: die Mitte zwischen Spitze und Grund liegt auf der
+    // Verbindungslinie, nicht auf einem Bogen darueber. Der Torx liegt an
+    // derselben Stelle deutlich weiter aussen.
+    const quarter = radiusAt(pitch / 4);
+    const tip = spec.across / 2;
+    const valley = radiusAt(pitch / 2);
+    const straight = (tip + valley) / 2;
+    expect(quarter).toBeLessThan(straight + (tip - valley) * 0.12);
+    expect(profile.corners.length).toBe(teeth * 2);
+  });
+
+  it("keeps the standard torx rounded", () => {
+    const spec = threadDriveSpec("torx", 5, 0.8, 5)!;
+    const torx = threadDriveProfile("torx", spec)!;
+    const star = threadDriveProfile("star", spec)!;
+    const at = (profile: typeof torx, degrees: number) => profile.radiusAt((degrees * Math.PI) / 180);
+    // Dicht an der Spitze traegt die Keule des Torx noch fast das volle Mass,
+    // waehrend die gerade Flanke des Sterns schon abfaellt - das ist der
+    // Unterschied zwischen rund und spitz.
+    expect(at(torx, 6)).toBeGreaterThan(at(star, 6));
+    expect(at(torx, 12)).toBeGreaterThan(at(star, 12));
+    // Und der Stern greift tiefer: sein Grund liegt unter dem Kern des Torx.
+    expect(at(star, 30)).toBeLessThan(at(torx, 30));
+  });
+
+  it.each(["hex", "torx", "star", "spline", "slot", "phillips", "none"] as const)(
+    "builds a closed set screw with a %s drive",
+    (threadDrive) => {
+      const settings = threadSettings({ threadRole: "setScrew", threadDiameter: 6, threadPitch: 1, threadDrive });
+      const footprint = threadNaturalFootprint(settings);
+      expect(closed(createThreadGeometry({
+        width: footprint.width,
+        depth: footprint.depth,
+        height: threadNaturalHeight(settings),
+        threadRole: "setScrew",
+        threadDiameter: 6,
+        threadPitch: 1,
+        threadDrive,
+      }))).toBe(true);
+    },
+  );
+
+  it("gives the set screw no head and a body about as long as it is thick", () => {
+    const settings = threadSettings({ threadRole: "setScrew", threadDiameter: 6, threadPitch: 1 });
+    expect(settings.headHeight).toBe(0);
+    expect(threadNaturalHeight(settings)).toBeCloseTo(7.2, 6);
+    expect(threadNaturalFootprint(settings).width).toBeCloseTo(6, 6);
+  });
+
+  it.each(["hex", "torx", "star", "none"] as const)("builds a closed pan head with a %s drive", (threadDrive) => {
+    const settings = threadSettings({ threadRole: "screw", threadHead: "pan", threadDiameter: 6, threadPitch: 1, threadDrive });
+    const footprint = threadNaturalFootprint(settings);
+    expect(closed(createThreadGeometry({
+      width: footprint.width,
+      depth: footprint.depth,
+      height: threadNaturalHeight(settings),
+      threadRole: "screw",
+      threadHead: "pan",
+      threadDiameter: 6,
+      threadPitch: 1,
+      threadDrive,
+      threadHeadHeight: settings.headHeight,
+    }))).toBe(true);
+  });
+
+  it("makes the pan head flatter and wider than the cylinder head", () => {
+    const pan = threadSettings({ threadRole: "screw", threadHead: "pan", threadDiameter: 6, threadPitch: 1 });
+    const cylinder = threadSettings({ threadRole: "screw", threadHead: "cylinder", threadDiameter: 6, threadPitch: 1 });
+    expect(pan.headHeight).toBeLessThan(cylinder.headHeight);
+    expect(threadHeadDiameter(pan)).toBeGreaterThan(threadHeadDiameter(cylinder));
+    // Eine Kuppe hat keine scharfe Aussenkante, die man brechen koennte.
+    expect(threadHeadChamferLimits(pan).max).toBe(0);
   });
 });
