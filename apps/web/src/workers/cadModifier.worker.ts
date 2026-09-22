@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { OcctKernel, type ShapeHandle } from "occt-wasm";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
-import { CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
+import { CAD_MODIFIER_KERNEL_RESTART_MESSAGE, CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierKernelExhausted, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
 
 const HASH_UPPER_BOUND = 2_147_483_647;
 // occt-wasm 4.3.2 fixed `wireframe(shape, deflection)` routing its second
@@ -48,6 +48,24 @@ function kernel() {
       throw error;
     });
   return kernelPromise;
+}
+
+/**
+ * Den Kern ganz abbauen, nicht nur die Verweise fallenlassen: der alte haelt
+ * seinen eigenen WebAssembly-Speicher fest, und daneben ist fuer einen zweiten
+ * kein Platz. occt-wasm bietet dafuer Symbol.dispose an.
+ */
+function discardKernel(cad: OcctKernel | null) {
+  try {
+    (cad as unknown as { [key: symbol]: (() => void) | undefined })?.[Symbol.dispose]?.();
+  } catch {
+    // Ein Kern, der schon nicht mehr antwortet, laesst sich auch nicht abbauen.
+  }
+  kernelPromise = null;
+  baseShape = null;
+  baseSolids = [];
+  edgeHandles = [];
+  edgeOwners = [];
 }
 
 function releaseSession(cad: OcctKernel) {
@@ -616,6 +634,22 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error ?? "");
     const errorName = error instanceof Error ? error.name : "";
+    // Beim Vorbereiten heisst eine Ausnahme aus dem WebAssembly heraus: nicht
+    // dieser eine Aufruf ist schiefgegangen, sondern der Kern kann nicht mehr.
+    // Ein frischer in derselben Aufgabe scheitert genauso, solange der alte
+    // seinen Speicher haelt - also abbauen und melden; der naechste Anlauf
+    // bekommt einen neuen und kommt durch. Beim Verrunden selbst ist dieselbe
+    // Ausnahme dagegen meist nur ein Halbmesser, der hier nicht passt.
+    if (request.type === "prepare" && isCadModifierKernelExhausted(rawMessage, errorName)) {
+      discardKernel(cad);
+      post({
+        type: "error",
+        requestId: request.requestId,
+        message: CAD_MODIFIER_KERNEL_RESTART_MESSAGE,
+        resetSession: true,
+      });
+      return;
+    }
     if (isCadModifierWasmMemoryFault(rawMessage, errorName) || isImportStlWasmFault(rawMessage) || isMissingValidatorFault(rawMessage)) {
       if (cad) releaseSession(cad);
       kernelPromise = null;

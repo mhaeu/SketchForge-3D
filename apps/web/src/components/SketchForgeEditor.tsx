@@ -36,6 +36,8 @@ import {
   normalizeLoftTopSize,
 } from "@/lib/loftGeometry";
 import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
+import { meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
+import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
 import { workplaneCenteringOffset } from "@/lib/workplaneCentering";
 import { t, type MessageKey } from "@/lib/i18n";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
@@ -110,6 +112,7 @@ import {
   cadModifierWorkerFailureMessage,
   defaultCadModifierTangentChain,
   cadModifierCandidateEdge,
+  rescueSharpAngleForEdges,
   selectableCadModifierEdge,
   type CadModifierRequestPhase,
   SKETCH_CAD_DEFLECTION,
@@ -179,6 +182,7 @@ type Cuboid = { minX: number; maxX: number; minY: number; maxY: number; minZ: nu
 type ShapeUpdatePatch = Partial<WorkplaneShape> & { bakeTransform?: boolean };
 type WithoutRequestId<T> = T extends unknown ? Omit<T, "requestId"> : never;
 type CadModifierWorkerPayload = WithoutRequestId<CadModifierWorkerRequest>;
+type CadPreviewPayload = Extract<CadModifierWorkerPayload, { type: "preview" }>;
 type EdgeModifierSession = {
   kind: CadModifierKind;
   edges: CadModifierEdge[];
@@ -4456,6 +4460,64 @@ function meshPositionsToGroupShape(selection: WorkplaneShape[], solids: Workplan
   };
 }
 
+function manifoldMeshToMeshData(mesh: InstanceType<ManifoldToplevel["Mesh"]>, name: string): MeshData {
+  const numProp = mesh.numProp;
+  const vertices: Vec3[] = [];
+  for (let offset = 0; offset + 2 < mesh.vertProperties.length; offset += numProp) {
+    vertices.push([mesh.vertProperties[offset], mesh.vertProperties[offset + 1], mesh.vertProperties[offset + 2]]);
+  }
+  const faces: [number, number, number][] = [];
+  for (let offset = 0; offset + 2 < mesh.triVerts.length; offset += 3) {
+    faces.push([mesh.triVerts[offset], mesh.triVerts[offset + 1], mesh.triVerts[offset + 2]]);
+  }
+  return { name, vertices, faces };
+}
+
+/**
+ * Was sich durchdringt, wird fuer die Ausfuhr zu einem Koerper. Sonst stehen
+ * zwei ineinander steckende Huellen in der Datei - der Schneider raeumt das
+ * meist still auf, CGAL und OpenSCAD brechen daran ab. Getrennte Teile bleiben
+ * getrennt, und wenn die Verschmelzung nicht klappt, geht die Ausfuhr
+ * unveraendert weiter: eine Datei mit doppelten Huellen ist immer noch besser
+ * als gar keine.
+ */
+async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: MeshData[]) {
+  const clusters = overlappingExportClusters(meshes.map((mesh) => meshBounds(mesh.vertices)));
+  if (!clusters.some((cluster) => cluster.length > 1)) {
+    return { meshes, merged: 0, failed: 0 };
+  }
+  const runtime = await getManifoldRuntime().catch(() => null);
+  const result: MeshData[] = [];
+  let merged = 0;
+  let failed = 0;
+  for (const cluster of clusters) {
+    if (cluster.length === 1) {
+      result.push(meshes[cluster[0]]);
+      continue;
+    }
+    const created: ManifoldSolid[] = [];
+    let united: MeshData | null = null;
+    try {
+      const union = runtime ? shapesToManifoldUnion(runtime, cluster.map((index) => shapes[index]), created, true) : null;
+      if (union && union.status() === "NoError" && union.numTri() > 0) {
+        united = manifoldMeshToMeshData(union.getMesh(), meshes[cluster[0]].name);
+      }
+    } catch {
+      united = null;
+    } finally {
+      Array.from(new Set(created)).forEach(disposeManifold);
+    }
+    if (united && united.faces.length > 0) {
+      result.push(united);
+      merged += cluster.length;
+    } else {
+      cluster.forEach((index) => result.push(meshes[index]));
+      failed += 1;
+    }
+  }
+  return { meshes: result, merged, failed };
+}
+
 function disposeManifold(value: unknown) {
   (value as { delete?: () => void } | null)?.delete?.();
 }
@@ -5776,6 +5838,13 @@ export function SketchForgeEditor({
   const cadModifierRequestRef = useRef(0);
   const cadModifierPrepareRef = useRef(0);
   const cadModifierLatestPreviewRef = useRef(0);
+  // Der Kantendienst rechnet eine Anfrage nach der anderen, und eine Vorschau
+  // ist teuer. Am Schieberegler entstand frueher eine Anfrage je Schritt, und
+  // der Dienst arbeitete die Schlange noch ab, als der Regler laengst stand -
+  // das sieht aus wie ein haengendes Programm. Die Warteschlange haelt hoechstens
+  // eine Anfrage unterwegs; was waehrenddessen kommt, ersetzt die wartende.
+  const cadPreviewSendRef = useRef<(payload: CadPreviewPayload) => number | null>(() => null);
+  const cadPreviewQueueRef = useRef(createCadPreviewQueue<CadPreviewPayload>((payload) => cadPreviewSendRef.current(payload)));
   const cadModifierBaseShapeRef = useRef<WorkplaneShape | null>(null);
   const cadModifierBaseFingerprintRef = useRef("");
   const cadModifierSourcePartsRef = useRef<WorkplaneShape[]>([]);
@@ -5872,21 +5941,33 @@ export function SketchForgeEditor({
       }
       if (message.type === "ready") {
         if (message.requestId !== cadModifierPrepareRef.current) return;
+        // Die Kanten bringen ihren Winkel mit; gefiltert wird erst hier. Bleibt
+        // bei der eingestellten Schwelle nichts uebrig, waere die Tafel stumm -
+        // dabei weiss sie, wie scharf die schaerfste Kante ist. Also Schwelle
+        // dorthin senken und es sagen.
+        const rescuedAngle = message.selectableEdgeIds.length === 0
+          ? rescueSharpAngleForEdges(message.edges, edgeModifierRef.current?.sharpAngle ?? 25)
+          : null;
         setEdgeModifier((current) => current ? {
           ...current,
           edges: message.edges,
+          sharpAngle: rescuedAngle ?? current.sharpAngle,
           selectedEdgeIds: [],
           busy: false,
           prepared: true,
           preview: null,
           componentPreviews: [],
-          error: message.selectableEdgeIds.length ? null : t("status.noManifoldEdges"),
+          error: message.selectableEdgeIds.length || rescuedAngle ? null : t("status.noManifoldEdges"),
         } : current);
         if (message.selectableEdgeIds.length) setNotice(t("status.selectHighlightedEdges"));
+        else if (rescuedAngle) setNotice(t("status.sharpAngleLowered", { angle: rescuedAngle }));
         return;
       }
       if (message.type === "preview") {
-        if (message.requestId !== cadModifierLatestPreviewRef.current) return;
+        if (message.requestId !== cadModifierLatestPreviewRef.current) {
+          cadPreviewQueueRef.current.settle(message.requestId);
+          return;
+        }
         const base = cadModifierBaseShapeRef.current;
         const sourceParts = cadModifierSourcePartsRef.current.length ? cadModifierSourcePartsRef.current : (base ? [base] : []);
         const rawPreview = base ? shapeFromCadMesh(base, message.positions, message.normals, message.indices, message.brep, message.deflection) : null;
@@ -5903,12 +5984,19 @@ export function SketchForgeEditor({
           busy: false,
           error: preview ? null : t("status.emptyEdgeResult"),
         } : current);
-        if (preview) setNotice(t("status.edgePreviewReady"));
+        // Waehrend gerechnet wurde, kann ein neuerer Wert eingetroffen sein -
+        // der geht jetzt raus, und die Meldung wartet auf dessen Ergebnis.
+        const queuedNext = cadPreviewQueueRef.current.settle(message.requestId);
+        if (preview && queuedNext.status !== "sent") setNotice(t("status.edgePreviewReady"));
         return;
       }
       if (message.type === "error") {
-        if (message.requestId < cadModifierLatestPreviewRef.current) return;
+        if (message.requestId < cadModifierLatestPreviewRef.current) {
+          cadPreviewQueueRef.current.settle(message.requestId);
+          return;
+        }
         if (message.resetSession) {
+          cadPreviewQueueRef.current.reset();
           const requestId = cadModifierRequestRef.current + 1;
           cadModifierRequestRef.current = requestId;
           cadModifierLatestPreviewRef.current = requestId;
@@ -5921,7 +6009,11 @@ export function SketchForgeEditor({
           return;
         }
         setEdgeModifier((current) => current ? { ...current, busy: false, preview: null, error: message.message } : current);
-        setNotice(t("status.edgeNeedsAdjustment"));
+        // Ein zu grosser Halbmesser scheitert - der inzwischen gewaehlte
+        // kleinere darf es trotzdem versuchen.
+        if (cadPreviewQueueRef.current.settle(message.requestId).status !== "sent") {
+          setNotice(t("status.edgeNeedsAdjustment"));
+        }
       }
     }
     cadModifierWorkerRestartRef.current = createWorker;
@@ -5933,6 +6025,7 @@ export function SketchForgeEditor({
       rejectPendingRequests(t("status.cadWorkerClosed"));
       cadModifierWorkerRef.current?.terminate();
       cadModifierWorkerRef.current = null;
+      cadPreviewQueueRef.current.reset();
     };
   }, [clearCadModifierWatchdog]);
 
@@ -7968,10 +8061,44 @@ export function SketchForgeEditor({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [applyEdgeModifier, cancelEdgeModifier, edgeModifier]);
 
+  const sendCadPreview = useCallback((payload: CadPreviewPayload) => {
+    const requestId = postCadModifierRequest(payload);
+    if (requestId === null) {
+      const message = cadModifierWorkerFailureMessage();
+      setEdgeModifier((current) => current ? { ...current, busy: false, prepared: false, preview: null, error: message } : current);
+      setNotice(message);
+      return null;
+    }
+    cadModifierLatestPreviewRef.current = requestId;
+    armCadModifierWatchdog(requestId, "preview");
+    setEdgeModifier((current) => current ? { ...current, busy: true, error: null } : current);
+    return requestId;
+  }, [armCadModifierWatchdog, postCadModifierRequest]);
+
   useEffect(() => {
-    if (!edgeModifier?.prepared || edgeModifier.selectedEdgeIds.length === 0) return;
+    cadPreviewSendRef.current = sendCadPreview;
+  }, [sendCadPreview]);
+
+  /** Wer die Auswahl leert, will, dass Schluss ist - auch mit dem, was laeuft. */
+  const discardPendingCadPreviews = useCallback(() => {
+    const queue = cadPreviewQueueRef.current;
+    if (queue.inFlightId === null && queue.queuedPayload === null) return;
+    queue.reset();
+    clearCadModifierWatchdog();
+    const requestId = cadModifierRequestRef.current + 1;
+    cadModifierRequestRef.current = requestId;
+    cadModifierLatestPreviewRef.current = requestId;
+    setEdgeModifier((current) => current?.busy ? { ...current, busy: false } : current);
+  }, [clearCadModifierWatchdog]);
+
+  useEffect(() => {
+    if (!edgeModifier?.prepared) return;
+    if (edgeModifier.selectedEdgeIds.length === 0) {
+      discardPendingCadPreviews();
+      return;
+    }
     const timer = window.setTimeout(() => {
-      const requestId = postCadModifierRequest({
+      cadPreviewQueueRef.current.request({
         type: "preview",
         kind: edgeModifier.kind,
         edgeIds: edgeModifier.selectedEdgeIds,
@@ -7983,18 +8110,9 @@ export function SketchForgeEditor({
         // Die feinste Vernetzung, die dieser Koerper bisher gebraucht hat.
         minDeflection: cadModifierBaseShapeRef.current?.cadMeshDeflection,
       });
-      if (requestId === null) {
-        const message = cadModifierWorkerFailureMessage();
-        setEdgeModifier((current) => current ? { ...current, busy: false, prepared: false, preview: null, error: message } : current);
-        setNotice(message);
-        return;
-      }
-      cadModifierLatestPreviewRef.current = requestId;
-      armCadModifierWatchdog(requestId, "preview");
-      setEdgeModifier((current) => current ? { ...current, busy: true, error: null } : current);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [armCadModifierWatchdog, edgeModifier?.amount, edgeModifier?.chamferAngle, edgeModifier?.endAmount, edgeModifier?.flipTaper, edgeModifier?.kind, edgeModifier?.prepared, edgeModifier?.quality, edgeModifier?.selectedEdgeIds, postCadModifierRequest]);
+  }, [discardPendingCadPreviews, edgeModifier?.amount, edgeModifier?.chamferAngle, edgeModifier?.endAmount, edgeModifier?.flipTaper, edgeModifier?.kind, edgeModifier?.prepared, edgeModifier?.quality, edgeModifier?.selectedEdgeIds]);
 
   const snapSelected = useCallback(() => {
     if (!hasSelection) {
@@ -9136,16 +9254,17 @@ export function SketchForgeEditor({
       return;
     }
     const meshes = exportable.map(meshForShape);
-    if (format === "stl") {
-      const blob = new Blob([exportMeshesToStl(meshes)], { type: "model/stl" });
-      void downloadBlobFile(projectExportFileName(exportName, "stl"), blob)
-        .then((result) => finishNotice("STL", result))
-        .catch((error: unknown) => failNotice("STL", error));
-      return;
-    }
-    void downloadTextFile(projectExportFileName(exportName, "obj"), exportMeshesToObj(meshes), "text/plain")
-      .then((result) => finishNotice("OBJ", result))
-      .catch((error: unknown) => failNotice("OBJ", error));
+    const label = format === "stl" ? "STL" : "OBJ";
+    void unionOverlappingExportMeshes(exportable, meshes)
+      .then(async ({ meshes: ready, merged, failed }) => {
+        const result = format === "stl"
+          ? await downloadBlobFile(projectExportFileName(exportName, "stl"), new Blob([exportMeshesToStl(ready)], { type: "model/stl" }))
+          : await downloadTextFile(projectExportFileName(exportName, "obj"), exportMeshesToObj(ready), "text/plain");
+        if (failed > 0) setNotice(t("status.exportUnionFailed"));
+        else if (merged > 0) setNotice(t("status.exportUnioned", { count: merged, label }));
+        else finishNotice(label, result);
+      })
+      .catch((error: unknown) => failNotice(label, error));
   }, [hasSelection, projectName, selectedShapes, shapes]);
 
   const exportStepDesign = useCallback(async (exportName: string) => {

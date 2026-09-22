@@ -8,6 +8,8 @@ import {
   cadModifierCandidateEdge,
   cadModifierPrepareTimeoutMs,
   cadModifierTessellationDeflection,
+  isCadModifierKernelExhausted,
+  rescueSharpAngleForEdges,
   SKETCH_CAD_DEFLECTION,
   cadModifierTopologyEdgeIsSelectable,
   cadTransformRequiresGeneralTransform,
@@ -158,5 +160,60 @@ describe("edges below the sharp-angle threshold", () => {
     // Ein Klick senkt die Schwelle auf den Winkel der Kante - danach zaehlt sie.
     const lowered = Math.max(1, Math.min(30, Math.floor(shallow.angle)));
     expect(selectableCadModifierEdge(shallow, lowered)).toBe(true);
+  });
+});
+
+/**
+ * Wenn bei der eingestellten Schwelle keine Kante uebrig bleibt, stand man vor
+ * einem Werkzeug, das nichts hervorhebt und nichts sagt - dabei ist bekannt,
+ * wie scharf die schaerfste Kante des Koerpers ist.
+ */
+describe("rescueSharpAngleForEdges", () => {
+  const edge = (angle: number, extra: Partial<{ selectable: boolean; manifold: boolean; boundary: boolean }> = {}) => ({
+    angle,
+    selectable: true,
+    manifold: true,
+    boundary: false,
+    ...extra,
+  });
+
+  it("laesst die Schwelle stehen, wenn eine Kante sie erreicht", () => {
+    expect(rescueSharpAngleForEdges([edge(12), edge(40)], 25)).toBeNull();
+  });
+
+  it("senkt sie auf die schaerfste vorhandene Kante", () => {
+    expect(rescueSharpAngleForEdges([edge(12), edge(18.7)], 25)).toBe(18);
+  });
+
+  it("zaehlt nur Kanten, die sich ueberhaupt bearbeiten lassen", () => {
+    expect(rescueSharpAngleForEdges([edge(40, { boundary: true }), edge(9)], 25)).toBe(9);
+    expect(rescueSharpAngleForEdges([edge(40, { manifold: false }), edge(40, { selectable: false })], 25)).toBeNull();
+  });
+
+  it("rettet nichts an einer tangentialen Kante", () => {
+    // Fast null Grad ist keine Kante, die jemand verrunden will.
+    expect(rescueSharpAngleForEdges([edge(0.4)], 25)).toBeNull();
+    expect(rescueSharpAngleForEdges([], 25)).toBeNull();
+  });
+});
+
+/**
+ * Eine Ausnahme aus dem WebAssembly heraus heisst: der Kern selbst kann nicht
+ * mehr. Ein gescheitertes Verrunden meldet sich dagegen woertlich und darf ihn
+ * nicht kosten.
+ */
+describe("isCadModifierKernelExhausted", () => {
+  it("erkennt eine Ausnahme aus dem WebAssembly", () => {
+    expect(isCadModifierKernelExhausted("WebAssembly.Exception: tag 3")).toBe(true);
+  });
+
+  it("erkennt auch den Speicherfehler", () => {
+    expect(isCadModifierKernelExhausted("memory access out of bounds")).toBe(true);
+    expect(isCadModifierKernelExhausted("", "RuntimeError")).toBe(true);
+  });
+
+  it("laesst eine gewoehnliche Absage in Ruhe", () => {
+    expect(isCadModifierKernelExhausted("fillet: radius too large for this edge")).toBe(false);
+    expect(isCadModifierKernelExhausted("The chosen size creates invalid or overlapping edge geometry")).toBe(false);
   });
 });

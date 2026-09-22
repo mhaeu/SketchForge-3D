@@ -73,11 +73,49 @@ export function cadTransformRequiresGeneralTransform(transform: number[]) {
   );
 }
 
+/**
+ * Nach genug Kantenarbeit in einer Sitzung weigert sich der Kern, ein
+ * gespeichertes B-Rep noch einmal zu lesen - dieselbe Zeichenkette, die er eben
+ * noch verstanden hat. Der Dienst baut ihn dann ab; der naechste Anlauf bekommt
+ * einen frischen und kommt durch. Diese Meldung ist das Signal dafuer.
+ */
+export const CAD_MODIFIER_KERNEL_RESTART_MESSAGE =
+  "The CAD kernel ran out of room and was restarted. Wait a moment, then start the edge tool again; no page refresh is needed.";
+
+/**
+ * Eine Ausnahme aus dem WebAssembly heraus heisst: nicht dieser eine Aufruf ist
+ * schiefgegangen, sondern der Kern selbst kann nicht mehr. Ein gescheitertes
+ * Verrunden - "dieser Halbmesser passt hier nicht" - kommt dagegen als
+ * gewoehnliche Meldung und darf den Kern nicht kosten.
+ */
+export function isCadModifierKernelExhausted(message: string, errorName = "") {
+  return message.includes("WebAssembly.Exception") || isCadModifierWasmMemoryFault(message, errorName);
+}
+
 export function isCadModifierWasmMemoryFault(message: string, errorName = "") {
   return (
     /memory access out of bounds|out of bounds memory access|\babort(?:ed)?\b/i.test(message) ||
     /^(?:WebAssembly\.)?RuntimeError$/i.test(errorName)
   );
+}
+
+/**
+ * Jede Kante bringt ihren Winkel mit; die Schwelle filtert erst im Browser.
+ * Bleibt bei der Voreinstellung nichts uebrig, steht man vor einem Werkzeug,
+ * das nichts hervorhebt und nichts sagt - dabei ist bekannt, wie scharf die
+ * schaerfste Kante hier ueberhaupt ist. Genau dorthin darf die Schwelle
+ * rutschen. Nur eine tangentiale Kante (fast 0 Grad) ist keine, die man
+ * verrunden will.
+ */
+export function rescueSharpAngleForEdges(
+  edges: Pick<CadModifierEdge, "angle" | "manifold" | "boundary" | "selectable">[],
+  sharpAngle: number,
+) {
+  const usable = edges.filter((edge) => edge.selectable && edge.manifold && !edge.boundary);
+  if (usable.some((edge) => edge.angle + 1e-3 >= sharpAngle)) return null;
+  const sharpest = usable.reduce((largest, edge) => Math.max(largest, edge.angle), 0);
+  if (sharpest < 1) return null;
+  return Math.max(1, Math.floor(sharpest));
 }
 
 export function defaultCadModifierTangentChain(appliedFeatureCount: number) {
