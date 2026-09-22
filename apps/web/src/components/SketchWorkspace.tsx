@@ -11,12 +11,13 @@ import { resizeSketchPoints, type ResizeHandle, type SelectionBounds } from "@/l
 import { isSketchPanGesture } from "@/lib/sketchPointerControls";
 import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes";
 import { selectWholeValue } from "@/lib/numberField";
+import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-export type SketchPrimitive = "rectangle" | "circle" | "triangle" | "hexagon";
+export type { SketchPrimitive } from "@/lib/sketchPrimitives";
 export type SketchTool = "line" | "bezier" | "smooth" | SketchPrimitive | "select" | "refine" | "erase" | "measure";
 export type SketchSelection =
   | { kind: "point"; id: string }
@@ -825,8 +826,8 @@ export function SketchWorkspace({
             event.dataTransfer.dropEffect = "copy";
           }}
           onDrop={(event) => {
-            const primitive = event.dataTransfer.getData("application/x-sketchforge-sketch-primitive") as SketchPrimitive;
-            if (!["rectangle", "circle", "triangle", "hexagon"].includes(primitive)) return;
+            const primitive = event.dataTransfer.getData("application/x-sketchforge-sketch-primitive");
+            if (!isSketchPrimitive(primitive)) return;
             event.preventDefault();
             const point = pointFromEvent(event);
             if (point) onAddPrimitive(primitive, point);

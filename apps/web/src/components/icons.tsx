@@ -244,3 +244,67 @@ export function SketchImportSvgIcon(props: IconProps) {
     </svg>
   );
 }
+
+/*
+ * Vier Formen fuer das Skizzenmenue, die es bei lucide nicht gibt. Sie sind
+ * bewusst in dessen Masszahlen gezeichnet - 24er Feld, Strichstaerke 2, runde
+ * Enden -, damit sie neben Rechteck, Kreis und Dreieck nicht auffallen.
+ */
+function SketchShapeIcon({ children, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function SketchEllipseIcon(props: IconProps) {
+  return (
+    <SketchShapeIcon {...props}>
+      <ellipse cx="12" cy="12" rx="9" ry="5.5" />
+    </SketchShapeIcon>
+  );
+}
+
+export function SketchHalfCircleIcon(props: IconProps) {
+  return (
+    <SketchShapeIcon {...props}>
+      {/* Bogen von links nach rechts, die Sehne schliesst ihn - genau der
+          Umriss, den die Form in der Skizze bekommt. */}
+      <path d="M3 15a9 9 0 0 1 18 0Z" />
+    </SketchShapeIcon>
+  );
+}
+
+export function SketchPieSliceIcon(props: IconProps) {
+  return (
+    <SketchShapeIcon {...props}>
+      {/* Die Spitze sitzt unten links, der Bogen spannt sich darueber - so
+          fuellt das Viertel das Feld, statt als Eckchen darin zu sitzen. */}
+      <path d="M5 5a14 14 0 0 1 14 14H5Z" />
+    </SketchShapeIcon>
+  );
+}
+
+export function SketchBoltCircleIcon(props: IconProps) {
+  return (
+    <SketchShapeIcon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      {/* Vier statt sechs Bohrungen: In einem 24er Feld waeren sechs nur noch
+          ein Kranz aus Punkten, der nichts mehr erkennen laesst. */}
+      <circle cx="12" cy="6.6" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="17.4" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="17.4" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="6.6" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    </SketchShapeIcon>
+  );
+}

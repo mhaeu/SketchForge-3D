@@ -3,7 +3,7 @@
 import { BoxSelect, Check, Circle as CircleIcon, Link, Link2, Link2Off, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { ADDITION, Brush, Evaluator, HOLLOW_INTERSECTION, HOLLOW_SUBTRACTION, INTERSECTION, SUBTRACTION, type CSGOperation } from "three-bvh-csg";
 import * as THREE from "three";
 import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
@@ -23,6 +23,7 @@ import { sphereTessellation } from "@/lib/sphereTessellation";
 import { createGearGeometry } from "@/lib/gearGeometry";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
+import { sketchPrimitiveGeometry } from "@/lib/sketchPrimitives";
 import {
   createLoftGeometry,
   DEFAULT_LOFT_BOTTOM_SHAPE,
@@ -43,6 +44,10 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { useLanguage } from "@/lib/useLanguage";
 import {
+  SketchBoltCircleIcon,
+  SketchEllipseIcon,
+  SketchHalfCircleIcon,
+  SketchPieSliceIcon,
   ToolbarAlignIcon,
   SketchImportSvgIcon,
   ToolbarAlignToWorkplaneIcon,
@@ -6789,6 +6794,10 @@ export function SketchForgeEditor({
       smooth: t("status.sketchTool.smooth"),
       rectangle: t("status.sketchTool.rectangle"),
       circle: t("status.sketchTool.circle"),
+      ellipse: t("status.sketchTool.ellipse"),
+      halfCircle: t("status.sketchTool.halfCircle"),
+      pieSlice: t("status.sketchTool.pieSlice"),
+      boltCircle: t("status.sketchTool.boltCircle"),
       triangle: t("status.sketchTool.triangle"),
       hexagon: t("status.sketchTool.hexagon"),
       select: t("status.sketchTool.select"),
@@ -6886,80 +6895,17 @@ export function SketchForgeEditor({
 
   const addSketchPrimitive = useCallback(
     (primitive: SketchPrimitive, center: { x: number; z: number } = { x: 0, z: 0 }) => {
-      const cx = center.x;
-      const cz = center.z;
-      const width = 20;
-      const depth = 20;
-      const radius = width / 2;
-      const minX = cx - width / 2;
-      const maxX = cx + width / 2;
-      const minZ = cz - depth / 2;
-      const maxZ = cz + depth / 2;
-      let points: SketchPoint[] = [];
-      let segments: SketchSegment[] = [];
-
-      if (primitive === "circle") {
-        const kappa = 0.5522847498307936;
-        const right: SketchPoint = {
-          id: createLocalId("sketch-point"), x: cx + radius, z: cz, mode: "smooth",
-          handleIn: { x: cx + radius, z: cz - kappa * radius },
-          handleOut: { x: cx + radius, z: cz + kappa * radius },
-        };
-        const bottom: SketchPoint = {
-          id: createLocalId("sketch-point"), x: cx, z: cz + radius, mode: "smooth",
-          handleIn: { x: cx + kappa * radius, z: cz + radius },
-          handleOut: { x: cx - kappa * radius, z: cz + radius },
-        };
-        const left: SketchPoint = {
-          id: createLocalId("sketch-point"), x: cx - radius, z: cz, mode: "smooth",
-          handleIn: { x: cx - radius, z: cz + kappa * radius },
-          handleOut: { x: cx - radius, z: cz - kappa * radius },
-        };
-        const top: SketchPoint = {
-          id: createLocalId("sketch-point"), x: cx, z: cz - radius, mode: "smooth",
-          handleIn: { x: cx - kappa * radius, z: cz - radius },
-          handleOut: { x: cx + kappa * radius, z: cz - radius },
-        };
-        points = [right, bottom, left, top];
-        segments = points.map((point, index) => ({
-          id: createLocalId("sketch-segment"),
-          startId: point.id,
-          endId: points[(index + 1) % points.length]!.id,
-          kind: "bezier",
-        }));
-      } else {
-        const vertices: Array<{ x: number; z: number }> = primitive === "rectangle"
-          ? [
-              { x: minX, z: minZ },
-              { x: maxX, z: minZ },
-              { x: maxX, z: maxZ },
-              { x: minX, z: maxZ },
-            ]
-          : primitive === "triangle"
-            ? [
-                { x: cx, z: minZ },
-                { x: maxX, z: maxZ },
-                { x: minX, z: maxZ },
-              ]
-            : Array.from({ length: 6 }, (_, index) => {
-                const angle = -Math.PI / 2 + index * Math.PI / 3;
-                return { x: cx + Math.cos(angle) * width / 2, z: cz + Math.sin(angle) * depth / 2 };
-              });
-        points = vertices.map((vertex) => ({ id: createLocalId("sketch-point"), ...vertex, mode: "corner" }));
-        segments = points.map((point, index) => ({
-          id: createLocalId("sketch-segment"),
-          startId: point.id,
-          endId: points[(index + 1) % points.length]!.id,
-          kind: "line",
-        }));
-      }
+      const { points, segments } = sketchPrimitiveGeometry(primitive, center, createLocalId);
 
       const next: SketchProfile = {
         ...sketchProfile,
         points: [...sketchProfile.points, ...points],
         segments: [...sketchProfile.segments, ...segments],
       };
-      const label = primitive[0]!.toUpperCase() + primitive.slice(1);
+      // Aus "halfCircle" wird "Half circle": Der Name steht so im Verlauf, und
+      // dort liest ihn jemand.
+      const words = primitive.replace(/([A-Z])/g, " $1").toLowerCase();
+      const label = `${words[0]!.toUpperCase()}${words.slice(1)}`;
       commitSketchProfile(next, `${label} added to sketch`);
       setSketchActivePointId(null);
       setSketchSelection(null);
@@ -10196,9 +10142,13 @@ function SketchReferenceIcon({ name }: { name: SketchReferenceIconName }) {
 const sketchShapeMenuItems = [
   { primitive: "rectangle", label: "sketch.rectangle", icon: SquareIcon },
   { primitive: "circle", label: "sketch.circle", icon: CircleIcon },
+  { primitive: "ellipse", label: "sketch.ellipse", icon: SketchEllipseIcon },
+  { primitive: "halfCircle", label: "sketch.halfCircle", icon: SketchHalfCircleIcon },
+  { primitive: "pieSlice", label: "sketch.pieSlice", icon: SketchPieSliceIcon },
   { primitive: "triangle", label: "sketch.triangle", icon: TriangleIcon },
   { primitive: "hexagon", label: "sketch.hexagon", icon: HexagonIcon },
-] satisfies Array<{ primitive: SketchPrimitive; label: MessageKey; icon: typeof SquareIcon }>;
+  { primitive: "boltCircle", label: "sketch.boltCircle", icon: SketchBoltCircleIcon },
+] satisfies Array<{ primitive: SketchPrimitive; label: MessageKey; icon: ComponentType<SVGProps<SVGSVGElement>> }>;
 
 // Letters match the inspector fields: Length runs along Z, Width along X. Both
 // the letter and the name are keys - a German length is a "L", a width a "B".
