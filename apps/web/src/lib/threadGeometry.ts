@@ -581,6 +581,73 @@ const SLOT_BY_DIAMETER: ReadonlyArray<{ diameter: number; width: number }> = [
 ];
 
 /**
+ * Der Gewindestift traegt den Angriff in seiner Stirnflaeche, nicht in einem
+ * Kopf - und dort steht nur der Kern zur Verfuegung. Die Kopfgroessen passen
+ * da nicht hinein: zur M6 gehoert ein T30, und der misst ueber die Ecken mehr
+ * als der Kern der M6 ueberhaupt dick ist. Ohne eigene Masse wurde der Umriss
+ * auf den Kern beschnitten, und aus Innensechskant, Torx, Stern und
+ * Innenvielzahn wurde am Ende dasselbe runde Loch. Schlitz und Kreuz kamen
+ * durch, weil sie von Haus aus schmaler sind als der Kern.
+ */
+
+/** Schluesselweite s des Innensechskants am Gewindestift nach ISO 4026/4027. */
+const SETSCREW_SOCKET_BY_DIAMETER: ReadonlyArray<{ diameter: number; socket: number }> = [
+  { diameter: 1.6, socket: 0.7 },
+  { diameter: 2, socket: 0.9 },
+  { diameter: 2.5, socket: 1.3 },
+  { diameter: 3, socket: 1.5 },
+  { diameter: 4, socket: 2 },
+  { diameter: 5, socket: 2.5 },
+  { diameter: 6, socket: 3 },
+  { diameter: 8, socket: 4 },
+  { diameter: 10, socket: 5 },
+  { diameter: 12, socket: 6 },
+  { diameter: 16, socket: 8 },
+  { diameter: 20, socket: 10 },
+];
+
+/** Schlitzbreite n des Gewindestifts nach ISO 4766 / DIN 551. */
+const SETSCREW_SLOT_BY_DIAMETER: ReadonlyArray<{ diameter: number; width: number }> = [
+  { diameter: 2, width: 0.25 },
+  { diameter: 2.5, width: 0.4 },
+  { diameter: 3, width: 0.4 },
+  { diameter: 4, width: 0.6 },
+  { diameter: 5, width: 0.8 },
+  { diameter: 6, width: 1 },
+  { diameter: 8, width: 1.2 },
+  { diameter: 10, width: 1.6 },
+  { diameter: 12, width: 2 },
+];
+
+/**
+ * Wie weit der Angriff im Gewindestift quer ausgreifen darf, gemessen ueber
+ * die Ecken. Der Kern traegt ihn, und eine Wand muss stehen bleiben - sonst
+ * schneidet der Angriff die Gewindegaenge auf.
+ */
+export function setScrewDriveRoom(diameter: number, pitch: number) {
+  const minorRadius = Math.max(0.05, diameter / 2 - pitch * V_PROFILE.depthPerPitch);
+  return Math.max(0.1, (minorRadius - setScrewDriveWall(diameter)) * 2);
+}
+
+/** Die Wand, die zwischen Angriff und Gewindegrund stehen bleibt. */
+export function setScrewDriveWall(diameter: number) {
+  return Math.max(0.12, diameter * 0.06);
+}
+
+/**
+ * Die groesste genormte Torx-Groesse, die noch in den Kern passt. Passt keine
+ * mehr, bleibt das blosse Mass - eine Groesse zu nennen, die der Koerper nicht
+ * traegt, waere schlimmer als gar keine.
+ */
+function largestFittingTorx(room: number) {
+  const sizes = Object.entries(TORX_ACROSS_POINTS).sort((a, b) => a[1] - b[1]);
+  const fitting = sizes.filter(([, across]) => across <= room);
+  if (fitting.length === 0) return { label: "", across: room };
+  const [label, across] = fitting[fitting.length - 1];
+  return { label, across };
+}
+
+/**
  * Die Zeile, die am besten zum Durchmesser passt. Liegt er zwischen zwei
  * Normgroessen, wird die naehere genommen und ihr Mass im Verhaeltnis der
  * Durchmesser mitgezogen - so bekommt auch eine 7,3 mm dicke Schraube einen
@@ -607,9 +674,16 @@ export function normalizeThreadDrive(value?: string): ThreadDrive {
  * mehr als sechs Zehntel seiner Hoehe waere eine Schraube, die beim Anziehen
  * den Kopf verliert.
  */
-export function threadDriveSpec(drive: ThreadDrive, diameter: number, pitch: number, headHeight: number): ThreadDriveSpec | null {
+export function threadDriveSpec(
+  drive: ThreadDrive,
+  diameter: number,
+  pitch: number,
+  headHeight: number,
+  role: ThreadRole = "screw",
+): ThreadDriveSpec | null {
   if (drive === "none") return null;
   const limit = (value: number) => Math.max(0.2, Math.min(value, headHeight * 0.65));
+  if (role === "setScrew") return setScrewDriveSpec(drive, diameter, pitch, headHeight);
   if (drive === "hex") {
     const socket = threadSizeSpec(diameter, pitch).socket;
     return { label: `SW ${trimNumber(socket)}`, across: socket, depth: limit(diameter * 0.55) };
@@ -643,6 +717,39 @@ export function threadDriveSpec(drive: ThreadDrive, diameter: number, pitch: num
     across: recess,
     depth: limit(diameter * 0.5),
   };
+}
+
+/**
+ * Der Angriff des Gewindestifts, in der Groesse, die der Kern traegt. Gewaehlt
+ * wird die groesste Normgroesse, die hineinpasst - nicht die, die zum
+ * Nenndurchmesser gehoerte, wenn da ein Kopf waere.
+ */
+function setScrewDriveSpec(drive: ThreadDrive, diameter: number, pitch: number, length: number): ThreadDriveSpec | null {
+  if (drive === "none") return null;
+  const room = setScrewDriveRoom(diameter, pitch);
+  // Tiefer als drei Fuenftel der Laenge waere ein Stift, der beim Anziehen
+  // durchreisst; die Norm bleibt mit etwa dem halben Durchmesser darunter.
+  const depth = Math.max(0.15, Math.min(diameter * 0.55, length * 0.6));
+  if (drive === "hex") {
+    const { row, factor } = scaledFromNearest(SETSCREW_SOCKET_BY_DIAMETER, diameter);
+    // Ueber die Ecken misst der Sechskant mehr als ueber die Flaechen - der
+    // Platz gilt fuer die Ecken.
+    const socket = Math.min(row.socket * factor, room * Math.cos(Math.PI / 6));
+    return { label: `SW ${trimNumber(socket)}`, across: socket, depth };
+  }
+  if (drive === "torx" || drive === "star" || drive === "spline") {
+    const fit = largestFittingTorx(room);
+    const label = drive === "torx" && fit.label ? fit.label : `${trimNumber(fit.across)} mm`;
+    return { label, across: fit.across, depth };
+  }
+  if (drive === "slot") {
+    const { row, factor } = scaledFromNearest(SETSCREW_SLOT_BY_DIAMETER, diameter);
+    return { label: `${trimNumber(row.width * factor)} mm`, across: row.width * factor, depth };
+  }
+  const { row, factor } = scaledFromNearest(CROSS_BY_DIAMETER, diameter);
+  const recess = Math.min(row.recess * factor, room);
+  const prefix = drive === "pozidriv" ? "PZ" : "PH";
+  return { label: `${prefix}${row.label} (${trimNumber(recess)} mm)`, across: recess, depth };
 }
 
 function trimNumber(value: number) {
@@ -1316,11 +1423,11 @@ export function createThreadGeometry(options: ThreadGeometryOptions) {
      * eingesenkt und am Gewinde beschnitten statt an einer Kopfflanke.
      */
     const stiftProfile = settings.role === "setScrew"
-      ? threadDriveProfile(settings.drive, threadDriveSpec(settings.drive, settings.diameter, settings.pitch, height))
+      ? threadDriveProfile(settings.drive, threadDriveSpec(settings.drive, settings.diameter, settings.pitch, height, "setScrew"))
       : null;
     const stiftDepth = stiftProfile ? Math.min(stiftProfile.depth, height * 0.6) : 0;
     if (stiftProfile && stiftDepth > 0.05) {
-      const rim = Math.max(0.12, settings.diameter * 0.06);
+      const rim = setScrewDriveWall(settings.diameter);
       const driveAngles = recessAngles(stiftProfile.corners, segments);
       const drivePlaces = driveAngles.map((angle, index) => (index === driveAngles.length - 1 ? driveAngles[0] : angle));
       const mouthRadius = (angle: number) => Math.max(0.05, Math.min(stiftProfile.radiusAt(angle), minor - rim));

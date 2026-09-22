@@ -22,6 +22,7 @@ import {
   threadDriveSpec,
   threadSizeSpec,
   normalizeThreadDrive,
+  setScrewDriveRoom,
 } from "@/lib/threadGeometry";
 import type { ThreadDrive, ThreadRole } from "@/types/sketchforge";
 
@@ -669,6 +670,64 @@ describe("pointed drives, pan head and set screw", () => {
         threadPitch: 1,
         threadDrive,
       }))).toBe(true);
+    },
+  );
+
+  /**
+   * Der Fall aus der Werkstatt: am Gewindestift kam nur Schlitz und Kreuz
+   * heraus, alles andere wurde ein rundes Loch. Der Grund war die Groesse -
+   * der Angriff wurde fuer einen Kopf bemessen, den der Stift nicht hat, und
+   * beim Bauen auf den Kern beschnitten, bis nichts mehr uebrig war als der
+   * Kreis, auf den beschnitten wurde.
+   */
+  it.each(["hex", "torx", "star", "spline"] as const)("keeps the %s recess in a set screw within the core", (drive) => {
+    for (const [diameter, pitch] of [[3, 0.5], [4, 0.7], [5, 0.8], [6, 1], [8, 1.25], [10, 1.5]] as const) {
+      const room = setScrewDriveRoom(diameter, pitch);
+      const spec = threadDriveSpec(drive, diameter, pitch, diameter * 1.2, "setScrew")!;
+      const profile = threadDriveProfile(drive, spec)!;
+      const widest = Array.from({ length: 360 }, (_unused, degree) => profile.radiusAt((degree * Math.PI) / 180))
+        .reduce((most, radius) => Math.max(most, radius), 0);
+      expect(widest * 2).toBeLessThanOrEqual(room + 1e-9);
+      // Und er bleibt gross genug, um ein Werkzeug zu fuehren.
+      expect(widest * 2).toBeGreaterThan(room * 0.5);
+    }
+  });
+
+  it.each(["hex", "torx", "star", "spline", "slot", "phillips"] as const)(
+    "cuts a %s shape into the face of a set screw, not a round hole",
+    (threadDrive) => {
+      const settings = threadSettings({ threadRole: "setScrew", threadDiameter: 6, threadPitch: 1, threadDrive });
+      const footprint = threadNaturalFootprint(settings);
+      const height = threadNaturalHeight(settings);
+      const geometry = createThreadGeometry({
+        width: footprint.width,
+        depth: footprint.depth,
+        height,
+        threadRole: "setScrew",
+        threadDiameter: 6,
+        threadPitch: 1,
+        threadDrive,
+      });
+      const position = geometry.getAttribute("position") as unknown as Position;
+      // Der Mund des Angriffs liegt in der Stirnflaeche, innerhalb des Kerns.
+      const radii: number[] = [];
+      for (let index = 0; index < position.count; index += 1) {
+        if (Math.abs(position.getY(index) - height) > 1e-4) continue;
+        const radius = Math.hypot(position.getX(index), position.getZ(index));
+        if (radius > 0.05 && radius < 2.4) radii.push(radius);
+      }
+      expect(radii.length).toBeGreaterThan(8);
+      const widest = Math.max(...radii);
+      const narrowest = Math.min(...radii);
+      // Ein Kreis haette ueberall denselben Halbmesser; jeder dieser Angriffe
+      // hat Ecken und Grund, also mindestens ein Zehntel Unterschied.
+      expect(widest / narrowest).toBeGreaterThan(1.1);
+      // Schlitz und Kreuz laufen bis an den Rand des Kerns, die
+      // Steckangriffe nicht: wenn einer von ihnen dort ankommt, ist er auf
+      // den Kern beschnitten worden - und das war das runde Loch.
+      if (threadDrive !== "slot" && threadDrive !== "phillips") {
+        expect(widest).toBeLessThan(setScrewDriveRoom(6, 1) / 2 - 0.02);
+      }
     },
   );
 

@@ -277,12 +277,13 @@ function translatedOptions(options: OptionKeys): SelectPropertyOption[] {
  */
 function threadDriveOptions(settings: ThreadSettings): SelectPropertyOption[] {
   // A set screw carries the recess in its own face, so its depth is measured
-  // against the body rather than against a head it does not have.
-  const headHeight = Math.max(0.2, settings.role === "setScrew" ? settings.diameter : settings.headHeight);
+  // against the body rather than against a head it does not have, and its size
+  // has to fit the core instead of a head.
+  const headHeight = Math.max(0.2, settings.role === "setScrew" ? threadNaturalHeight(settings) : settings.headHeight);
   return [
     { value: "none", label: t("common.none") },
     ...(Object.keys(THREAD_DRIVE_LABELS) as Array<Exclude<ThreadDrive, "none">>).map((drive) => {
-      const spec = threadDriveSpec(drive, settings.diameter, settings.pitch, headHeight);
+      const spec = threadDriveSpec(drive, settings.diameter, settings.pitch, headHeight, settings.role);
       const name = t(THREAD_DRIVE_LABELS[drive]);
       return { value: drive, label: spec?.label ? `${name} ${spec.label}` : name };
     }),
