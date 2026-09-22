@@ -146,6 +146,13 @@ export type SketchSegment = {
   kind?: "line" | "bezier" | "smooth";
 };
 
+export type SketchCircle = {
+  id: string;
+  x: number;
+  z: number;
+  radius: number;
+};
+
 export type SketchImage = {
   id: string;
   name: string;
@@ -166,6 +173,8 @@ export type SketchProfile = {
   points: SketchPoint[];
   segments: SketchSegment[];
   images?: SketchImage[];
+  /** Echte Kreise - sie werden erst beim Bauen zu Punkten und Kanten. */
+  circles?: SketchCircle[];
 };
 
 export type SketchOperation = "extrude" | "revolve";

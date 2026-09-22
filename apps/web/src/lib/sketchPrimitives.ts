@@ -38,7 +38,7 @@ export function isSketchPrimitive(value: unknown): value is SketchPrimitive {
  * herauskommt. Der Bogen liegt damit auf vier Nachkommastellen genau auf dem
  * echten Kreis - naeher kommt man mit vier Stuetzpunkten nicht heran.
  */
-const KAPPA = 0.5522847498307936;
+export const KAPPA = 0.5522847498307936;
 
 /** Die Kantenlaenge, mit der eine neu eingefuegte Form beginnt. */
 export const SKETCH_PRIMITIVE_SIZE = 20;
@@ -52,7 +52,7 @@ type MakeId = (prefix: string) => string;
  * beide diese Funktion - sonst stuenden zwei Beschreibungen derselben Kurve
  * nebeneinander und nur eine wuerde gepflegt.
  */
-function ellipsePoints(makeId: MakeId, cx: number, cz: number, rx: number, rz: number): SketchPoint[] {
+export function ellipsePoints(makeId: MakeId, cx: number, cz: number, rx: number, rz: number): SketchPoint[] {
   const hx = KAPPA * rx;
   const hz = KAPPA * rz;
   return [
@@ -80,7 +80,7 @@ function ellipsePoints(makeId: MakeId, cx: number, cz: number, rx: number, rz: n
 }
 
 /** Verbindet die Punkte der Reihe nach zu einem geschlossenen Zug. */
-function closedLoop(makeId: MakeId, points: SketchPoint[], kind: SketchSegment["kind"]): SketchSegment[] {
+export function closedLoop(makeId: MakeId, points: SketchPoint[], kind: SketchSegment["kind"]): SketchSegment[] {
   return points.map((point, index) => ({
     id: makeId("sketch-segment"),
     startId: point.id,

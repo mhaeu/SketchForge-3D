@@ -3835,6 +3835,29 @@ svg.sketch-reference-icon {
 /* Die Winkel, die dauerhaft dastehen, treten gegen die Vorschau zurueck: man
    soll sie ablesen koennen, ohne dass sie mit der Zeichnung um
    Aufmerksamkeit streiten. */
+/* Ein echter Kreis: gezeichnet wie eine Kante, aber ohne Stuetzpunkte - an
+   ihm gibt es nur seine Groesse zu aendern. */
+.sketch-circle {
+  fill: none;
+  stroke: #2c3f52;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+
+.sketch-circle.selected {
+  stroke: #169fce;
+  stroke-width: 2.5;
+}
+
+.sketch-circle-radius-handle {
+  fill: #ffffff;
+  stroke: #169fce;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: ew-resize;
+}
+
 /* Der Drehgriff der Auswahl: derselbe Ton wie ihr Rahmen, aber rund - eckig
    sind die Griffe, mit denen man die Groesse zieht. */
 .sketch-geometry-rotate > line {

@@ -139,6 +139,7 @@ import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
 import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
+import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
 import { attachProjectAsset, dedupeProjectAssets, projectAssetFromBytes, sourceFormatForFileName } from "@/lib/projectAssets";
@@ -334,6 +335,7 @@ function cloneSketchProfile(profile: SketchProfile): SketchProfile {
     })),
     segments: profile.segments.map((segment) => ({ ...segment })),
     images: (profile.images ?? []).map((image) => ({ ...image })),
+    circles: profile.circles?.length ? profile.circles.map((circle) => ({ ...circle })) : undefined,
   };
 }
 
@@ -493,7 +495,9 @@ async function shapeFromResolvedSketchProfile(
 }
 
 async function shapeFromSketchProfile(profile: SketchProfile, height: number, existing?: WorkplaneShape | null) {
-  const regions = cadSketchRegions(profile);
+  // Ausgeklappt wird nur fuer die Geometrie - der Datensatz der Skizze behaelt
+  // seine Kreise, sonst waeren sie beim naechsten Oeffnen keine mehr.
+  const regions = cadSketchRegions(expandSketchCircles(profile));
   if (regions.length === 0) return null;
   const closedPaths = [...new Map(
     regions.flatMap((region) => [region.outer, ...region.holes]).map((path) => [path.id, path] as const),
@@ -647,7 +651,7 @@ async function cadShapeFromSketchProfile(profile: SketchProfile, height: number,
       reject(new Error(t("status.sketchWorkerTimeout")));
     }, 30_000);
     sketchCadPending.set(requestId, { resolve, reject, timer });
-    worker.postMessage({ type: "build", requestId, profile: cloneSketchProfile(profile), height: safeHeight });
+    worker.postMessage({ type: "build", requestId, profile: expandSketchCircles(cloneSketchProfile(profile)), height: safeHeight });
   });
   if (response.type === "error") throw new Error(response.message);
   const source = canonicalizeShape({
@@ -683,7 +687,7 @@ async function shapeFromRevolvedSketchProfile(
 ) {
   const runtime = await getManifoldRuntime();
   const normalizedSettings = normalizeSketchRevolveSettings(settings);
-  const mesh = buildSketchRevolveMesh(runtime, profile, normalizedSettings);
+  const mesh = buildSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings);
   return canonicalizeShape({
     id: existing?.id ?? createLocalId("sketch-revolve"),
     name: existing?.name ?? t("shape.sketchRevolve"),
@@ -6256,7 +6260,7 @@ export function SketchForgeEditor({
     }
     const timer = window.setTimeout(() => {
       void getManifoldRuntime()
-        .then((runtime) => buildSketchRevolveMesh(runtime, sketchProfile, sketchRevolveSettings))
+        .then((runtime) => buildSketchRevolveMesh(runtime, expandSketchCircles(sketchProfile), sketchRevolveSettings))
         .then((mesh) => {
           if (sketchRevolvePreviewRequestRef.current === requestId) setSketchRevolvePreview(mesh);
         })
@@ -7222,6 +7226,59 @@ export function SketchForgeEditor({
     );
   }, [sketchProfile.images, sketchSelection, updateSketchImage]);
 
+  /**
+   * Ein Kreis ueber der Auswahl: ueber einer Strecke oder zwischen zwei
+   * Punkten. Beide liegen danach auf ihm, gegenueber - das ist der Kreis, den
+   * man meint, wenn man ihn ueber eine Linie zieht. Er bleibt ein Kreis: am
+   * Rand zieht man seine Groesse, verziehen laesst er sich nicht.
+   */
+  const addSketchCircleOverSelection = useCallback(() => {
+    const selection = sketchSelection;
+    const pointById = new Map(sketchProfile.points.map((point) => [point.id, point]));
+    let ends: [SketchPoint, SketchPoint] | null = null;
+    if (selection?.kind === "segment") {
+      const segment = sketchProfile.segments.find((entry) => entry.id === selection.id);
+      const start = segment ? pointById.get(segment.startId) : undefined;
+      const end = segment ? pointById.get(segment.endId) : undefined;
+      if (start && end) ends = [start, end];
+    } else if (selection?.kind === "multiple" && selection.pointIds.length === 2) {
+      const start = pointById.get(selection.pointIds[0]);
+      const end = pointById.get(selection.pointIds[1]);
+      if (start && end) ends = [start, end];
+    }
+    if (!ends) {
+      setNotice(t("sketch.circleNeedsTwoPoints"));
+      return;
+    }
+    const circle = sketchCircleOverPoints(createLocalId("sketch-circle"), ends[0], ends[1]);
+    if (!circle) {
+      setNotice(t("sketch.circleNeedsTwoPoints"));
+      return;
+    }
+    commitSketchProfile({
+      ...sketchProfile,
+      circles: [...(sketchProfile.circles ?? []), circle],
+    }, t("sketch.circleAdded"));
+    setSketchSelection({ kind: "circle", id: circle.id });
+  }, [commitSketchProfile, sketchProfile, sketchSelection]);
+
+  const updateSketchCircle = useCallback((id: string, patch: Partial<SketchCircle>, message: string) => {
+    const circles = sketchProfile.circles ?? [];
+    if (!circles.some((circle) => circle.id === id)) return;
+    commitSketchProfile({
+      ...sketchProfile,
+      circles: circles.map((circle) => circle.id === id ? { ...circle, ...patch } : circle),
+    }, message);
+  }, [commitSketchProfile, sketchProfile]);
+
+  const deleteSketchCircle = useCallback((id: string) => {
+    commitSketchProfile({
+      ...sketchProfile,
+      circles: (sketchProfile.circles ?? []).filter((circle) => circle.id !== id),
+    }, t("sketch.circleRemoved"));
+    setSketchSelection(null);
+  }, [commitSketchProfile, sketchProfile]);
+
   const deleteSelectedSketchEntity = useCallback(() => {
     if (!sketchSelection) {
       setNotice(t("status.selectSketchPoint"));
@@ -7230,6 +7287,7 @@ export function SketchForgeEditor({
     if (sketchSelection.kind === "point") deleteSketchPoint(sketchSelection.id);
     else if (sketchSelection.kind === "segment") deleteSketchSegment(sketchSelection.id);
     else if (sketchSelection.kind === "image") deleteSketchImage(sketchSelection.id);
+    else if (sketchSelection.kind === "circle") deleteSketchCircle(sketchSelection.id);
     else {
       const pointIds = new Set(sketchSelection.pointIds);
       const segmentIds = new Set(sketchSelection.segmentIds);
@@ -7243,7 +7301,7 @@ export function SketchForgeEditor({
       setSketchActivePointId(null);
       setSketchSelection(null);
     }
-  }, [commitSketchProfile, deleteSketchImage, deleteSketchPoint, deleteSketchSegment, sketchProfile, sketchSelection]);
+  }, [commitSketchProfile, deleteSketchCircle, deleteSketchImage, deleteSketchPoint, deleteSketchSegment, sketchProfile, sketchSelection]);
 
   const moveSketchPoint = useCallback((id: string, position: { x: number; z: number }) => {
     const current = sketchProfile.points.find((point) => point.id === id);
@@ -10082,6 +10140,8 @@ export function SketchForgeEditor({
         onRotateSketch={rotateSelectedSketch}
         onMirrorSketch={mirrorSelectedSketch}
         canTransformSketch={sketchSelection?.kind === "multiple" && (sketchSelection.pointIds?.length ?? 0) >= 2}
+        canCircleOverSelection={sketchSelection?.kind === "segment" || (sketchSelection?.kind === "multiple" && sketchSelection.pointIds.length === 2)}
+        onCircleOverSelection={addSketchCircleOverSelection}
         onSketchTool={setActiveSketchTool}
         onSketchPrimitive={(primitive) => addSketchPrimitive(primitive, { x: 0, z: 0 })}
         onSketchSvg={() => sketchSvgInputRef.current?.click()}
@@ -10156,6 +10216,8 @@ export function SketchForgeEditor({
               const count = pointIds.length + segmentIds.length + imageIds.length;
               setNotice(count ? count === 1 ? t("status.sketchSelectedOne") : t("status.sketchSelectedMany", { count }) : t("status.sketchSelectionCleared"));
             }}
+            onSelectCircle={(id) => setSketchSelection({ kind: "circle", id })}
+            onUpdateCircle={updateSketchCircle}
             onSelectImage={(id) => {
               setSketchSelection({ kind: "image", id });
               setSketchActivePointId(null);
@@ -10457,6 +10519,8 @@ function SecondaryToolbar({
   sketchTool,
   sketchDimensionsVisible,
   canTransformSketch,
+  canCircleOverSelection,
+  onCircleOverSelection,
   onToggleSketchDimensions,
   onRotateSketch,
   onMirrorSketch,
@@ -10535,6 +10599,8 @@ function SecondaryToolbar({
   sketchTool: SketchTool;
   sketchDimensionsVisible: boolean;
   canTransformSketch: boolean;
+  canCircleOverSelection: boolean;
+  onCircleOverSelection: () => void;
   onToggleSketchDimensions: () => void;
   onRotateSketch: (degrees: number) => void;
   onMirrorSketch: (axis: "x" | "z") => void;
@@ -11206,6 +11272,16 @@ function SecondaryToolbar({
                 <div className="toolbar-section sketch-arrange-section">
                   <div className="toolbar-section-label">{t("sketch.group.arrange")}</div>
                   <div className="toolbar-section-tools">
+                    <button
+                      className={`toolbar-icon ${canCircleOverSelection ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.circleOverSelection")}
+                      title={canCircleOverSelection ? t("sketch.circleOverSelection") : t("sketch.circleNeedsTwoPoints")}
+                      onClick={onCircleOverSelection}
+                      disabled={!canCircleOverSelection}
+                    >
+                      <CircleIcon size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
                     <button
                       className={`toolbar-icon ${canTransformSketch ? "" : "disabled"}`}
                       type="button"

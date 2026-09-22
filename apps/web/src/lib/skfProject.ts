@@ -861,6 +861,16 @@ function stringArray(value: unknown, label: string) {
 function validateSketchProfile(value: unknown, label: string) {
   const profile = objectRecord(value, label);
   if (!Array.isArray(profile.points) || !Array.isArray(profile.segments)) throw new Error(`${label} is missing points or segments`);
+  if (profile.circles !== undefined) {
+    if (!Array.isArray(profile.circles)) throw new Error(`${label}.circles is not a list`);
+    profile.circles.forEach((rawCircle, index) => {
+      const circle = objectRecord(rawCircle, `${label}.circles[${index}]`);
+      stringValue(circle.id, `${label}.circles[${index}].id`);
+      ["x", "z"].forEach((field) => finiteNumber(circle[field], `${label}.circles[${index}].${field}`));
+      const radius = finiteNumber(circle.radius, `${label}.circles[${index}].radius`);
+      if (radius <= 0 || radius > 1e9) throw new Error(`${label}.circles[${index}].radius is outside the supported range`);
+    });
+  }
   const pointIds = new Set<string>();
   profile.points.forEach((rawPoint, index) => {
     const point = objectRecord(rawPoint, `${label}.points[${index}]`);
