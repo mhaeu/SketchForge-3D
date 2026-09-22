@@ -164,6 +164,7 @@ import {
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
 import { placeSketchExtrusion } from "@/lib/sketchPlacement";
 import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
+import { sketchEditWorkplane } from "@/lib/sketchEditPlane";
 import {
   SKETCHFORGE_MCP_HEARTBEAT_MS,
   SKETCHFORGE_MCP_POLL_RETRY_MS,
@@ -6818,33 +6819,9 @@ export function SketchForgeEditor({
       return;
     }
     const operation = selectedShape.sketchOperation ?? (selectedShape.sketchRevolve ? "revolve" : "extrude");
-    let editWorkplane: PlacementWorkplane | undefined;
-    if (operation === "extrude") {
-      const quaternion = quaternionForShape(selectedShape);
-      const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion).normalize();
-      const xAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize();
-      const zAxis = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).normalize();
-      const points = selectedShape.sketchProfile.points;
-      const profileCenterX = points.length
-        ? (Math.min(...points.map((point) => point.x)) + Math.max(...points.map((point) => point.x))) / 2
-        : 0;
-      const profileCenterZ = points.length
-        ? (Math.min(...points.map((point) => point.z)) + Math.max(...points.map((point) => point.z))) / 2
-        : 0;
-      const origin = new THREE.Vector3(
-        selectedShape.x,
-        (selectedShape.elevation ?? 0) + selectedShape.height / 2,
-        selectedShape.z,
-      )
-        .addScaledVector(normal, -selectedShape.height / 2)
-        .addScaledVector(xAxis, -profileCenterX)
-        .addScaledVector(zAxis, -profileCenterZ);
-      editWorkplane = placementWorkplaneFromSurface(
-        { x: origin.x, y: origin.y, z: origin.z },
-        { x: normal.x, y: normal.y, z: normal.z },
-        { x: xAxis.x, y: xAxis.y, z: xAxis.z },
-      );
-    }
+    // Ein Rotationskoerper hat keine Zeichenebene im Raum - er dreht sich um
+    // seine Achse, und die Skizze gehoert an die Hauptebene.
+    const editWorkplane = operation === "extrude" ? sketchEditWorkplane(selectedShape) : undefined;
     beginSketch(operation, selectedShape.sketchProfile, selectedShape.id, selectedShape.sketchRevolve, editWorkplane);
   }, [beginSketch, selectedShape, selectedShapes.length]);
 
