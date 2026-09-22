@@ -9062,13 +9062,23 @@ export function SketchForgeEditor({
       const { blob, exportedCount, skipped } = await exportShapesToStep(sourceShapes);
       const text = await blob.text();
       const result = await downloadTextFile(projectExportFileName(exportName, "step"), text, "application/step");
-      const skipNote = skipped.length > 0 ? `; skipped ${skipped.length} non-primitive shape${skipped.length === 1 ? "" : "s"}` : "";
+      const skipNote = skipped.length === 0
+        ? ""
+        : skipped.length === 1
+          ? t("status.exportStepSkippedOne")
+          : t("status.exportStepSkippedMany", { count: skipped.length });
       if (result.mode === "folder") {
         setNotice(t("status.savedStepTo", { count: exportedCount, path: result.path, skipNote }));
       } else {
         setNotice(exportedCount === 1 ? t("status.exportedStepOne", { skipNote }) : t("status.exportedStepMany", { count: exportedCount, skipNote }));
       }
     } catch (error: unknown) {
+      // Dass nichts dabei ist, was STEP tragen kann, ist keine Stoerung -
+      // dafuer gibt es einen Satz, der sagt, woran es liegt.
+      if (error instanceof Error && error.name === "StepExportEmptyError") {
+        setNotice(t("status.exportStepNothing"));
+        return;
+      }
       setNotice(error instanceof Error ? error.message : t("status.exportStepFailed"));
     } finally {
       setStepExporting(false);
@@ -10833,7 +10843,7 @@ function TopActionPanel({
     step: {
       label: "STEP",
       description: t("export.step.description"),
-      note: t("export.stepNoteShort"),
+      note: t("export.step.note"),
     },
     svg: {
       label: "SVG",

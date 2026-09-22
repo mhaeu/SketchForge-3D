@@ -1066,7 +1066,6 @@ export const MESSAGES_EN = {
   "updates.check": "Check for updates",
   "shared.loading": "Loading shared projects",
   "shared.none": "No shared projects yet",
-  "export.stepNoteShort": "Keeps supported boxes, cylinders, spheres, and cones as precise CAD geometry.",
   "export.skfDescription": "Editable project",
   "export.skfNote": "Preserves the editable project, undo/redo history, sketches, groups, CAD data, and imported sources.",
   "editor.regionStretchHint": "Stretch: the material inside the box scales with it - its features change shape",

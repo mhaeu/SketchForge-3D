@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkplaneShape } from "@/types/sketchforge";
-import { aabbsOverlap, shapeYawDegrees, worldAabb } from "@/lib/stepExport";
+import { aabbsOverlap, shapeYawDegrees, stepSourceForShape, worldAabb } from "@/lib/stepExport";
 
 function shape(overrides: Partial<WorkplaneShape> = {}): WorkplaneShape {
   return {
@@ -72,5 +72,47 @@ describe("aabbsOverlap", () => {
   it("rejects boxes separated on a single axis", () => {
     expect(aabbsOverlap(a, { min: [11, 0, 0], max: [20, 10, 10] })).toBe(false);
     expect(aabbsOverlap(a, { min: [0, 0, 11], max: [10, 10, 20] })).toBe(false);
+  });
+});
+
+/*
+ * Woraus die STEP-Ausfuhr einen Koerper baut. Der Fall, an dem es lange
+ * scheiterte: ein verrundeter Quader ist danach ein Netz - und ein Netz traegt
+ * STEP nicht. Die exakte Form lag die ganze Zeit als `cadBrep` daneben, wurde
+ * aber nicht angesehen, und die Ausfuhr brach ab, ohne eine Datei zu schreiben.
+ */
+describe("stepSourceForShape", () => {
+  it("baut ein Grundelement aus seinen Massen", () => {
+    expect(stepSourceForShape(shape({ kind: "box" }))).toBe("primitive");
+    expect(stepSourceForShape(shape({ kind: "cylinder" }))).toBe("primitive");
+    expect(stepSourceForShape(shape({ kind: "sphere" }))).toBe("primitive");
+    expect(stepSourceForShape(shape({ kind: "cone" }))).toBe("primitive");
+  });
+
+  it("nimmt bei einem bearbeiteten Koerper das abgelegte B-Rep", () => {
+    expect(stepSourceForShape(shape({ kind: "mesh", cadBrep: "DBRep_DrawableShape …" }))).toBe("baked");
+  });
+
+  it("nimmt auch bei einer Aussparung das abgelegte B-Rep", () => {
+    expect(stepSourceForShape(shape({ kind: "mesh", hole: true, cadBrep: "DBRep …" }))).toBe("baked");
+  });
+
+  it("bevorzugt die eingelesene STEP-Quelle, wo es sie gibt", () => {
+    const eingelesen = shape({
+      kind: "mesh",
+      importedMesh: { positions: [], baseWidth: 1, baseDepth: 1, baseHeight: 1, triangleCount: 0, sourceFormat: "step", brepStep: "ISO-10303-21;" },
+      cadBrep: "DBRep …",
+    });
+    expect(stepSourceForShape(eingelesen)).toBe("imported");
+  });
+
+  it("laesst liegen, was STEP nicht abbilden kann", () => {
+    expect(stepSourceForShape(shape({ kind: "thread" }))).toBe("unsupported");
+    expect(stepSourceForShape(shape({ kind: "text" }))).toBe("unsupported");
+    // Ein eingelesenes Netz ohne Quelle: kein B-Rep, nur Dreiecke.
+    expect(stepSourceForShape(shape({
+      kind: "mesh",
+      importedMesh: { positions: [], baseWidth: 1, baseDepth: 1, baseHeight: 1, triangleCount: 12, sourceFormat: "stl" },
+    }))).toBe("unsupported");
   });
 });

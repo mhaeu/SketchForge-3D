@@ -1,6 +1,7 @@
 import type { WorkplaneShape } from "@/types/sketchforge";
 import { shapeDepth, shapeWidth } from "@/lib/workplaneShapes";
 import { solidShapesOnly } from "@/lib/workplaneShapes";
+import { cadBrepTransformForShape } from "@/lib/cadBakeMetadata";
 import { loadBrepWithOcct, type Brep, type BrepSolid } from "@/lib/brepKernel";
 
 export type SkippedShape = {
@@ -8,6 +9,19 @@ export type SkippedShape = {
   kind: WorkplaneShape["kind"];
   reason: string;
 };
+
+/**
+ * Nichts im Projekt laesst sich als B-Rep schreiben - keine Stoerung, sondern
+ * eine Aussage ueber den Inhalt. Als eigener Fehlertyp, damit die Oberflaeche
+ * dafuer einen erklaerenden Satz in der Sprache des Benutzers zeigen kann
+ * statt der englischen Zeile aus dieser Datei.
+ */
+export class StepExportEmptyError extends Error {
+  constructor() {
+    super("No exportable B-Rep solids in this project");
+    this.name = "StepExportEmptyError";
+  }
+}
 
 export type StepExportResult = {
   blob: Blob;
@@ -114,6 +128,65 @@ function toCadZUp(brep: Brep, solid: BrepSolid): BrepSolid {
 // only genuinely non-uniform resize falls back to applyMatrix, which validly
 // turns the affected primitives into B-splines. The shared toCadZUp applies the
 // final Y-up→Z-up flip afterwards, as for primitives.
+/**
+ * Woher die genaue Geometrie eines Koerpers kommt.
+ *
+ * - `primitive`: aus Breite, Tiefe und Hoehe neu gebaut - exakt und billig.
+ * - `imported`: die STEP-Quelle, mit der er hereingekommen ist.
+ * - `baked`: das B-Rep, das der CAD-Dienst bei einer Kantenbearbeitung
+ *   abgelegt hat. Ohne diesen Fall fiel jeder verrundete Koerper heraus: er
+ *   ist danach kein Quader mehr, sondern ein Netz, und ein Netz kann STEP
+ *   nicht tragen - obwohl die exakte Form die ganze Zeit danebenlag.
+ */
+export type StepSource = "primitive" | "imported" | "baked" | "unsupported";
+
+export function stepSourceForShape(shape: WorkplaneShape): StepSource {
+  if (shape.kind === "mesh" && shape.importedMesh?.brepStep) return "imported";
+  if (EXACT_KINDS.has(shape.kind)) return "primitive";
+  if (shape.cadBrep) return "baked";
+  return "unsupported";
+}
+
+/**
+ * Ein Koerper, dessen genaue Geometrie schon neben ihm liegt.
+ *
+ * Sobald an einem Koerper Kanten verrundet oder gefast wurden, ist er kein
+ * Quader mehr, sondern ein Netz - ihn aus Breite, Tiefe und Hoehe neu zu bauen
+ * wuerde die Verrundung verlieren. Der CAD-Dienst legt aber bei jeder
+ * Bearbeitung das Ergebnis als B-Rep in `cadBrep` ab, und genau das gehoert in
+ * die STEP-Datei. `cadBrepTransformForShape` liefert die Lage, die der Koerper
+ * seit dieser Aufnahme bekommen hat - dieselbe Rechnung, mit der der Dienst
+ * die Form spaeter wieder aufbaut.
+ */
+function buildBakedBody(brep: Brep, shape: WorkplaneShape): BuildOutcome {
+  const stored = shape.cadBrep;
+  if (!stored) return { skip: unsupportedReason() };
+
+  const restored = brep.fromBREP(stored);
+  if (!restored.ok) {
+    return { skip: `stored B-Rep failed to load: ${String(restored.error.message ?? restored.error)}` };
+  }
+  let body = restored.value as unknown as BrepSolid;
+
+  const transform = cadBrepTransformForShape(shape);
+  if (transform?.length === 12) {
+    // Die zwoelf Zahlen sind eine 3x4-Matrix zeilenweise; brepjs nimmt sie als
+    // 4x4 mit der Schlusszeile [0,0,0,1].
+    const placed = brep.applyMatrix(body, [
+      [transform[0]!, transform[1]!, transform[2]!, transform[3]!],
+      [transform[4]!, transform[5]!, transform[6]!, transform[7]!],
+      [transform[8]!, transform[9]!, transform[10]!, transform[11]!],
+      [0, 0, 0, 1],
+    ]);
+    if (!placed.ok) {
+      return { skip: `placing the stored B-Rep failed: ${String(placed.error.message ?? placed.error)}` };
+    }
+    body = placed.value as unknown as BrepSolid;
+  }
+
+  return { solid: body };
+}
+
 async function buildImportedBody(brep: Brep, shape: WorkplaneShape): Promise<BuildOutcome> {
   const mesh = shape.importedMesh;
   if (!mesh?.brepStep) {
@@ -204,11 +277,14 @@ export async function exportShapesToStep(shapes: WorkplaneShape[]): Promise<Step
   const skipped: SkippedShape[] = [];
   const holes: { box: Aabb; solid: BrepSolid }[] = [];
   for (const shape of shapes.filter((s) => s.hole)) {
-    if (!EXACT_KINDS.has(shape.kind)) {
+    const source = stepSourceForShape(shape);
+    if (source === "unsupported") {
       skipped.push(describe(shape, `hole ${unsupportedReason()}; cut omitted`));
       continue;
     }
-    const built = buildExactSolid(brep, shape);
+    // Eine Aussparung wird nur aus dem gebaut, was ohne Warten geht; eine
+    // eingelesene STEP-Quelle als Bohrer kommt nicht vor.
+    const built = source === "primitive" ? buildExactSolid(brep, shape) : buildBakedBody(brep, shape);
     if ("skip" in built) {
       skipped.push(describe(shape, `hole ${built.skip}; cut omitted`));
       continue;
@@ -216,15 +292,16 @@ export async function exportShapesToStep(shapes: WorkplaneShape[]): Promise<Step
     holes.push({ box: worldAabb(shape), solid: built.solid });
   }
 
-  const isImportedBody = (shape: WorkplaneShape) => shape.kind === "mesh" && Boolean(shape.importedMesh?.brepStep);
-
   const parts: { shape: BrepSolid; name: string; color: string }[] = [];
   for (const shape of shapes.filter((s) => !s.hole)) {
     let built: BuildOutcome;
-    if (isImportedBody(shape)) {
+    const source = stepSourceForShape(shape);
+    if (source === "imported") {
       built = await buildImportedBody(brep, shape);
-    } else if (EXACT_KINDS.has(shape.kind)) {
+    } else if (source === "primitive") {
       built = buildExactSolid(brep, shape);
+    } else if (source === "baked") {
+      built = buildBakedBody(brep, shape);
     } else {
       const reason = shape.kind === "mesh" ? "imported mesh has no B-Rep source; re-import as STEP to round-trip" : unsupportedReason();
       skipped.push(describe(shape, reason));
@@ -251,7 +328,8 @@ export async function exportShapesToStep(shapes: WorkplaneShape[]): Promise<Step
   }
 
   if (parts.length === 0) {
-    throw new Error("No box/cylinder/sphere or imported STEP solids to export as B-Rep STEP");
+    // Der Aufrufer uebersetzt diesen Fall; der Text hier ist nur fuers Protokoll.
+    throw new StepExportEmptyError();
   }
 
   const result = brep.exportAssemblySTEP(parts, { unit: "MM" });

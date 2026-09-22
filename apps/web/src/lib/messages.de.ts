@@ -1065,7 +1065,6 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "updates.check": "Nach Aktualisierungen suchen",
   "shared.loading": "Projekte auf dem Server werden geladen",
   "shared.none": "Noch keine Projekte auf dem Server",
-  "export.stepNoteShort": "Behält unterstützte Quader, Zylinder, Kugeln und Kegel als genaue CAD-Geometrie.",
   "export.skfDescription": "Bearbeitbares Projekt",
   "export.skfNote": "Bewahrt das bearbeitbare Projekt, den Verlauf, Skizzen, Gruppen, CAD-Daten und importierte Quellen.",
   "editor.regionStretchHint": "Strecken: Das Material im Kasten wird mitskaliert - seine Merkmale ändern ihre Form",
