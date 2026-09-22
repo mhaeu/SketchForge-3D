@@ -9,6 +9,7 @@ import {
   transformOverlayScreenPoint,
   snappedRotationDelta,
   snappedWheelRotation,
+  visibleDimensionMarks,
 } from "@/components/workplane/transformOverlayTypes";
 
 describe("rotation handle projection", () => {
@@ -282,5 +283,35 @@ describe("dimension labels that stay on screen", () => {
   it("names one handle per axis, so no measurement is drawn twice", () => {
     const keys = keysForCamera(1, -1);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+/**
+ * Dauerhafte Masse sind praktisch und stehen doch im Bild. Der Schalter in
+ * der Kameraleiste nimmt sie weg, ohne das Messen selbst abzuschalten: ein
+ * ueberfahrener oder angehefteter Griff zeigt sein Mass weiterhin.
+ */
+describe("the switch for the permanent dimensions", () => {
+  const box = {
+    dimensions: {
+      "right-mid": [{ key: "w" }],
+      "near-mid": [{ key: "d" }],
+      "top-height": [{ key: "h" }],
+      "left-mid": [{ key: "w2" }],
+    },
+    alwaysVisibleDimensionKeys: ["right-mid", "near-mid", "top-height"],
+  } as unknown as Parameters<typeof visibleDimensionMarks>[0];
+
+  it("shows the three dimensions of a single selection while it is on", () => {
+    expect(visibleDimensionMarks(box, null, true).map((mark) => mark.key)).toEqual(["w", "d", "h"]);
+  });
+
+  it("shows nothing by itself once it is off", () => {
+    expect(visibleDimensionMarks(box, null, false)).toEqual([]);
+  });
+
+  it("keeps the hovered handle measuring either way", () => {
+    expect(visibleDimensionMarks(box, "left-mid", false).map((mark) => mark.key)).toEqual(["w2"]);
+    expect(visibleDimensionMarks(box, "left-mid", true).map((mark) => mark.key)).toEqual(["w2"]);
   });
 });

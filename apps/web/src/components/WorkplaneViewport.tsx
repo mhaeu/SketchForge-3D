@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Ruler, RulerDimensionLine, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction, type WheelEvent as ReactWheelEvent } from "react";
 import * as THREE from "three";
 import { Brush, Evaluator, HOLLOW_INTERSECTION } from "three-bvh-csg";
@@ -92,6 +92,7 @@ const MIN_GRID_BLOCK_SIZE = 1;
 const MAX_GRID_BLOCK_SIZE = 200;
 const WORKSPACE_DEFAULTS_STORAGE_PREFIX = "sketchForge.workspaceDefault.";
 const MOVE_DIMENSIONS_ENABLED_STORAGE_KEY = "sketchForge.editor.moveDimensionsEnabled";
+const SIZE_DIMENSIONS_ENABLED_STORAGE_KEY = "sketchForge.editor.sizeDimensionsEnabled";
 const DEFAULT_WORKSPACE = DEFAULT_WORKPLANE_WORKSPACE;
 const CAMERA_FOV = 38;
 const CAMERA_HOME = new THREE.Vector3(118, 96, 118);
@@ -301,6 +302,18 @@ function readMoveDimensionsEnabled() {
     return true;
   }
   return window.localStorage.getItem(MOVE_DIMENSIONS_ENABLED_STORAGE_KEY) !== "false";
+}
+
+/**
+ * Ob die Masse einer einzelnen Auswahl dauerhaft an ihren Kanten stehen.
+ * Sie sind praktisch, aber sie stehen auch im Bild - deshalb ein Schalter,
+ * und deshalb bleibt seine Stellung ueber die Sitzung hinaus stehen.
+ */
+function readSizeDimensionsEnabled() {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  return window.localStorage.getItem(SIZE_DIMENSIONS_ENABLED_STORAGE_KEY) !== "false";
 }
 
 type ShapeRenderRecord = {
@@ -2787,6 +2800,7 @@ export function WorkplaneViewport({
   const [rulerOverlay, setRulerOverlay] = useState<RulerOverlayState | null>(null);
   const [moveDimensionOverlay, setMoveDimensionOverlay] = useState<MoveDimensionOverlayState | null>(null);
   const [moveDimensionsEnabled, setMoveDimensionsEnabled] = useState(true);
+  const [sizeDimensionsEnabled, setSizeDimensionsEnabled] = useState(true);
   const [challengeTutorialCollapsed, setChallengeTutorialCollapsed] = useState(false);
 
   useEffect(() => {
@@ -2903,6 +2917,28 @@ export function WorkplaneViewport({
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, [clearMoveDimensions]);
+
+  useEffect(() => {
+    const applyStoredPreference = () => setSizeDimensionsEnabled(readSizeDimensionsEnabled());
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === SIZE_DIMENSIONS_ENABLED_STORAGE_KEY) applyStoredPreference();
+    };
+    applyStoredPreference();
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const toggleSizeDimensions = useCallback(() => {
+    setSizeDimensionsEnabled((enabled) => {
+      const next = !enabled;
+      try {
+        window.localStorage.setItem(SIZE_DIMENSIONS_ENABLED_STORAGE_KEY, String(next));
+      } catch {
+        // Ohne Speicher gilt die Stellung wenigstens fuer diese Sitzung.
+      }
+      return next;
+    });
+  }, []);
 
   const changeMoveDimensionsEnabled = useCallback((enabled: boolean) => {
     moveDimensionsEnabledRef.current = enabled;
@@ -5633,6 +5669,15 @@ export function WorkplaneViewport({
                 <PanelsTopLeft size={25} strokeWidth={2.1} aria-hidden="true" />
               </button>
             </div>
+            <button
+              className={sizeDimensionsEnabled ? "active" : ""}
+              aria-label={sizeDimensionsEnabled ? t("camera.hideDimensions") : t("camera.showDimensions")}
+              title={t("camera.dimensionsHint")}
+              aria-pressed={sizeDimensionsEnabled}
+              onClick={toggleSizeDimensions}
+            >
+              <RulerDimensionLine size={25} strokeWidth={2.1} aria-hidden="true" />
+            </button>
             <div className="ruler-control-group">
               <button
                 className={`ruler-trigger ${rulerToolsOpen ? "active" : ""}`}
@@ -5690,6 +5735,7 @@ export function WorkplaneViewport({
             <TransformOverlay
               box={transformOverlay}
               measureKey={pinnedMeasureKey ?? hoverMeasureKey}
+              alwaysVisibleDimensions={sizeDimensionsEnabled}
               editingDimension={editingDimension}
               editingRotation={editingRotation}
               rotationReadout={rotationReadout}

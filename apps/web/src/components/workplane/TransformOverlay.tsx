@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { t } from "@/lib/i18n";
 import {
   measureKeyForHandle,
+  visibleDimensionMarks,
   type TransformOverlayProps,
   type TransformOverlayState,
 } from "@/components/workplane/transformOverlayTypes";
@@ -36,6 +37,7 @@ export {
 export function TransformOverlay({
   box,
   measureKey,
+  alwaysVisibleDimensions = true,
   editingDimension,
   editingRotation,
   rotationReadout,
@@ -63,9 +65,7 @@ export function TransformOverlay({
 }: TransformOverlayProps) {
   // Ohne ueberfahrenen oder angehefteten Griff zeigt eine einzelne Auswahl
   // trotzdem ihre drei Masse - lesbar und anklickbar, ohne vorher zu suchen.
-  const marks = measureKey
-    ? (box.dimensions[measureKey] ?? [])
-    : (box.alwaysVisibleDimensionKeys ?? []).flatMap((key) => box.dimensions[key] ?? []);
+  const marks = visibleDimensionMarks(box, measureKey, alwaysVisibleDimensions);
   const visibleMarks = (hideDimensionMarks ? [] : marks).filter((mark) => mark.key !== editingDimension?.key);
   const handleMeasureKey = (handle: TransformOverlayState["handles"][number]) => measureKeyForHandle(handle.kind, handle.key, box);
   const protractorTicks = Array.from({ length: 16 }, (_, index) => {

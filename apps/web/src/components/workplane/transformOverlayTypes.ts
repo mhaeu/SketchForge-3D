@@ -224,6 +224,8 @@ export type EditingRotation = {
 export type TransformOverlayProps = {
   box: TransformOverlayState;
   measureKey: string | null;
+  /** Ob die Masse einer einzelnen Auswahl ohne Ueberfahren stehen bleiben. */
+  alwaysVisibleDimensions?: boolean;
   editingDimension: EditingDimension;
   editingRotation: EditingRotation;
   rotationReadout: RotationReadout;
@@ -263,4 +265,20 @@ export function measureKeyForHandle(kind: TransformHandleKind, handleKey: string
     return getElevationMeasureKey(overlay) ?? handleKey;
   }
   return handleKey;
+}
+
+/**
+ * Welche Masse gerade zu sehen sind. Ueberfaehrt oder haelt man einen Griff,
+ * gehoert das Bild diesem einen Mass; sonst stehen die Masse einer einzelnen
+ * Auswahl von selbst da - solange der Schalter in der Kameraleiste sie nicht
+ * abgestellt hat. Abgestellt heisst: nur noch beim Ueberfahren, wie frueher.
+ */
+export function visibleDimensionMarks(
+  box: TransformOverlayState,
+  measureKey: string | null,
+  alwaysVisible: boolean,
+): DimensionMark[] {
+  if (measureKey) return box.dimensions[measureKey] ?? [];
+  if (!alwaysVisible) return [];
+  return (box.alwaysVisibleDimensionKeys ?? []).flatMap((key) => box.dimensions[key] ?? []);
 }
