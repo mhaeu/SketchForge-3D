@@ -28,6 +28,48 @@ export function shapeTransformShouldRemainEditable(shape: WorkplaneShape) {
   return shape.kind === "text" || Boolean(shape.groupedShapes?.length);
 }
 
+/**
+ * Der Koerper, wie er vor dem Drehen war - fuer die Eigenschaften.
+ *
+ * Eine Drehung backt ihn in ein Netz, damit sein Rahmen ehrlich neu aufgesetzt
+ * werden kann; seine Bauwerte bleiben dabei stehen, nur Art und Masse werden
+ * ueberschrieben. Beides setzt `parametricSource` wieder zusammen, sodass der
+ * Inspektor weiter Durchmesser und Steigung zeigt statt Breite und Tiefe eines
+ * Netzes. Geaendert wird ueber denselben Weg: der Editor baut den Koerper neu
+ * und dreht ihn wieder.
+ */
+export function shapeWithParametricSource(shape: WorkplaneShape): WorkplaneShape {
+  const source = shape.parametricSource;
+  if (!source) return shape;
+  return {
+    ...shape,
+    kind: source.kind,
+    width: source.width,
+    depth: source.depth,
+    height: source.height,
+    size: source.size,
+    taperTopWidth: source.taperTopWidth,
+    taperTopDepth: source.taperTopDepth,
+    taperBottomWidth: source.taperBottomWidth,
+    taperBottomDepth: source.taperBottomDepth,
+  };
+}
+
+/**
+ * Unter welchem Winkel der Koerper wirklich steht. Nach dem Backen steht in
+ * `rotation` eine Null - die Drehung sitzt ja in den Punkten des Netzes. Der
+ * aufgelaufene Winkel steht in der Urform, und genau den zeigt das Drehfeld,
+ * damit man ein Objekt auch wieder gerade stellen kann.
+ */
+export function shapeAccumulatedRotation(shape: WorkplaneShape) {
+  const source = shape.parametricSource;
+  return {
+    rotation: source ? source.rotation : shape.rotation,
+    rotationX: source ? source.rotationX : (shape.rotationX ?? 0),
+    rotationZ: source ? source.rotationZ : (shape.rotationZ ?? 0),
+  };
+}
+
 export function cloneWorkplaneShapeTreeWithFreshIds(shape: WorkplaneShape, suffix: string): WorkplaneShape {
   return {
     ...shape,
@@ -434,6 +476,13 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.threadHeadHeight === b.threadHeadHeight &&
     a.threadChamfer === b.threadChamfer &&
     a.threadHeadChamfer === b.threadHeadChamfer &&
+    a.parametricSource?.kind === b.parametricSource?.kind &&
+    a.parametricSource?.rotation === b.parametricSource?.rotation &&
+    a.parametricSource?.rotationX === b.parametricSource?.rotationX &&
+    a.parametricSource?.rotationZ === b.parametricSource?.rotationZ &&
+    a.parametricSource?.width === b.parametricSource?.width &&
+    a.parametricSource?.depth === b.parametricSource?.depth &&
+    a.parametricSource?.height === b.parametricSource?.height &&
     a.springTurns === b.springTurns &&
     a.springWire === b.springWire &&
     a.springQuality === b.springQuality &&

@@ -27,6 +27,8 @@ import {
   shapeHasTaper,
   shapeOverallFootprintDimensions,
   shapeTransformShouldRemainEditable,
+  shapeWithParametricSource,
+  shapeAccumulatedRotation,
   shapeTaperDimensions,
   shapeTaperScaleAt,
   shapeWidth,
@@ -404,5 +406,61 @@ describe("shape opacity", () => {
     // canonicalizeShape has folded them together - same as the mirror flags.
     expect(workplaneShapesEqual(shape({ opacity: 1 }), shape({}))).toBe(false);
     expect(workplaneShapesEqual(canonicalizeShape(shape({ opacity: 1 })), canonicalizeShape(shape({})))).toBe(true);
+  });
+});
+
+/*
+ * Eine Drehung backt den Koerper in ein Netz - anders liesse sich sein
+ * Rahmen nicht ehrlich neu aufsetzen. Damit seine Bauwerte danach nicht
+ * unerreichbar sind und man ihn wieder gerade stellen kann, haelt
+ * `parametricSource` fest, was er war und wie weit er gedreht wurde.
+ */
+describe("der Koerper vor der Drehung", () => {
+  const source = {
+    kind: "thread" as const,
+    width: 20.8,
+    depth: 18,
+    height: 10,
+    size: 20.8,
+    rotation: 30,
+    rotationX: 90,
+    rotationZ: 0,
+  };
+
+  it("setzt Art und Masse von vor der Drehung wieder zusammen", () => {
+    const baked = shape({
+      kind: "mesh",
+      width: 20.8,
+      depth: 20.8,
+      height: 18,
+      size: 20.8,
+      threadDiameter: 12,
+      threadRole: "nut",
+      parametricSource: source,
+    });
+    const original = shapeWithParametricSource(baked);
+    expect(original.kind).toBe("thread");
+    expect(original.height).toBe(10);
+    expect(original.depth).toBe(18);
+    // Die Bauwerte selbst haben das Backen ohnehin ueberlebt.
+    expect(original.threadDiameter).toBe(12);
+    // Was kein Gedaechtnis hat, bleibt unveraendert.
+    const plain = shape({ kind: "cylinder" });
+    expect(shapeWithParametricSource(plain)).toBe(plain);
+  });
+
+  it("nennt den Winkel, unter dem der Koerper wirklich steht", () => {
+    const baked = shape({ kind: "mesh", rotation: 0, rotationX: 0, rotationZ: 0, parametricSource: source });
+    expect(shapeAccumulatedRotation(baked)).toEqual({ rotation: 30, rotationX: 90, rotationZ: 0 });
+    // Ohne Gedaechtnis gilt, was am Datensatz steht.
+    const turned = shape({ kind: "box", rotation: 15, rotationX: 0, rotationZ: 5 });
+    expect(shapeAccumulatedRotation(turned)).toEqual({ rotation: 15, rotationX: 0, rotationZ: 5 });
+  });
+
+  it("merkt, wenn sich die aufgelaufene Drehung geaendert hat", () => {
+    const a = shape({ kind: "mesh", parametricSource: source });
+    const b = shape({ kind: "mesh", parametricSource: { ...source, rotation: 60 } });
+    expect(workplaneShapesEqual(a, a)).toBe(true);
+    expect(workplaneShapesEqual(a, b)).toBe(false);
   });
 });

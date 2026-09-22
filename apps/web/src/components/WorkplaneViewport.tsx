@@ -54,7 +54,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -469,7 +469,11 @@ type RulerPointDragState = {
 
 type RotationHandleSide = "near" | "right" | "far" | "left";
 type RotationHandleSides = Record<RotationAxis, RotationHandleSide>;
-type ShapeUpdatePatch = Partial<WorkplaneShape> & { bakeTransform?: boolean };
+type ShapeUpdatePatch = Partial<WorkplaneShape> & {
+  bakeTransform?: boolean;
+  /** Der Winkel gilt absolut, nicht als Zugabe auf das schon Gedrehte. */
+  absoluteRotation?: boolean;
+};
 type ResizeSigns = { x: number; z: number };
 type ActiveResizeRegion = { shapeId: string; region: ResizeRegion };
 
@@ -682,6 +686,19 @@ function rotationValueForAxis(shape: WorkplaneShape, axis: RotationAxis) {
     return shape.rotationZ ?? 0;
   }
   return shape.rotation;
+}
+
+/**
+ * Der Winkel, unter dem der Koerper wirklich steht. Nach einer Drehung sitzt
+ * sie in den Punkten des gebackenen Netzes und `rotation` steht wieder auf
+ * null - im Eingabefeld waere das eine Luege, und man koennte ein Objekt nie
+ * wieder gerade stellen, weil man nicht weiss, wie schief es steht.
+ */
+function accumulatedRotationForAxis(shape: WorkplaneShape, axis: RotationAxis) {
+  const turned = shapeAccumulatedRotation(shape);
+  if (axis === "x") return turned.rotationX;
+  if (axis === "z") return turned.rotationZ;
+  return turned.rotation;
 }
 
 function rotationPatchForAxis(axis: RotationAxis, value: number): Partial<WorkplaneShape> {
@@ -4530,7 +4547,7 @@ export function WorkplaneViewport({
     }
     const axis = rotationAxisForHandle(handleKey);
     const shape = selectedIdsRef.current.length === 1 ? shapesRef.current.find((entry) => entry.id === selectedIdsRef.current[0]) : null;
-    const currentValue = shape ? rotationValueForAxis(shape, axis) : 0;
+    const currentValue = shape ? accumulatedRotationForAxis(shape, axis) : 0;
     setPinnedMeasureKey(handleKey);
     setActiveRotationWheel(true);
     setRotationWheelAxis(axis);
@@ -4551,7 +4568,13 @@ export function WorkplaneViewport({
     }
     const value = parseMeasurementInput(edit.value);
     if (Number.isFinite(value)) {
-      selectedIdsRef.current.forEach((id) => onUpdateShape(id, { ...rotationPatchForAxis(edit.axis, value), bakeTransform: true }));
+      // Eingetippt wird der Winkel, unter dem das Objekt danach stehen soll -
+      // nicht einer, der auf das bisher Gedrehte noch obendrauf kommt.
+      selectedIdsRef.current.forEach((id) => onUpdateShape(id, {
+        ...rotationPatchForAxis(edit.axis, value),
+        bakeTransform: true,
+        absoluteRotation: true,
+      }));
     }
     setEditingRotation(null);
     setActiveRotationWheel(false);
@@ -5782,14 +5805,17 @@ export function WorkplaneViewport({
 
       {selectedShape && !modifierActive && !rulerMode && !rulerDeleteMode && !rulerMoveMode ? (
         <ShapeInspector
-          shape={selectedShape}
+          shape={shapeWithParametricSource(selectedShape)}
           referencePoint={referencePointPosition(shapes)}
           snap={snap}
           snapOpen={snapOpen}
           workspace={workspace}
           onUpdate={(patch, options) => {
             clearMoveDimensions();
-            onUpdateShape(selectedShape.id, patchWithResizeAnchor(selectedShape, patch, options?.resizeAxis, lastResizeAnchorRef.current));
+            // Der Inspektor rechnet in der Urform; ein gedrehter Koerper wird
+            // daraus neu gebaut, also muss auch der Anker daher kommen.
+            const inspected = shapeWithParametricSource(selectedShape);
+            onUpdateShape(selectedShape.id, patchWithResizeAnchor(inspected, patch, options?.resizeAxis, lastResizeAnchorRef.current));
           }}
           onSnapChange={setSnap}
           onSnapOpenChange={setSnapOpen}

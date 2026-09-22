@@ -35,7 +35,18 @@ export function geometryRotationDelta(workplane: PlacementWorkplane, degrees: nu
   return new THREE.Quaternion().setFromAxisAngle(axis, THREE.MathUtils.degToRad(Number.isFinite(degrees) ? degrees : 0));
 }
 
-function quaternionForShape(shape: WorkplaneShape) {
+type ShapeRotation = { rotation: number; rotationX?: number; rotationZ?: number };
+
+/**
+ * Zwei Drehungen hintereinander. Ueber Eulerwinkel liesse sich das nicht
+ * ehrlich addieren - ueber Quaternionen schon, und heraus kommen wieder die
+ * drei Winkel, die der Datensatz fuehrt.
+ */
+export function composedShapeRotation(outer: ShapeRotation, inner: ShapeRotation) {
+  return rotationPatchFromQuaternion(quaternionForShape(outer).multiply(quaternionForShape(inner)));
+}
+
+function quaternionForShape(shape: ShapeRotation) {
   return new THREE.Quaternion().setFromEuler(
     new THREE.Euler(
       THREE.MathUtils.degToRad(shape.rotationX ?? 0),

@@ -121,6 +121,7 @@ import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatment
 import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
 import { geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
+import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
@@ -179,7 +180,15 @@ type ToolbarMode = "geometry" | "sketch";
 type Vec3 = [number, number, number];
 type MeshData = { name: string; vertices: Vec3[]; faces: [number, number, number][] };
 type Cuboid = { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number };
-type ShapeUpdatePatch = Partial<WorkplaneShape> & { bakeTransform?: boolean };
+type ShapeUpdatePatch = Partial<WorkplaneShape> & {
+  bakeTransform?: boolean;
+  /**
+   * Der genannte Drehwinkel ist der Winkel, unter dem der Koerper danach
+   * stehen soll - nicht einer, der auf seine bisherige Drehung kommt. Das
+   * Drehfeld schickt ihn so, der Drehgriff nicht.
+   */
+  absoluteRotation?: boolean;
+};
 type WithoutRequestId<T> = T extends unknown ? Omit<T, "requestId"> : never;
 type CadModifierWorkerPayload = WithoutRequestId<CadModifierWorkerRequest>;
 type CadPreviewPayload = Extract<CadModifierWorkerPayload, { type: "preview" }>;
@@ -2476,6 +2485,26 @@ function cadModifierPrimitiveForShape(shape: WorkplaneShape): CadModifierPrimiti
     ?? (shapeHasTransformToBake(shape) ? cadModifierPrimitiveForAnalyticBox(shape) : null);
 }
 
+/**
+ * Der Rueckweg aus dem gebackenen Netz: Urform herstellen, die Aenderung
+ * einsetzen, wieder drehen, wieder backen. Was davon reines Rechnen ist,
+ * steht in `lib/parametricSource.ts`; hier kommt das Backen dazu.
+ */
+function rebuiltParametricShape(
+  shape: WorkplaneShape,
+  patch: Partial<WorkplaneShape>,
+  absoluteRotation = false,
+): WorkplaneShape | null {
+  const plan = parametricRebuildPlan(shape, patch, absoluteRotation);
+  if (!plan) return null;
+  const baked = canonicalizeShape(bakeShapeTransformIntoMesh(canonicalizeShape({ ...plan.original, ...plan.rotation })));
+  // Wer nur einen Bauwert aendert, will den Koerper nicht verrueckt sehen.
+  // Wer dagegen dreht, bewegt ihn - dann gilt, was das Backen ausrechnet.
+  return plan.turns
+    ? baked
+    : canonicalizeShape({ ...baked, x: shape.x, z: shape.z, elevation: shape.elevation ?? 0 });
+}
+
 function bakeShapeTransformIntoMesh(shape: WorkplaneShape, force = false): WorkplaneShape {
   // Text and groups must retain their editable source data across transforms.
   // Baking a group would discard groupedShapes and make Ungroup unavailable.
@@ -2567,6 +2596,7 @@ function bakeShapeTransformIntoMesh(shape: WorkplaneShape, force = false): Workp
       sourceFormat: "json",
     },
     ...bakedCadMetadata,
+    parametricSource: parametricSourceForBake(shape),
     imagePlate: undefined,
     groupedShapes: undefined,
     groupedBaseWidth: undefined,
@@ -5351,7 +5381,7 @@ function applyShapeMoveDelta(shape: WorkplaneShape, delta: ShapeMoveDelta): Work
 }
 
 function cleanShapePatch(patch: ShapeUpdatePatch): Partial<WorkplaneShape> {
-  const { bakeTransform: _bakeTransform, ...rest } = patch;
+  const { bakeTransform: _bakeTransform, absoluteRotation: _absoluteRotation, ...rest } = patch;
   const next = { ...rest };
   if (typeof next.rotation === "number") {
     next.rotation = cleanRotationDegrees(next.rotation, 1);
@@ -7385,6 +7415,7 @@ export function SketchForgeEditor({
   const updateShape = useCallback(
     (id: string, patch: ShapeUpdatePatch) => {
       const bakeTransform = Boolean(patch.bakeTransform);
+      const absoluteRotation = Boolean(patch.absoluteRotation);
       const cleanedPatch = cleanShapePatch(patch);
       if (cleanedPatch.sketchRevolve) {
         const source = shapesRef.current.find((shape) => shape.id === id);
@@ -7400,7 +7431,14 @@ export function SketchForgeEditor({
             return shape;
           }
 
-          const patched = { ...shape, ...cleanedPatch };
+          // Ein Bauwert oder ein eingetippter Winkel an einem gedrehten
+          // Koerper heisst: neu bauen, nicht das Netz verbiegen. Ein Zug am
+          // Anfasser trifft dagegen nur den Rahmen und laesst das gebackene
+          // Netz in Ruhe.
+          const rebuildReason = patchTouchesBodyParameters(cleanedPatch)
+            || (absoluteRotation && patchTouchesRotation(cleanedPatch));
+          const rebuilt = rebuildReason ? rebuiltParametricShape(shape, cleanedPatch, absoluteRotation) : null;
+          const patched = rebuilt ?? { ...shape, ...cleanedPatch };
           const canonicalBase = canonicalizeShape("hole" in cleanedPatch ? withHoleMode(patched, Boolean(cleanedPatch.hole), cleanedPatch.color) : patched);
           const canonical = bakeTransform ? canonicalizeShape(bakeShapeTransformIntoMesh(canonicalBase)) : canonicalBase;
           if (workplaneShapesEqual(shape, canonical)) {

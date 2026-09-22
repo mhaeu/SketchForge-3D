@@ -224,6 +224,34 @@ export type CadBrepFrame = {
   sourceTransform?: number[];
 };
 
+/**
+ * Was ein Koerper war, bevor eine Drehung ihn in ein Netz gebacken hat.
+ *
+ * Gedreht wird um die Mitte des Rahmens, und danach muss der Rahmen neu
+ * aufgesetzt werden - sonst sinkt ein gekippter Koerper durch die
+ * Arbeitsebene. Genau dafuer backt der Editor ihn in ein Netz. Seine Bauwerte
+ * (Durchmesser, Zahnzahl, Steigung ...) bleiben dabei am Datensatz stehen;
+ * hier steht nur, was das Backen ueberschrieben hat - samt der aufgelaufenen
+ * Drehung. Zusammen reicht das, um den Koerper neu zu bauen, wieder zu drehen
+ * und wieder zu backen, und um im Drehfeld den Winkel zu zeigen, unter dem er
+ * wirklich steht statt einer Null.
+ */
+export type ParametricSource = {
+  kind: ShapeKind;
+  width: number;
+  depth: number;
+  height: number;
+  size: number;
+  /** Die aufgelaufene Drehung in Grad, so wie sie wieder aufzutragen ist. */
+  rotation: number;
+  rotationX: number;
+  rotationZ: number;
+  taperTopWidth?: number;
+  taperTopDepth?: number;
+  taperBottomWidth?: number;
+  taperBottomDepth?: number;
+};
+
 export type CadPrimitiveFrame = {
   kind: "box";
   width: number;
@@ -344,6 +372,7 @@ export type WorkplaneShape = {
     pixelWidth: number;
     pixelHeight: number;
   };
+  parametricSource?: ParametricSource;
   sketchProfile?: SketchProfile;
   sketchOperation?: SketchOperation;
   sketchRevolve?: SketchRevolveSettings;

@@ -5,6 +5,7 @@ import {
   GEOMETRY_ROTATION_STEP_DEGREES,
   geometryRotationDegreesForShortcut,
   geometryRotationDelta,
+  composedShapeRotation,
   rotatedGeometryShapePatch,
 } from "@/lib/geometryRotation";
 import { horizontalPlacementWorkplane, placementWorkplaneFromSurface } from "@/lib/placementWorkplane";
@@ -117,5 +118,49 @@ describe("geometry rotation transform", () => {
     const patch = rotatedGeometryShapePatch(shape(), geometryRotationDelta(malformed, 45), null);
 
     expect(patch).toMatchObject({ rotationX: 0, rotation: 45, rotationZ: 0 });
+  });
+
+  /*
+   * Eine gedrehte Form wird in ein Netz gebacken. Wer sie danach noch einmal
+   * dreht, dreht das Netz - die urspruengliche Form muss beide Drehungen
+   * kennen, um neu gebaut werden zu koennen. Ueber Eulerwinkel liesse sich das
+   * nicht addieren.
+   */
+  it("verkettet zwei Drehungen, statt sie zu addieren", () => {
+    const none = { rotation: 0, rotationX: 0, rotationZ: 0 };
+    expect(composedShapeRotation(none, { rotation: 30, rotationX: 0, rotationZ: 0 }))
+      .toEqual({ rotation: 30, rotationX: 0, rotationZ: 0 });
+
+    // Zweimal 30 Grad um dieselbe Achse sind 60.
+    expect(composedShapeRotation({ rotation: 30, rotationX: 0, rotationZ: 0 }, { rotation: 30, rotationX: 0, rotationZ: 0 }).rotation)
+      .toBeCloseTo(60, 6);
+
+    /*
+     * Um verschiedene Achsen zaehlt nicht das Ergebnis der Winkel, sondern
+     * was mit einem Punkt geschieht. Also wird genau das geprueft: erst
+     * innen, dann aussen drehen muss dasselbe ergeben wie die verkettete
+     * Drehung in einem Zug.
+     */
+    const outer = { rotation: 90, rotationX: 0, rotationZ: 0 };
+    const inner = { rotation: 0, rotationX: 90, rotationZ: 0 };
+    const asEuler = (r: { rotation: number; rotationX: number; rotationZ: number }) => new THREE.Euler(
+      THREE.MathUtils.degToRad(r.rotationX),
+      THREE.MathUtils.degToRad(r.rotation),
+      THREE.MathUtils.degToRad(r.rotationZ),
+      "XYZ",
+    );
+    const point = new THREE.Vector3(1, 2, 3);
+    const inTurn = point.clone().applyEuler(asEuler(inner)).applyEuler(asEuler(outer));
+    const composed = point.clone().applyEuler(asEuler(composedShapeRotation(outer, inner)));
+    expect(composed.x).toBeCloseTo(inTurn.x, 5);
+    expect(composed.y).toBeCloseTo(inTurn.y, 5);
+    expect(composed.z).toBeCloseTo(inTurn.z, 5);
+    // Und die Summe der Winkel waere etwas anderes gewesen.
+    const summed = point.clone().applyEuler(asEuler({ rotation: 90, rotationX: 90, rotationZ: 0 }));
+    expect(Math.hypot(summed.x - composed.x, summed.y - composed.y, summed.z - composed.z)).toBeGreaterThan(1);
+
+    // Und eine Drehung mit ihrer Gegendrehung hebt sich auf.
+    expect(composedShapeRotation({ rotation: -45, rotationX: 0, rotationZ: 0 }, { rotation: 45, rotationX: 0, rotationZ: 0 }))
+      .toEqual({ rotation: 0, rotationX: 0, rotationZ: 0 });
   });
 });
