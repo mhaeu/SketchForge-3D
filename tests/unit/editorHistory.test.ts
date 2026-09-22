@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appendEditorHistorySnapshot, boundedEditorHistory, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, immutableResourceFingerprint, projectShapesFingerprint } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistory, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, immutableResourceFingerprint, projectSceneFingerprint, projectShapesFingerprint, workplaneForHistoryIndex } from "@/lib/editorHistory";
+import { horizontalPlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 function box(overrides: Partial<WorkplaneShape> = {}): WorkplaneShape {
@@ -152,6 +153,46 @@ describe("editor history snapshots", () => {
     expect(branch.changed).toBe(true);
     expect(branch.entries).toHaveLength(3);
     expect(branch.entries.at(-1)?.shapes[0].x).toBe(5);
+  });
+
+  /**
+   * Eine Arbeitsebene zu setzen ist ein Schritt wie jeder andere. Ohne sie im
+   * Stand haelt der Verlauf zwei verschiedene Staende fuer denselben, und
+   * Rueckgaengig holt zwar die Koerper zurueck, laesst die Ebene aber stehen,
+   * auf der gerade gebaut wurde.
+   */
+  it("nimmt die Arbeitsebene in den Stand auf", () => {
+    const base = editorHistoryEntry([box()], []);
+    const raised = editorHistoryEntry([box()], [], [], horizontalPlacementWorkplane(25));
+
+    expect(raised.fingerprint).not.toBe(base.fingerprint);
+    expect(raised.placementWorkplane?.origin.y).toBe(25);
+    // Die Hauptebene ist der Normalfall und steht nicht im Eintrag.
+    expect(base.placementWorkplane).toBeUndefined();
+
+    const snapshot = appendEditorHistorySnapshot([base], 0, raised);
+    expect(snapshot.changed).toBe(true);
+    expect(snapshot.entries).toHaveLength(2);
+    expect(snapshot.entries[1].placementWorkplane?.origin.y).toBe(25);
+  });
+
+  it("nennt die Arbeitsebene des Standes, auf den der Verlauf zeigt", () => {
+    const entries = [
+      editorHistoryEntry([box()], []),
+      editorHistoryEntry([box()], [], [], horizontalPlacementWorkplane(25)),
+    ];
+    expect(workplaneForHistoryIndex(entries, 1)?.origin.y).toBe(25);
+    // Der erste Stand traegt keine, also gilt, was der Aufrufer mitgibt.
+    expect(workplaneForHistoryIndex(entries, 0, horizontalPlacementWorkplane(7))?.origin.y).toBe(7);
+    expect(workplaneForHistoryIndex([], 0)).toBeUndefined();
+  });
+
+  it("zaehlt eine gewechselte Arbeitsebene als Aenderung, die gesichert werden muss", () => {
+    const shapes = [box()];
+    expect(projectSceneFingerprint(shapes, [], horizontalPlacementWorkplane(0)))
+      .toBe(projectSceneFingerprint(shapes));
+    expect(projectSceneFingerprint(shapes, [], horizontalPlacementWorkplane(25)))
+      .not.toBe(projectSceneFingerprint(shapes));
   });
 
   it("restores a persisted undo and redo stack at its saved index", () => {

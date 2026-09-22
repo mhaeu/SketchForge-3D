@@ -130,7 +130,7 @@ import {
   SKETCH_CAD_DEFLECTION,
 } from "@/lib/cadModifierRuntime";
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
-import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
 import { geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
 import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
@@ -158,6 +158,7 @@ import {
   normalizePlacementWorkplane,
   placementPatchForNewShape,
   placementWorkplaneCoordinates,
+  placementWorkplaneFingerprint,
   placementWorkplanePoint,
   placementWorkplaneFromSurface,
   placementWorkplaneIsBase,
@@ -5390,6 +5391,20 @@ function applyShapeMoveDelta(shape: WorkplaneShape, delta: ShapeMoveDelta): Work
   return bakeShapeTransformIntoMesh({ ...moved, ...rotationFromQuaternion(delta.rotationDelta) });
 }
 
+/**
+ * Die Hoehe, die zu einer Arbeitsebene gehoert. Nur eine waagerechte Ebene hat
+ * eine: bei ihr ist es die Hoehe, auf der sie liegt. Eine gekippte Flaeche
+ * legt statt dessen ihre eigene Lage fest, und das Hoehenfeld faengt bei null
+ * an.
+ */
+function placementElevationFor(workplane: PlacementWorkplane) {
+  return Math.abs(workplane.normal.x) < 1e-6
+    && Math.abs(workplane.normal.y - 1) < 1e-6
+    && Math.abs(workplane.normal.z) < 1e-6
+    ? workplane.origin.y
+    : 0;
+}
+
 function cleanShapePatch(patch: ShapeUpdatePatch): Partial<WorkplaneShape> {
   const { bakeTransform: _bakeTransform, absoluteRotation: _absoluteRotation, ...rest } = patch;
   const next = { ...rest };
@@ -5765,6 +5780,7 @@ export function SketchForgeEditor({
   if (initialSceneRef.current === null) {
     initialSceneRef.current = ensureReferencePoint(initialShapes.map(canonicalizeShape));
   }
+  const initialNormalizedWorkplane = normalizePlacementWorkplane(initialPlacementWorkplane, initialPlacementElevation);
   const initialHistoryStateRef = useRef<EditorHistoryState | null>(null);
   if (initialHistoryStateRef.current === null) {
     initialHistoryStateRef.current = hydrateEditorHistoryState(
@@ -5773,6 +5789,7 @@ export function SketchForgeEditor({
       initialHistoryIndex,
       normalizeWorkspaceSettings(initialWorkspace).historyLimit,
       notesForHistoryIndex(initialHistory, initialHistoryIndex),
+      initialNormalizedWorkplane,
     );
   }
   const [shapes, setShapes] = useState<WorkplaneShape[]>(() => initialSceneRef.current as WorkplaneShape[]);
@@ -5787,10 +5804,15 @@ export function SketchForgeEditor({
   const [systemClipboardSupported, setSystemClipboardSupported] = useState(false);
   const [history, setHistory] = useState<EditorHistoryEntry[]>(() => (initialHistoryStateRef.current as EditorHistoryState).entries);
   const [historyIndex, setHistoryIndex] = useState(() => (initialHistoryStateRef.current as EditorHistoryState).index);
-  const [placementElevation, setPlacementElevation] = useState(() => Number.isFinite(initialPlacementElevation) ? initialPlacementElevation : 0);
+  // Die Arbeitsebene reist im Verlauf mit, also kommt auch sie von dort - der
+  // Stand, auf den der Verlauf zeigt, ist der Stand, den der Editor zeigt.
   const [placementWorkplane, setPlacementWorkplane] = useState<PlacementWorkplane>(
-    () => normalizePlacementWorkplane(initialPlacementWorkplane, initialPlacementElevation),
+    () => workplaneForHistoryIndex(initialHistory, initialHistoryIndex, initialNormalizedWorkplane) ?? initialNormalizedWorkplane,
   );
+  const [placementElevation, setPlacementElevation] = useState(() => {
+    const resolved = workplaneForHistoryIndex(initialHistory, initialHistoryIndex, initialNormalizedWorkplane) ?? initialNormalizedWorkplane;
+    return placementElevationFor(resolved) || (Number.isFinite(initialPlacementElevation) ? initialPlacementElevation : 0);
+  });
   const [workspaceSettings, setWorkspaceSettings] = useState<WorkplaneWorkspaceSettings>(() => normalizeWorkspaceSettings(initialWorkspace));
   const [snapGrid, setSnapGrid] = useState<GridSize>(() => normalizeSnapGrid(initialSnap));
   const [workplaneMode, setWorkplaneMode] = useState(false);
@@ -6516,8 +6538,13 @@ export function SketchForgeEditor({
   }, []);
 
   const appendHistorySnapshot = useCallback(
-    (nextShapes: WorkplaneShape[], nextSelection: string[], nextNotes: WorkplaneNote[] = notesRef.current) =>
-      appendHistoryEntry(editorHistoryEntry(nextShapes, nextSelection, nextNotes)),
+    (
+      nextShapes: WorkplaneShape[],
+      nextSelection: string[],
+      nextNotes: WorkplaneNote[] = notesRef.current,
+      nextWorkplane: PlacementWorkplane = placementWorkplaneRef.current,
+    ) =>
+      appendHistoryEntry(editorHistoryEntry(nextShapes, nextSelection, nextNotes, nextWorkplane)),
     [appendHistoryEntry],
   );
 
@@ -6530,7 +6557,7 @@ export function SketchForgeEditor({
       return;
     }
 
-    const entry = editorHistoryEntry(shapesRef.current, selectedIdsRef.current, notesRef.current);
+    const entry = editorHistoryEntry(shapesRef.current, selectedIdsRef.current, notesRef.current, placementWorkplaneRef.current);
     if (!startFingerprint || startFingerprint === entry.fingerprint) {
       return;
     }
@@ -6556,7 +6583,7 @@ export function SketchForgeEditor({
           finalizeInteractionHistory();
         }
         if (!projectInteractionActiveRef.current) {
-          interactionHistoryStartRef.current = projectSceneFingerprint(shapesRef.current, notesRef.current);
+          interactionHistoryStartRef.current = projectSceneFingerprint(shapesRef.current, notesRef.current, placementWorkplaneRef.current);
           interactionHistoryChangedRef.current = false;
         }
         projectInteractionActiveRef.current = true;
@@ -6650,7 +6677,7 @@ export function SketchForgeEditor({
       const normalized = normalizeNotes(next);
       notesRef.current = normalized;
       setNotes(normalized);
-      const changed = appendHistoryEntry(editorHistoryEntry(shapesRef.current, selectedIdsRef.current, normalized));
+      const changed = appendHistoryEntry(editorHistoryEntry(shapesRef.current, selectedIdsRef.current, normalized, placementWorkplaneRef.current));
       if (message) setNotice(message);
       // Der Abgleich mit dem Projektspeicher vergleicht Koerper. Eine Notiz
       // aendert daran nichts, also muss er hier ausdruecklich laufen.
@@ -7653,14 +7680,20 @@ export function SketchForgeEditor({
     const nextShapes = (entry?.shapes ?? []).map(canonicalizeShape);
     const nextSelection = (entry?.selectedIds ?? []).filter((id) => nextShapes.some((shape) => shape.id === id));
     const nextNotes = normalizeNotes(entry?.notes);
+    const nextWorkplane = normalizePlacementWorkplane(entry?.placementWorkplane);
+    const nextElevation = placementElevationFor(nextWorkplane);
     historyIndexRef.current = nextIndex;
     shapesRef.current = nextShapes;
     selectedIdsRef.current = nextSelection;
     notesRef.current = nextNotes;
+    placementWorkplaneRef.current = nextWorkplane;
+    placementElevationRef.current = nextElevation;
     setHistoryIndex(nextIndex);
     setShapes(nextShapes);
     setNotes(nextNotes);
     setSelectedIds(nextSelection);
+    setPlacementWorkplane(nextWorkplane);
+    setPlacementElevation(nextElevation);
     syncProjectShapes(nextShapes);
     setNotice(modifierCancelled ? t("status.edgeCancelledUndo") : "Undo");
   }, [invalidateCadModifierSession, syncProjectShapes]);
@@ -7682,14 +7715,20 @@ export function SketchForgeEditor({
     const nextShapes = (entry?.shapes ?? []).map(canonicalizeShape);
     const nextSelection = (entry?.selectedIds ?? []).filter((id) => nextShapes.some((shape) => shape.id === id));
     const nextNotes = normalizeNotes(entry?.notes);
+    const nextWorkplane = normalizePlacementWorkplane(entry?.placementWorkplane);
+    const nextElevation = placementElevationFor(nextWorkplane);
     historyIndexRef.current = nextIndex;
     shapesRef.current = nextShapes;
     selectedIdsRef.current = nextSelection;
     notesRef.current = nextNotes;
+    placementWorkplaneRef.current = nextWorkplane;
+    placementElevationRef.current = nextElevation;
     setHistoryIndex(nextIndex);
     setShapes(nextShapes);
     setNotes(nextNotes);
     setSelectedIds(nextSelection);
+    setPlacementWorkplane(nextWorkplane);
+    setPlacementElevation(nextElevation);
     syncProjectShapes(nextShapes);
     setNotice(modifierCancelled ? t("status.edgeCancelledRedo") : "Redo");
   }, [invalidateCadModifierSession, syncProjectShapes]);
@@ -8448,18 +8487,23 @@ export function SketchForgeEditor({
   }, []);
 
   const setActivePlacementWorkplane = useCallback((next: PlacementWorkplane, source: "shape" | "base") => {
-    placementWorkplaneRef.current = next;
-    setPlacementWorkplane(next);
-    const horizontalElevation = Math.abs(next.normal.x) < 1e-6
-      && Math.abs(next.normal.y - 1) < 1e-6
-      && Math.abs(next.normal.z) < 1e-6
-      ? next.origin.y
-      : 0;
+    const previous = placementWorkplaneRef.current;
+    const normalizedNext = normalizePlacementWorkplane(next);
+    placementWorkplaneRef.current = normalizedNext;
+    setPlacementWorkplane(normalizedNext);
+    const horizontalElevation = placementElevationFor(normalizedNext);
+    placementElevationRef.current = horizontalElevation;
     setPlacementElevation(horizontalElevation);
+    // Eine Arbeitsebene zu setzen ist ein Schritt wie jeder andere - also legt
+    // er einen Stand ab, den Rueckgaengig wieder holen kann.
+    if (placementWorkplaneFingerprint(normalizedNext) !== placementWorkplaneFingerprint(previous)) {
+      appendHistoryEntry(editorHistoryEntry(shapesRef.current, selectedIdsRef.current, notesRef.current, normalizedNext));
+      syncProjectShapes(shapesRef.current, true);
+    }
     setNotice(source === "shape"
       ? t("status.workplaneFromFace")
-      : placementWorkplaneIsBase(next) ? t("status.workplaneReset") : t("status.workplaneUpdated"));
-  }, []);
+      : placementWorkplaneIsBase(normalizedNext) ? t("status.workplaneReset") : t("status.workplaneUpdated"));
+  }, [appendHistoryEntry, syncProjectShapes]);
 
   const setViewportPlacementWorkplane = useCallback((next: PlacementWorkplane, source: "shape" | "base") => {
     setActivePlacementWorkplane(next, source);

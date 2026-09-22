@@ -120,7 +120,7 @@ export type SkfProjectDocumentV1 = {
   sceneStateId: string;
   states: SkfStateV1[];
   history: {
-    entries: Array<{ stateId: string; selectedObjectIds: string[] }>;
+    entries: Array<{ stateId: string; selectedObjectIds: string[]; workplane?: PlacementWorkplane }>;
     index: number;
   };
   sketches: Array<{ id: string; nodeId: string; objectId: string; operation?: SketchOperation; extrusionDepth: number; revolve?: SketchRevolveSettings }>;
@@ -703,13 +703,22 @@ function unzipAsync(bytes: Uint8Array) {
 }
 
 export async function exportSkfProject(input: SkfProjectExportInput) {
-  const hydrated = hydrateEditorHistoryState(input.shapes, input.history, input.historyIndex, "unlimited", normalizeNotes(input.notes));
+  const exportPlacementElevation = Number.isFinite(input.placementElevation) ? input.placementElevation : 0;
+  const exportPlacementWorkplane = normalizePlacementWorkplane(input.placementWorkplane, exportPlacementElevation);
+  const hydrated = hydrateEditorHistoryState(
+    input.shapes,
+    input.history,
+    input.historyIndex,
+    "unlimited",
+    normalizeNotes(input.notes),
+    exportPlacementWorkplane,
+  );
   if (hydrated.entries.length > SKF_LIMITS.states) throw new Error("Project has too many undo states for the .skf format");
   // The reference point is a local scene helper (like an origin marker), not
   // real geometry - exclude it from shared/exported projects the same way the
   // STEP exporter does. ensureReferencePoint recreates it on load.
   const exportEntries = hydrated.entries.map((entry) =>
-    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds, normalizeNotes(entry.notes)));
+    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds, normalizeNotes(entry.notes), entry.placementWorkplane));
   const builder = new SkfArchiveBuilder();
   const stateShapes = exportEntries.map((entry) => entry.shapes);
   await builder.addSources(input.assets, referencedSourceAssetIds(stateShapes));
@@ -725,7 +734,11 @@ export async function exportSkfProject(input: SkfProjectExportInput) {
       states.push(await serializeState(stateId, entry.shapes, builder, sourceAssetsByArchiveId, normalizeNotes(entry.notes)));
       stateIdByFingerprint.set(entry.fingerprint, stateId);
     }
-    historyEntries.push({ stateId, selectedObjectIds: [...entry.selectedIds] });
+    historyEntries.push({
+      stateId,
+      selectedObjectIds: [...entry.selectedIds],
+      ...(entry.placementWorkplane ? { workplane: entry.placementWorkplane } : {}),
+    });
   }
 
   const sceneStateId = historyEntries[hydrated.index]?.stateId;
@@ -1113,6 +1126,9 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
   document.history.entries.forEach((entry, index) => {
     if (!stateById.has(entry.stateId)) throw new Error(`History entry ${index} references missing state '${entry.stateId}'`);
     stringArray(entry.selectedObjectIds, `history.entries[${index}].selectedObjectIds`);
+    // Die Arbeitsebene eines Standes ist Beiwerk: was sich davon nicht lesen
+    // laesst, wird zur Hauptebene statt das Paket abzulehnen.
+    if (entry.workplane !== undefined) objectRecord(entry.workplane, `history.entries[${index}].workplane`);
   });
   if (document.history.entries[document.history.index]?.stateId !== document.sceneStateId) throw new Error("Active scene and undo history index do not match");
   validateFeatureGraph(document.features, activeObjectIds);
@@ -1271,10 +1287,12 @@ async function restoreV1(document: SkfProjectDocumentV1, assetById: Map<string, 
     restoredStates.get(entry.stateId) ?? [],
     entry.selectedObjectIds,
     restoredNotes.get(entry.stateId) ?? [],
+    entry.workplane,
   ));
   const shapes = restoredStates.get(document.sceneStateId) ?? [];
   const notes = restoredNotes.get(document.sceneStateId) ?? [];
-  const hydrated = hydrateEditorHistoryState(shapes, history, document.history.index, "unlimited", notes);
+  const restoredWorkplane = normalizePlacementWorkplane(document.editor.placementWorkplane, document.editor.placementElevation);
+  const hydrated = hydrateEditorHistoryState(shapes, history, document.history.index, "unlimited", notes, restoredWorkplane);
   if (hydrated.entries.length !== history.length || hydrated.index !== document.history.index) throw new Error("Undo history could not be restored without data loss");
   return {
     sourceProjectId: document.metadata.projectId,

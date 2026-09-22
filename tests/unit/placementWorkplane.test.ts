@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   horizontalPlacementWorkplane,
   normalizePlacementWorkplane,
+  placementWorkplaneFingerprint,
   placementPatchForNewShape,
   placementWorkplaneCoordinates,
   placementWorkplaneFromSurface,
@@ -146,5 +147,24 @@ describe("normalizePlacementWorkplane kommt zur Ruhe", () => {
   it("laesst eine waagerechte Ebene unangetastet", () => {
     const flat = normalizePlacementWorkplane(horizontalPlacementWorkplane(12), 0);
     expect(JSON.stringify(flat)).toBe(JSON.stringify(horizontalPlacementWorkplane(12)));
+  });
+});
+
+/**
+ * Am Fingerabdruck haengt, ob ein Wechsel der Arbeitsebene als Aenderung
+ * zaehlt - fuer den Verlauf und fuer das Sichern.
+ */
+describe("der Fingerabdruck einer Arbeitsebene", () => {
+  it("ist fuer dieselbe Ebene derselbe und fuer eine andere ein anderer", () => {
+    const base = horizontalPlacementWorkplane(0);
+    const raised = horizontalPlacementWorkplane(10);
+    expect(placementWorkplaneFingerprint(base)).toBe(placementWorkplaneFingerprint(horizontalPlacementWorkplane(0)));
+    expect(placementWorkplaneFingerprint(base)).not.toBe(placementWorkplaneFingerprint(raised));
+  });
+
+  it("macht aus einer unlesbaren Angabe die Hauptebene", () => {
+    expect(normalizePlacementWorkplane(null, 15).origin.y).toBe(15);
+    expect(normalizePlacementWorkplane({}, 8).origin.y).toBe(8);
+    expect(normalizePlacementWorkplane({ origin: { x: 0, y: "kaputt", z: 0 } }, 4).origin.y).toBe(4);
   });
 });
