@@ -71,6 +71,9 @@ export type ShapeCustomization = {
   bevel?: number;
   segments?: number;
   topRadius?: number;
+  /** Pyramide: Deckflaeche statt Spitze. Null heisst Spitze. */
+  topWidth?: number;
+  topDepth?: number;
   baseRadius?: number;
   teeth?: number;
   toothSize?: number;
@@ -307,6 +310,9 @@ export type WorkplaneShape = {
   bevel?: number;
   segments?: number;
   topRadius?: number;
+  /** Pyramide: Deckflaeche statt Spitze. Null heisst Spitze. */
+  topWidth?: number;
+  topDepth?: number;
   baseRadius?: number;
   taperTopWidth?: number;
   taperTopDepth?: number;

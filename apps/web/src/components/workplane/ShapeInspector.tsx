@@ -77,6 +77,7 @@ import {
 } from "@/lib/springGeometry";
 import { regularPolygonAspect } from "@/lib/regularPolygonFootprint";
 import { selectWholeValue } from "@/lib/numberField";
+import { normalizePyramidTop } from "@/lib/pyramidGeometry";
 import { createThreadShapeFields, findDesignation } from "@/lib/threadShape";
 import {
   LOFT_PROFILE_SHAPES,
@@ -830,11 +831,31 @@ function getShapePropertiesWithAppLimits(
   }
 
   if (shape.kind === "pyramid") {
+    // Null oben heisst Spitze. Alles darueber schneidet sie ab - das ist
+    // dasselbe, was die Verjuengung bei den uebrigen Koerpern tut, nur kann
+    // sie es hier nicht: die Spitze liegt auf der Achse, und ein Vielfaches
+    // von null bleibt null.
     return [
       { id: "sides", label: t("prop.sides"), value: shape.sides ?? 4, min: 3, max: 24, step: 1, onChange: (sides) => onUpdate({ sides: Math.round(sides) }) },
       { id: "length", label: t("prop.length"), value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+      {
+        id: "topLength",
+        label: t("prop.topLength"),
+        value: normalizePyramidTop(shape.topDepth, depth),
+        min: 0,
+        max: 160,
+        onChange: (topDepth) => onUpdate({ topDepth: normalizePyramidTop(topDepth, depth) }),
+      },
+      {
+        id: "topWidth",
+        label: t("prop.topWidth"),
+        value: normalizePyramidTop(shape.topWidth, width),
+        min: 0,
+        max: 160,
+        onChange: (topWidth) => onUpdate({ topWidth: normalizePyramidTop(topWidth, width) }),
+      },
     ];
   }
 

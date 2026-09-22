@@ -1,4 +1,5 @@
 import { canonicalizeShape } from "@/lib/workplaneShapes";
+import { normalizePyramidTop } from "@/lib/pyramidGeometry";
 import { t, type MessageKey } from "@/lib/i18n";
 import { createLocalId } from "@/lib/localIds";
 import {
@@ -156,7 +157,7 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
   if (kind === "sphere") return { steps: 24 };
   if (kind === "halfSphere") return { steps: 32 };
   if (kind === "cone") return { topRadius: 0, baseRadius: dimensions.width / 2, sides: 96 };
-  if (kind === "pyramid") return { sides: 4 };
+  if (kind === "pyramid") return { sides: 4, topWidth: 0, topDepth: 0 };
   if (kind === "roundRoof") return { sides: 64 };
   if (kind === "tube" || kind === "ring") return { bevel: 4 };
   if (kind === "text") return { text: "TEXT", font: "Multilanguage", bevel: 0, segments: 0 };
@@ -222,6 +223,8 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     bevel: shape.bevel,
     segments: shape.segments,
     topRadius: shape.topRadius,
+    topWidth: shape.topWidth,
+    topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
     taperTopWidth: shape.taperTopWidth,
     taperTopDepth: shape.taperTopDepth,
@@ -355,6 +358,8 @@ export function makeShapeFromAsset(
     bevel: asset.kind === "cylinder" || asset.kind === "ellipse" ? 0 : asset.kind === "tube" || asset.kind === "ring" ? customization.bevel ?? 4 : asset.kind === "text" ? customization.bevel : undefined,
     segments: asset.kind === "cylinder" || asset.kind === "ellipse" ? 1 : asset.kind === "text" ? customization.segments : undefined,
     topRadius: asset.kind === "cone" ? customization.topRadius ?? 0 : undefined,
+    topWidth: asset.kind === "pyramid" ? normalizePyramidTop(customization.topWidth, width) : undefined,
+    topDepth: asset.kind === "pyramid" ? normalizePyramidTop(customization.topDepth, depth) : undefined,
     baseRadius: asset.kind === "cone" ? customization.baseRadius ?? width / 2 : undefined,
     teeth: gearTeeth,
     toothSize: gearToothSize,

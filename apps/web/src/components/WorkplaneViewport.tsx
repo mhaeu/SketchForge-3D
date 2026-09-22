@@ -45,6 +45,7 @@ import {
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
 import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
+import { createPyramidGeometry, normalizePyramidTop } from "@/lib/pyramidGeometry";
 import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
@@ -986,6 +987,8 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     bevel: shape.bevel,
     segments: shape.segments,
     topRadius: shape.topRadius,
+    topWidth: shape.topWidth,
+    topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
     taperTopWidth: shape.taperTopWidth,
     taperTopDepth: shape.taperTopDepth,
@@ -1143,7 +1146,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
 
   return JSON.stringify({
     kind: shape.kind,
-    geometryRevision: shape.kind === "pyramid" ? 2 : undefined,
+    geometryRevision: shape.kind === "pyramid" ? 3 : undefined,
     width: shapeWidth(shape),
     depth: shapeDepth(shape),
     height: shape.height,
@@ -1153,6 +1156,8 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     bevel: shape.bevel,
     segments: shape.segments,
     topRadius: shape.topRadius,
+    topWidth: shape.topWidth,
+    topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
     taperTopWidth: shape.taperTopWidth,
     taperTopDepth: shape.taperTopDepth,
@@ -8354,7 +8359,7 @@ function createShapeObject(
       );
       break;
     case "pyramid":
-      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createPyramidGeometry(width, height, depth, shape.sides ?? 4)), material, shape);
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createPyramidGeometry(width, height, depth, shape.sides ?? 4, shape.topWidth, shape.topDepth)), material, shape);
       break;
     case "roof":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createRoofGeometry(width, height, depth)), material, shape);
@@ -8886,35 +8891,6 @@ function createWedgeGeometry(width: number, height: number, depth: number) {
     0, 1, 4, 0, 4, 3,
     1, 2, 5, 1, 5, 4,
     0, 3, 5, 0, 5, 2,
-  ];
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  return geometry.toNonIndexed();
-}
-
-function createPyramidGeometry(width: number, height: number, depth: number, sides = 4) {
-  const count = Math.max(3, Math.round(sides));
-  if (count !== 4) {
-    const footprintScale = regularPolygonFootprintScale(width, depth, count);
-    const geometry = new THREE.ConeGeometry(1, height, count);
-    geometry.scale(footprintScale.x, 1, footprintScale.z);
-    geometry.translate(footprintScale.offsetX, height / 2, footprintScale.offsetZ);
-    return geometry.toNonIndexed();
-  }
-
-  const w = width / 2;
-  const d = depth / 2;
-  const vertices = new Float32Array([
-    -w, 0, -d, w, 0, -d, w, 0, d, -w, 0, d,
-    0, height, 0,
-  ]);
-  const indices = [
-    0, 1, 2, 0, 2, 3,
-    0, 4, 1,
-    1, 4, 2,
-    2, 4, 3,
-    3, 4, 0,
   ];
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));

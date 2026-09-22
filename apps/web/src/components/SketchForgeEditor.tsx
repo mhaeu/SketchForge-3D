@@ -24,6 +24,7 @@ import { createGearGeometry } from "@/lib/gearGeometry";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { sketchPrimitiveGeometry } from "@/lib/sketchPrimitives";
+import { createPyramidGeometry } from "@/lib/pyramidGeometry";
 import {
   createLoftGeometry,
   DEFAULT_LOFT_BOTTOM_SHAPE,
@@ -2033,35 +2034,6 @@ function createBooleanWedgeGeometry(width: number, height: number, depth: number
   return geometry;
 }
 
-function createBooleanPyramidGeometry(width: number, height: number, depth: number, sides = 4) {
-  const count = Math.max(3, Math.round(sides));
-  if (count !== 4) {
-    const footprintScale = regularPolygonFootprintScale(width, depth, count);
-    const geometry = new THREE.ConeGeometry(1, height, count);
-    geometry.scale(footprintScale.x, 1, footprintScale.z);
-    geometry.translate(footprintScale.offsetX, height / 2, footprintScale.offsetZ);
-    return geometry;
-  }
-
-  const w = width / 2;
-  const d = depth / 2;
-  const vertices = new Float32Array([
-    -w, 0, -d, w, 0, -d, w, 0, d, -w, 0, d,
-    0, height, 0,
-  ]);
-  const indices = [
-    0, 1, 2, 0, 2, 3,
-    0, 4, 1,
-    1, 4, 2,
-    2, 4, 3,
-    3, 4, 0,
-  ];
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  return geometry;
-}
-
 function createBooleanRoundRoofGeometry(width: number, height: number, depth: number, sides = 64) {
   const radius = width / 2;
   const segments = Math.max(4, Math.round(sides));
@@ -2247,7 +2219,7 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
       break;
     }
     case "pyramid":
-      geometry = createBooleanPyramidGeometry(width, height, depth, shape.sides ?? 4);
+      geometry = createPyramidGeometry(width, height, depth, shape.sides ?? 4, shape.topWidth, shape.topDepth);
       break;
     case "roof":
       geometry = createBooleanRoofGeometry(width, height, depth);

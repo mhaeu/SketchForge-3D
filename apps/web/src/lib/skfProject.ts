@@ -919,6 +919,15 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
       }
     }
   }
+  if (kind === "pyramid") {
+    // Null heisst Spitze, alles darueber ist die Deckflaeche eines Stumpfs.
+    (["topWidth", "topDepth"] as const).forEach((field) => {
+      if (definition[field] !== undefined) {
+        const value = finiteNumber(definition[field], `${label}.${field}`);
+        if (value < 0 || value > 1e9) throw new Error(`${label}.${field} is outside the supported range`);
+      }
+    });
+  }
   if (kind === "loft") {
     (["loftBottomShape", "loftTopShape"] as const).forEach((field) => {
       if (definition[field] !== undefined && !LOFT_PROFILE_SHAPES.has(definition[field] as string)) {

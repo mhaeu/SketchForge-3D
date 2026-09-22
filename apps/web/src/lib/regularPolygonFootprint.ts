@@ -12,7 +12,7 @@ export type RegularPolygonBounds = {
   maxZ: number;
 };
 
-function regularPolygonBounds(sides: number): RegularPolygonBounds {
+function regularPolygonBounds(sides: number, angleOffset = 0): RegularPolygonBounds {
   const count = Math.max(3, Math.round(sides));
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -20,7 +20,7 @@ function regularPolygonBounds(sides: number): RegularPolygonBounds {
   let maxZ = Number.NEGATIVE_INFINITY;
 
   for (let index = 0; index < count; index += 1) {
-    const angle = (index / count) * Math.PI * 2;
+    const angle = (index / count) * Math.PI * 2 + angleOffset;
     const x = Math.sin(angle);
     const z = Math.cos(angle);
     minX = Math.min(minX, x);
@@ -46,8 +46,9 @@ export function regularPolygonFootprintScale(
   width: number,
   depth: number,
   sides: number,
+  angleOffset = 0,
 ): RegularPolygonFootprintScale {
-  const { minX, maxX, minZ, maxZ } = regularPolygonBounds(sides);
+  const { minX, maxX, minZ, maxZ } = regularPolygonBounds(sides, angleOffset);
   const x = Math.max(0.001, width) / Math.max(0.001, maxX - minX);
   const z = Math.max(0.001, depth) / Math.max(0.001, maxZ - minZ);
   return {
