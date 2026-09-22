@@ -47,6 +47,7 @@ import {
 import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
 import { createPyramidGeometry, normalizePyramidTop } from "@/lib/pyramidGeometry";
 import type { CameraOrientation } from "@/lib/screenAlignedNudge";
+import { viewFaceOrientation, workplaneCameraOrientation, worldCameraOrientation, type ViewCubeFace } from "@/lib/viewCubeOrientation";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
@@ -274,7 +275,6 @@ type WorkplaneViewportProps = {
 };
 
 type WorkspaceSettings = WorkplaneWorkspaceSettings;
-type ViewCubeFace = "top" | "bottom" | "front" | "back" | "right" | "left";
 
 const VIEW_FACE_SHORTCUTS: Readonly<Record<string, ViewCubeFace>> = {
   "1": "front",
@@ -3633,6 +3633,9 @@ export function WorkplaneViewport({
       syncRulerOverlay(threeRef.current, rulerModelRef.current, rulerOverlayRef, setRulerOverlay, workspace.accuracy);
       syncNoteOverlay(threeRef.current, notesRef.current, notesVisibleRef.current, noteOverlayRef, setNoteOverlay);
       syncMoveDimensionWorldLines(threeRef.current, moveDimensionSessionRef.current, resolvedTheme);
+      // Der Wuerfel zeigt die Lage in der Ebene, die gerade gilt - wechselt
+      // sie, dreht er sich, auch wenn die Kamera stillsteht.
+      syncViewCube(threeRef.current, viewCubeRef.current, placementWorkplane);
       threeRef.current.needsRender = true;
     }
   }, [placementWorkplane, resolvedTheme, workspace]);
@@ -3664,9 +3667,9 @@ export function WorkplaneViewport({
       if (face === "home") {
         resetCamera(state);
       } else if (face !== "current") {
-        setCameraToViewFace(state, face);
+        setCameraToViewFace(state, face, placementWorkplaneRef.current);
       }
-      syncViewCube(state, viewCubeRef.current);
+      syncViewCube(state, viewCubeRef.current, placementWorkplaneRef.current);
       state.camera.updateMatrixWorld();
       state.renderer.render(state.scene, state.camera);
       return state.renderer.domElement.toDataURL("image/png");
@@ -3690,7 +3693,7 @@ export function WorkplaneViewport({
       // Removing this brings back the one-frame-late handle/line lag during camera motion.
       state.camera.updateMatrixWorld();
       if (now - state.lastViewCubeSync > 48 || cameraSettled || state.needsRender) {
-        syncViewCube(state, viewCubeRef.current);
+        syncViewCube(state, viewCubeRef.current, placementWorkplaneRef.current);
         onCameraOrientationChangeRef.current?.(cameraOrientation(state));
         state.lastViewCubeSync = now;
       }
@@ -5839,8 +5842,8 @@ export function WorkplaneViewport({
     if (!state) {
       return;
     }
-    setCameraToViewFace(state, face);
-    syncViewCube(state, viewCubeRef.current);
+    setCameraToViewFace(state, face, placementWorkplaneRef.current);
+    syncViewCube(state, viewCubeRef.current, placementWorkplaneRef.current);
   }, []);
 
   const zoomCamera = useCallback((scale: number) => {
@@ -6690,20 +6693,11 @@ function toggleCameraProjection(state: ThreeState) {
   state.needsRender = true;
 }
 
-function setCameraToViewFace(state: ThreeState, face: ViewCubeFace) {
+function setCameraToViewFace(state: ThreeState, face: ViewCubeFace, workplane: PlacementWorkplane = horizontalPlacementWorkplane()) {
   const offset = state.camera.position.clone().sub(state.controls.target);
   const distance = clamp(offset.length(), 22, 4200);
-  const directionByFace: Record<ViewCubeFace, THREE.Vector3> = {
-    top: new THREE.Vector3(0, 1, 0),
-    bottom: new THREE.Vector3(0, -1, 0),
-    front: new THREE.Vector3(0, 0, 1),
-    back: new THREE.Vector3(0, 0, -1),
-    right: new THREE.Vector3(1, 0, 0),
-    left: new THREE.Vector3(-1, 0, 0),
-  };
-  const direction = directionByFace[face].clone().normalize();
-
-  state.camera.up.set(0, 1, 0);
+  const { direction, up } = viewFaceOrientation(face, workplane);
+  state.camera.up.copy(up);
   state.camera.position.copy(state.controls.target).add(direction.multiplyScalar(distance));
   state.camera.lookAt(state.controls.target);
   state.camera.updateProjectionMatrix();
@@ -6729,20 +6723,15 @@ function constrainCamera(state: ThreeState, workspace: WorkspaceSettings) {
 // atan2(0, 0) returns 0. That is the answer we want: with the camera on the pole
 // THREE.Matrix4.lookAt breaks the tie towards the same axes as the Front view.
 function cameraOrientation(state: ThreeState): CameraOrientation {
-  const offset = state.camera.position.clone().sub(state.controls.target);
-  const horizontalDistance = Math.max(0.001, Math.hypot(offset.x, offset.z));
-  return {
-    yawDegrees: THREE.MathUtils.radToDeg(Math.atan2(offset.x, offset.z)),
-    pitchDegrees: THREE.MathUtils.radToDeg(Math.atan2(offset.y, horizontalDistance)),
-  };
+  return worldCameraOrientation(state.camera.position.clone().sub(state.controls.target));
 }
 
-function syncViewCube(state: ThreeState, cube: HTMLDivElement | null) {
+function syncViewCube(state: ThreeState, cube: HTMLDivElement | null, workplane: PlacementWorkplane = horizontalPlacementWorkplane()) {
   if (!cube) {
     return;
   }
 
-  const { yawDegrees, pitchDegrees } = cameraOrientation(state);
+  const { yawDegrees, pitchDegrees } = workplaneCameraOrientation(state.camera.position.clone().sub(state.controls.target), workplane);
   cube.style.transform = `rotateX(${-pitchDegrees}deg) rotateY(${-yawDegrees}deg)`;
 }
 
