@@ -115,7 +115,7 @@ import {
   type LinkedResizeAxes,
   type ResizeAxis,
 } from "@/lib/workplaneShapes";
-import { clampRegionToShape, fullShapeRegion, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
+import { clampRegionToShape, displayPositions, fullShapeRegion, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
@@ -144,6 +144,7 @@ import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
+import { regionTaperedShape, type RegionTaper } from "@/lib/regionTaper";
 import { hasMarkedSweepPath, markSweepPath } from "@/lib/sketchSweep";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
@@ -8978,6 +8979,37 @@ export function SketchForgeEditor({
     setRegionResizeRemembered({ ...current, limits: clamped, region: tightenRegionToShape(shape, clamped) });
   }, [setRegionResizeRemembered]);
 
+  /**
+   * Die Verjuengung auf den Teilbereich legen.
+   *
+   * Sie wird sofort ins Netz gerechnet und nicht als Einstellung behalten -
+   * der Teilbereich arbeitet am Netz, nicht an der Form des Koerpers. Was
+   * einmal gerechnet ist, bleibt also stehen; zurueck geht es ueber
+   * Rueckgaengig.
+   */
+  const taperRegionResize = useCallback((taper: RegionTaper) => {
+    const current = regionResizeRef.current;
+    const shape = shapesRef.current.find((entry) => entry.id === current?.shapeId);
+    if (!current || !shape) return;
+    if (shape.locked) {
+      setNotice(t("status.unlockBeforeTaper"));
+      return;
+    }
+    const result = regionTaperedShape(shape, current.region, taper, displayPositions(shape));
+    if (!result) {
+      setNotice(t("status.regionTaperUnchanged"));
+      return;
+    }
+    const next = { ...shape, ...result.patch } as WorkplaneShape;
+    const clamped = clampRegionToShape(result.region, next);
+    setRegionResizeRemembered({ shapeId: shape.id, limits: clamped, region: tightenRegionToShape(next, clamped) });
+    commitShapes(
+      shapesRef.current.map((entry) => entry.id === shape.id ? next : entry),
+      [shape.id],
+      t("status.regionTapered"),
+    );
+  }, [commitShapes, setRegionResizeRemembered]);
+
   const separateSelectedParts = useCallback(() => {
     if (selectedShapes.length !== 1 || !selectedShape) {
       setNotice(t("status.selectOneToSeparate"));
@@ -10408,6 +10440,7 @@ export function SketchForgeEditor({
           resizeRegionMode={regionResizeMode}
           onResizeRegionChange={updateRegionResize}
           onResizeRegionLimitsChange={updateRegionLimits}
+          onRegionTaper={taperRegionResize}
           initialSnap={snapGrid}
           initialWorkspace={workspaceSettings}
           workspaceSettingsKey={projectId ?? "local-workplane"}

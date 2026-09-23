@@ -810,7 +810,7 @@ function stitchPlaneSeams(positions: number[], planes: Array<{ axis: number; at:
 // are computed once per drag rather than once per pointer move.
 let lastDisplay: { shape: WorkplaneShape; positions: number[] } | null = null;
 
-function displayPositions(shape: WorkplaneShape) {
+export function displayPositions(shape: WorkplaneShape) {
   if (lastDisplay?.shape !== shape) {
     lastDisplay = { shape, positions: resizedImportedMeshPositions(shape) };
   }

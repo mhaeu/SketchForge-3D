@@ -56,6 +56,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
+import type { RegionTaper } from "@/lib/regionTaper";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
@@ -232,6 +233,7 @@ type WorkplaneViewportProps = {
   resizeRegionMode: RegionResizeMode;
   onResizeRegionChange: (region: ResizeRegion) => void;
   onResizeRegionLimitsChange: (limits: ResizeRegion) => void;
+  onRegionTaper: (taper: RegionTaper) => void;
   initialSnap?: GridSize;
   initialWorkspace?: WorkplaneWorkspaceSettings;
   workspaceSettingsKey?: string | null;
@@ -3266,6 +3268,7 @@ export function WorkplaneViewport({
   resizeRegionMode,
   onResizeRegionChange,
   onResizeRegionLimitsChange,
+  onRegionTaper,
   initialSnap,
   initialWorkspace,
   workspaceSettingsKey,
@@ -6768,6 +6771,7 @@ export function WorkplaneViewport({
           onLinkedAxesChange={onLinkedAxesChange}
           resizeRegion={resizeRegion && resizeRegion.shapeId === selectedShape.id ? resizeRegionLimits : null}
           onResizeRegionChange={onResizeRegionLimitsChange}
+          onRegionTaper={onRegionTaper}
           onEditSketch={selectedShape.sketchProfile ? onEditSketch : undefined}
           canSeparateParts={canSeparateParts}
           onSeparateParts={onSeparateParts}

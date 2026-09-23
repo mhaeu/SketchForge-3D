@@ -25,6 +25,7 @@ import {
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
+import { regionTaperIsUntouched, untouchedRegionTaper, type RegionTaper } from "@/lib/regionTaper";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
@@ -1077,6 +1078,7 @@ export function ShapeInspector({
   onLinkedAxesChange,
   resizeRegion = null,
   onResizeRegionChange,
+  onRegionTaper,
 }: {
   shape: WorkplaneShape;
   referencePoint: { x: number; y: number; z: number };
@@ -1090,6 +1092,8 @@ export function ShapeInspector({
   // than the shape; the inspector is where the box itself is placed.
   resizeRegion?: ResizeRegion | null;
   onResizeRegionChange?: (region: ResizeRegion) => void;
+  /** Die Verjuengung auf den Teilbereich legen - sie wird sofort ins Netz gerechnet. */
+  onRegionTaper?: (taper: RegionTaper) => void;
   onSnapChange: Dispatch<SetStateAction<GridSize>>;
   onSnapOpenChange: Dispatch<SetStateAction<boolean>>;
   onEditSketch?: () => void;
@@ -1297,6 +1301,20 @@ export function ShapeInspector({
   const [taperOpen, setTaperOpen] = useState(false);
   const [twistOpen, setTwistOpen] = useState(false);
   const [sideHeightOpen, setSideHeightOpen] = useState(false);
+  /*
+   * Die Verjuengung des Teilbereichs wird nirgends abgelegt - sie wird
+   * gerechnet und ist dann Teil des Netzes. Bis zum Knopfdruck steht sie
+   * also hier, und sie faengt bei dem Kasten an, der gerade dasteht.
+   */
+  const regionKey = resizeRegion ? Object.values(resizeRegion).join(",") : "";
+  const [pendingRegionTaper, setPendingRegionTaper] = useState<RegionTaper>(
+    () => untouchedRegionTaper(resizeRegion ?? { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 }),
+  );
+  const lastRegionKey = useRef(regionKey);
+  if (lastRegionKey.current !== regionKey) {
+    lastRegionKey.current = regionKey;
+    if (resizeRegion) setPendingRegionTaper(untouchedRegionTaper(resizeRegion));
+  }
   const [gearTeethOpen, setGearTeethOpen] = useState(true);
   const [gearHelixOpen, setGearHelixOpen] = useState(true);
   const [colorOpen, setColorOpen] = useState(false);
@@ -1458,6 +1476,33 @@ export function ShapeInspector({
               onInteractionActiveChange={onInteractionActiveChange}
             />
           </div>
+          {onRegionTaper ? (
+            <>
+              {/* Dieselbe Verjuengung wie am ganzen Koerper, nur auf den
+                  Kasten bezogen. Sie wird gerechnet, wenn der Knopf gedrueckt
+                  wird, und nicht waehrend des Schiebens: Der Teilbereich
+                  arbeitet am Netz, und jeder Zwischenschritt waere ein
+                  weiterer Umbau auf dem vorigen. */}
+              <div className="property-list">
+                <ShapePropertyRows
+                  properties={regionTaperProperties(resizeRegion, pendingRegionTaper, setPendingRegionTaper)}
+                  workspace={workspace}
+                  disabled={locked}
+                  onInteractionActiveChange={onInteractionActiveChange}
+                />
+              </div>
+              <div className="region-card-actions">
+                <button
+                  type="button"
+                  className="region-taper-apply"
+                  disabled={locked || regionTaperIsUntouched(resizeRegion, pendingRegionTaper)}
+                  onClick={() => onRegionTaper(pendingRegionTaper)}
+                >
+                  {t("inspector.applyRegionTaper")}
+                </button>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -1683,6 +1728,55 @@ function regionBoundProperties(shape: WorkplaneShape, region: ResizeRegion, onCh
       onChange: (value: number) => onChange({ ...region, [hi]: Math.max(value, region[lo] + MIN_REGION_SIZE) }),
     },
   ]);
+}
+
+/**
+ * Die Verjuengung des Teilbereichs: vier Deckkanten des Kastens und vier
+ * Hoehen an seinen Seiten - dieselben acht Werte wie am ganzen Koerper, nur
+ * auf den Kasten bezogen. Die Hoehen stehen in Millimetern, abgelegt sind sie
+ * als Anteil.
+ */
+function regionTaperProperties(
+  region: ResizeRegion,
+  taper: RegionTaper,
+  onChange: (next: RegionTaper) => void,
+): ShapePropertyConfig[] {
+  const width = Math.max(MIN_REGION_SIZE, region.maxX - region.minX);
+  const depth = Math.max(MIN_REGION_SIZE, region.maxZ - region.minZ);
+  const height = Math.max(MIN_REGION_SIZE, region.maxY - region.minY);
+  const bound = Math.max(width, depth);
+  const edgeRows = ([
+    ["sideLeft", "left"],
+    ["sideRight", "right"],
+    ["sideFront", "front"],
+    ["sideBack", "back"],
+  ] as const).map(([id, side]) => ({
+    id,
+    label: t(`prop.${id}` as MessageKey),
+    value: taper.edges[side],
+    min: -bound,
+    max: bound,
+    step: 0.1,
+    onChange: (value: number) => onChange({ ...taper, edges: { ...taper.edges, [side]: value } }),
+  }));
+  const heightRows = ([
+    ["heightLeft", "left"],
+    ["heightRight", "right"],
+    ["heightFront", "front"],
+    ["heightBack", "back"],
+  ] as const).map(([id, side]) => ({
+    id,
+    label: t(`prop.${id}` as MessageKey),
+    value: taper.heights[side] * height,
+    min: 0,
+    max: height,
+    step: 0.1,
+    onChange: (value: number) => onChange({
+      ...taper,
+      heights: { ...taper.heights, [side]: Math.min(1, Math.max(0, value / height)) },
+    }),
+  }));
+  return [...edgeRows, ...heightRows];
 }
 
 function ShapePropertyRows({
