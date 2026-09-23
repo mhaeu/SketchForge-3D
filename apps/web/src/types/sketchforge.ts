@@ -1,5 +1,6 @@
 export type ShapeKind =
   | "box"
+  | "roundedBox"
   | "cylinder"
   | "ellipse"
   | "sphere"
@@ -63,6 +64,9 @@ export type HistoryRetentionLimit = "unlimited" | number;
 
 export type ShapeCustomization = {
   width?: number;
+  cornerFillet?: number;
+  topBottomFillet?: number;
+  roundedBoxQuality?: number;
   depth?: number;
   height?: number;
   maxDimension?: number;
@@ -282,6 +286,12 @@ export type ParametricSource = {
   extrudeTwist?: number;
   extrudeTopOffsetX?: number;
   extrudeTopOffsetZ?: number;
+  /** Abgerundeter Quader: die vier aufrechten Kanten, in mm. */
+  cornerFillet?: number;
+  /** Abgerundeter Quader: die Kanten an Deckel und Boden, in mm. */
+  topBottomFillet?: number;
+  /** Abgerundeter Quader: wie fein die Rundungen unterteilt werden. */
+  roundedBoxQuality?: number;
   taperHeightLeft?: number;
   taperHeightRight?: number;
   taperHeightFront?: number;
@@ -360,6 +370,12 @@ export type WorkplaneShape = {
   extrudeTopOffsetX?: number;
   /** Schiebt die Deckflaeche entlang der eigenen Z-Achse, in mm. */
   extrudeTopOffsetZ?: number;
+  /** Abgerundeter Quader: die vier aufrechten Kanten, in mm. */
+  cornerFillet?: number;
+  /** Abgerundeter Quader: die Kanten an Deckel und Boden, in mm. */
+  topBottomFillet?: number;
+  /** Abgerundeter Quader: wie fein die Rundungen unterteilt werden. */
+  roundedBoxQuality?: number;
   /**
    * Die Hoehe an den vier Seiten, als Anteil der Hoehe des Koerpers (0 bis 1).
    * Damit wird aus dem Koerper ein Keil oder eine schiefe Ebene. Fehlt ein

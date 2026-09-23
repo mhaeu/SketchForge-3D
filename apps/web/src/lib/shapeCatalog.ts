@@ -1,3 +1,11 @@
+import {
+  DEFAULT_ROUNDED_BOX_CORNER_FILLET,
+  DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET,
+  DEFAULT_ROUNDED_BOX_QUALITY,
+  normalizeCornerFillet,
+  normalizeRoundedBoxQuality,
+  normalizeTopBottomFillet,
+} from "@/lib/roundedBoxGeometry";
 import { canonicalizeShape } from "@/lib/workplaneShapes";
 import { normalizePyramidTop } from "@/lib/pyramidGeometry";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -60,6 +68,7 @@ import { DEFAULT_LOFT_BOTTOM_SHAPE, DEFAULT_LOFT_LAYERS, DEFAULT_LOFT_SEGMENTS, 
  */
 const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   box: "shape.box",
+  roundedBox: "shape.roundedBox",
   cylinder: "shape.cylinder",
   ellipse: "shape.ellipse",
   polygon: "shape.polygon",
@@ -90,6 +99,7 @@ export type ToolbarShapeAsset = ShapeAsset & { menuIcon: string };
 
 export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "box", name: "Box", src: "assets/sketchforge/shape-icons-gray/box.png", menuIcon: "assets/sketchforge/shape-icons-gray/box.png", kind: "box", color: "#d41721" },
+  { id: "roundedBox", name: "Rounded Box", src: "assets/sketchforge/shape-icons-gray/box.png", menuIcon: "assets/sketchforge/shape-icons-gray/box.png", kind: "roundedBox", color: "#d41721" },
   { id: "cylinder", name: "Cylinder", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "cylinder", color: "#d97813" },
   { id: "ellipse", name: "Ellipse", src: "assets/sketchforge/shape-icons-gray/ellipse.png", menuIcon: "assets/sketchforge/shape-icons-gray/ellipse.png", kind: "ellipse", color: "#e0a324" },
   { id: "polygon", name: "Polygon", src: "assets/sketchforge/shape-icons-gray/polygon.png", menuIcon: "assets/sketchforge/shape-icons-gray/polygon.png", kind: "polygon", color: "#5b5ce2" },
@@ -152,6 +162,13 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
 }
 
 export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAssetDefaultDimensions(kind)): ShapeCustomization {
+  if (kind === "roundedBox") {
+    return {
+      cornerFillet: DEFAULT_ROUNDED_BOX_CORNER_FILLET,
+      topBottomFillet: DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET,
+      roundedBoxQuality: DEFAULT_ROUNDED_BOX_QUALITY,
+    };
+  }
   if (kind === "cylinder" || kind === "ellipse") return { sides: 96 };
   if (kind === "polygon") return { sides: 6 };
   if (kind === "sphere") return { steps: 24 };
@@ -223,6 +240,9 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     bevel: shape.bevel,
     segments: shape.segments,
     topRadius: shape.topRadius,
+    cornerFillet: shape.cornerFillet,
+    topBottomFillet: shape.topBottomFillet,
+    roundedBoxQuality: shape.roundedBoxQuality,
     topWidth: shape.topWidth,
     topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
@@ -368,6 +388,9 @@ export function makeShapeFromAsset(
     topWidth: asset.kind === "pyramid" ? normalizePyramidTop(customization.topWidth, width) : undefined,
     topDepth: asset.kind === "pyramid" ? normalizePyramidTop(customization.topDepth, depth) : undefined,
     baseRadius: asset.kind === "cone" ? customization.baseRadius ?? width / 2 : undefined,
+    cornerFillet: asset.kind === "roundedBox" ? normalizeCornerFillet(customization.cornerFillet ?? DEFAULT_ROUNDED_BOX_CORNER_FILLET, Math.min(width, depth) / 2) : undefined,
+    topBottomFillet: asset.kind === "roundedBox" ? normalizeTopBottomFillet(customization.topBottomFillet ?? DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET, height / 2) : undefined,
+    roundedBoxQuality: asset.kind === "roundedBox" ? normalizeRoundedBoxQuality(customization.roundedBoxQuality ?? DEFAULT_ROUNDED_BOX_QUALITY) : undefined,
     teeth: gearTeeth,
     toothSize: gearToothSize,
     toothWidth: asset.kind === "gear" && customization.toothWidth !== undefined

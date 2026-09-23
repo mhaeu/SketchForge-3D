@@ -14,6 +14,7 @@ export const BODY_PARAMETER_KEYS = [
   "topRadius", "baseRadius",
   "taperTopWidth", "taperTopDepth", "taperBottomWidth", "taperBottomDepth",
   "taperHeightLeft", "taperHeightRight", "taperHeightFront", "taperHeightBack",
+  "cornerFillet", "topBottomFillet", "roundedBoxQuality",
   "teeth", "toothSize", "toothWidth", "centerHoleSize", "gearType", "helixAngle", "helixQuality",
   "threadRole", "threadHead", "threadDrive", "threadHand", "threadProfile", "threadDiameter",
   "threadPitch", "threadClearance", "threadQuality", "threadHeadHeight", "threadChamfer",
@@ -67,6 +68,9 @@ export function parametricSourceForBake(shape: WorkplaneShape): ParametricSource
     extrudeTwist: shape.extrudeTwist,
     extrudeTopOffsetX: shape.extrudeTopOffsetX,
     extrudeTopOffsetZ: shape.extrudeTopOffsetZ,
+    cornerFillet: shape.cornerFillet,
+    topBottomFillet: shape.topBottomFillet,
+    roundedBoxQuality: shape.roundedBoxQuality,
   };
 }
 
@@ -124,6 +128,9 @@ export function parametricRebuildPlan(
     extrudeTwist: source.extrudeTwist,
     extrudeTopOffsetX: source.extrudeTopOffsetX,
     extrudeTopOffsetZ: source.extrudeTopOffsetZ,
+    cornerFillet: source.cornerFillet,
+    topBottomFillet: source.topBottomFillet,
+    roundedBoxQuality: source.roundedBoxQuality,
     importedMesh: undefined,
     parametricSource: undefined,
     rotation: 0,

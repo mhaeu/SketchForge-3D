@@ -26,6 +26,16 @@ import {
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
 import { regionTaperIsUntouched, untouchedRegionTaper, type RegionTaper } from "@/lib/regionTaper";
+import {
+  DEFAULT_ROUNDED_BOX_CORNER_FILLET,
+  DEFAULT_ROUNDED_BOX_QUALITY,
+  DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET,
+  MAX_ROUNDED_BOX_QUALITY,
+  MIN_ROUNDED_BOX_QUALITY,
+  normalizeCornerFillet,
+  normalizeRoundedBoxQuality,
+  normalizeTopBottomFillet,
+} from "@/lib/roundedBoxGeometry";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS } from "@/lib/workplaneSettings";
@@ -234,6 +244,7 @@ function propertyUsesLengthUnit(id: string) {
   if (/^(length|width|height)(From|To)$/.test(id)) return true;
   // Die vier Deckkanten und die vier Seitenhoehen sind ebenfalls Laengen.
   if (/^(side|height)(Left|Right|Front|Back)$/.test(id)) return true;
+  if (id === "cornerFillet" || id === "topBottomFillet") return true;
   return ["radius", "length", "width", "height", "bevel", "topRadius", "baseRadius", "thickness", "toothSize", "toothWidth", "centerHole", "topLength", "topWidth", "bottomLength", "bottomWidth", "diameter", "pitch", "threadLength", "clearance", "headHeight", "chamfer", "headChamfer", "rimChamfer", "wire", "x", "y", "z", "crossSize", "markerSize"].includes(id);
 }
 
@@ -970,6 +981,46 @@ function getShapePropertiesWithAppLimits(
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
     );
     return properties;
+  }
+
+  if (shape.kind === "roundedBox") {
+    /*
+     * Zwei getrennte Rundungen: die vier aufrechten Kanten und die Kanten an
+     * Deckel und Boden. Beide bleiben in Millimetern stehen, wenn das Objekt
+     * groesser oder kleiner gezogen wird - nur die geraden Stuecke dazwischen
+     * werden laenger. Genau darum geht es bei dieser Form.
+     */
+    const maxCornerFillet = Math.max(1, Math.min(width, depth) / 2);
+    const maxTopBottomFillet = Math.max(1, shape.height / 2);
+    return [
+      {
+        id: "cornerFillet",
+        label: t("prop.cornerFillet"),
+        value: shape.cornerFillet ?? DEFAULT_ROUNDED_BOX_CORNER_FILLET,
+        min: 0,
+        max: maxCornerFillet,
+        step: 0.1,
+        onChange: (value) => onUpdate({ cornerFillet: normalizeCornerFillet(value, Math.min(width, depth) / 2) }),
+      },
+      {
+        id: "topBottomFillet",
+        label: t("prop.topBottomFillet"),
+        value: shape.topBottomFillet ?? DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET,
+        min: 0,
+        max: maxTopBottomFillet,
+        step: 0.1,
+        onChange: (value) => onUpdate({ topBottomFillet: normalizeTopBottomFillet(value, shape.height / 2) }),
+      },
+      {
+        id: "roundedBoxQuality",
+        label: t("prop.quality"),
+        value: shape.roundedBoxQuality ?? DEFAULT_ROUNDED_BOX_QUALITY,
+        min: MIN_ROUNDED_BOX_QUALITY,
+        max: MAX_ROUNDED_BOX_QUALITY,
+        step: 1,
+        onChange: (value) => onUpdate({ roundedBoxQuality: normalizeRoundedBoxQuality(value) }),
+      },
+    ];
   }
 
   if (shape.kind === "loft") {

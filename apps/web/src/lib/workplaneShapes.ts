@@ -55,6 +55,9 @@ export function shapeWithParametricSource(shape: WorkplaneShape): WorkplaneShape
     extrudeTwist: source.extrudeTwist,
     extrudeTopOffsetX: source.extrudeTopOffsetX,
     extrudeTopOffsetZ: source.extrudeTopOffsetZ,
+    cornerFillet: source.cornerFillet,
+    topBottomFillet: source.topBottomFillet,
+    roundedBoxQuality: source.roundedBoxQuality,
     taperHeightLeft: source.taperHeightLeft,
     taperHeightRight: source.taperHeightRight,
     taperHeightFront: source.taperHeightFront,
@@ -120,7 +123,7 @@ export function shapeTaperDimensions(shape: WorkplaneShape) {
  * und Tiefe der Grundflaeche.
  */
 export function shapeSupportsTaper(kind: WorkplaneShape["kind"]) {
-  return kind !== "gear" && kind !== "thread" && kind !== "spring" && kind !== "ruler";
+  return kind !== "gear" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox";
 }
 
 /**
@@ -661,6 +664,9 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.segments === b.segments &&
     a.topRadius === b.topRadius &&
     a.baseRadius === b.baseRadius &&
+    a.cornerFillet === b.cornerFillet &&
+    a.topBottomFillet === b.topBottomFillet &&
+    a.roundedBoxQuality === b.roundedBoxQuality &&
     a.taperHeightLeft === b.taperHeightLeft &&
     a.taperHeightRight === b.taperHeightRight &&
     a.taperHeightFront === b.taperHeightFront &&

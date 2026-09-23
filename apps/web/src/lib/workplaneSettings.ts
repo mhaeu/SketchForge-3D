@@ -49,7 +49,7 @@ const snapGridOptions: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 
 // hier, wirft das Normalisieren ihre gespeicherten Vorgaben beim naechsten
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
 const customizableShapeKinds: ShapeKind[] = [
-  "box", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
+  "box", "roundedBox", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
   "mesh", "loft",
 ];
@@ -114,6 +114,11 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
     };
     if (kind === "sphere" || kind === "halfSphere") {
       entry.steps = optionalShapeNumber(source.steps, fallbackEntry?.steps, 6, MAX_HIGH_RESOLUTION_STEPS, true);
+    }
+    if (kind === "roundedBox") {
+      entry.cornerFillet = optionalShapeNumber(source.cornerFillet, fallbackEntry?.cornerFillet, 0, MAX_CUSTOM_SHAPE_DIMENSION / 2);
+      entry.topBottomFillet = optionalShapeNumber(source.topBottomFillet, fallbackEntry?.topBottomFillet, 0, MAX_CUSTOM_SHAPE_DIMENSION / 2);
+      entry.roundedBoxQuality = optionalShapeNumber(source.roundedBoxQuality, fallbackEntry?.roundedBoxQuality, 4, 32, true);
     }
     if (kind === "cylinder" || kind === "ellipse" || kind === "cone") {
       entry.sides = optionalShapeNumber(source.sides, fallbackEntry?.sides, 3, MAX_HIGH_RESOLUTION_SIDES, true);

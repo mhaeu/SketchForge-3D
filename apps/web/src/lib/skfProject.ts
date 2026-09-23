@@ -30,7 +30,7 @@ export const SKF_LIMITS = {
 } as const;
 
 const SHAPE_KINDS = new Set([
-  "box", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
+  "box", "roundedBox", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
 ]);
 
@@ -984,6 +984,20 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
     const side = finiteNumber(definition[field], `${label}.${field}`);
     if (side < 0 || side > 1) throw new Error(`${label}.${field} is outside the supported range`);
   });
+  if (kind === "roundedBox") {
+    // Die beiden Rundungen stehen in Millimetern, die Feinheit in Stufen.
+    (["cornerFillet", "topBottomFillet"] as const).forEach((field) => {
+      if (definition[field] === undefined) return;
+      const value = finiteNumber(definition[field], `${label}.${field}`);
+      if (value < 0 || value > 1e6) throw new Error(`${label}.${field} is outside the supported range`);
+    });
+    if (definition.roundedBoxQuality !== undefined) {
+      const quality = finiteNumber(definition.roundedBoxQuality, `${label}.roundedBoxQuality`);
+      if (!Number.isInteger(quality) || quality < 4 || quality > 64) {
+        throw new Error(`${label}.roundedBoxQuality is outside the supported range`);
+      }
+    }
+  }
   if (kind === "pyramid") {
     // Null heisst Spitze, alles darueber ist die Deckflaeche eines Stumpfs.
     (["topWidth", "topDepth"] as const).forEach((field) => {

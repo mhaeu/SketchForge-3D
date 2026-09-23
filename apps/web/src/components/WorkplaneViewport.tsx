@@ -58,6 +58,7 @@ import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/camer
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
+import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeightScaleAtShare, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
@@ -1199,6 +1200,9 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     topWidth: shape.topWidth,
     topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
+    cornerFillet: shape.cornerFillet,
+    topBottomFillet: shape.topBottomFillet,
+    roundedBoxQuality: shape.roundedBoxQuality,
     taperTopWidth: shape.taperTopWidth,
     taperTopDepth: shape.taperTopDepth,
     taperBottomWidth: shape.taperBottomWidth,
@@ -1387,6 +1391,9 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     topWidth: shape.topWidth,
     topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
+    cornerFillet: shape.cornerFillet,
+    topBottomFillet: shape.topBottomFillet,
+    roundedBoxQuality: shape.roundedBoxQuality,
     taperTopWidth: shape.taperTopWidth,
     taperTopDepth: shape.taperTopDepth,
     taperBottomWidth: shape.taperBottomWidth,
@@ -9167,6 +9174,16 @@ function createShapeObject(
       break;
     case "halfSphere":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createHalfSphereGeometry(width, height, depth, shape.steps ?? 32)), material, shape);
+      break;
+    case "roundedBox":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createRoundedBoxGeometry({
+        width,
+        depth,
+        height,
+        cornerFillet: shape.cornerFillet,
+        topBottomFillet: shape.topBottomFillet,
+        roundedBoxQuality: shape.roundedBoxQuality,
+      })), material, shape);
       break;
     case "torus":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createTorusGeometry(width, height, depth)), material, shape);
