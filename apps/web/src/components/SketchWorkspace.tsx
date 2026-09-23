@@ -1760,21 +1760,32 @@ export function SketchWorkspace({
           <button type="button" title={t("sketch.roundCorner")} onClick={() => onRoundPoint(selectedPoint.id)}><Circle /><span>{t("sketch.round")}</span></button>
         </div>
       ) : null}
-      {operation === "sweep" && selected?.kind === "segment" && tool === "select" ? (() => {
+      {operation === "sweep" && tool === "select" ? (() => {
         /*
          * Hier steht die Entscheidung, welcher Zug der Weg ist - an der
          * ausgewaehlten Linie, nicht in einer Liste am Rand. Ohne sie
          * entscheidet die Zeichnung selbst, und das trifft es meistens; aber
          * eine Form mitten im Weg laese sich sonst nur als Loch darin lesen.
+         *
+         * Eine einzelne Linie genuegt, und ein ganzer aufgezogener Zug tut es
+         * auch: Ausgezeichnet wird ohnehin der zusammenhaengende Zug, zu dem
+         * die Linie gehoert, also reicht irgendeine von ihnen. Bei einer
+         * Auswahl ueber mehrere Zuege gilt die erste in der Zeichnung.
          */
-        const isPath = hasMarkedSweepPath(displayProfile) && sweepSpineSegmentIds.has(selected.id);
+        const chosen = selected?.kind === "segment"
+          ? selected.id
+          : selected?.kind === "multiple"
+            ? displayProfile.segments.find((segment) => selected.segmentIds.includes(segment.id))?.id ?? null
+            : null;
+        if (!chosen) return null;
+        const isPath = hasMarkedSweepPath(displayProfile) && sweepSpineSegmentIds.has(chosen);
         return (
           <div className="sketch-point-actions" aria-label={t("sketch.pathActions")}>
             <button
               type="button"
               className={isPath ? "active" : undefined}
               title={isPath ? t("sketch.markAsShape") : t("sketch.markAsPath")}
-              onClick={() => onMarkPath(selected.id)}
+              onClick={() => onMarkPath(chosen)}
             >
               <Waypoints />
               <span>{isPath ? t("sketch.asShape") : t("sketch.asPath")}</span>
