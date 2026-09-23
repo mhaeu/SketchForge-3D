@@ -56,7 +56,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasTaper, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -1205,6 +1205,10 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     extrudeTwist: shape.extrudeTwist,
     extrudeTopOffsetX: shape.extrudeTopOffsetX,
     extrudeTopOffsetZ: shape.extrudeTopOffsetZ,
+    taperHeightLeft: shape.taperHeightLeft,
+    taperHeightRight: shape.taperHeightRight,
+    taperHeightFront: shape.taperHeightFront,
+    taperHeightBack: shape.taperHeightBack,
     teeth: shape.teeth,
     toothSize: shape.toothSize,
     toothWidth: shape.toothWidth,
@@ -1314,6 +1318,8 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
   const deform = shapeHasExtrudeDeform(shape)
     ? { twist: shape.extrudeTwist, offsetX: shape.extrudeTopOffsetX, offsetZ: shape.extrudeTopOffsetZ }
     : null;
+  // Die abgesenkten Seiten bauen das Netz genauso um wie die Verjuengung.
+  const sideHeights = shapeHasSideHeights(shape) ? shapeSideHeights(shape) : null;
   if (shape.groupedShapes?.length && !shape.importedMesh) {
     return JSON.stringify({
       kind: "group",
@@ -1322,6 +1328,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
       height: shape.height,
       taper,
       deform,
+      sideHeights,
       children: shape.groupedShapes.map((child) => [
         child.id,
         child.hidden,
@@ -1340,6 +1347,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
       mesh: shapeResourceId(shape.importedMesh),
       taper,
       deform,
+      sideHeights,
       preserve: preservesEdgeTreatmentSize(shape)
         ? [shapeWidth(shape), shapeDepth(shape), shape.height, shape.edgeTreatments]
         : false,
@@ -1347,13 +1355,13 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
   }
 
   if (shape.kind === "box" && !(shape.radius && shape.radius > 0)) {
-    return JSON.stringify({ kind: "box", taper, deform });
+    return JSON.stringify({ kind: "box", taper, deform, sideHeights });
   }
   if (shape.kind === "cylinder" || shape.kind === "ellipse" || shape.kind === "polygon") {
-    return JSON.stringify({ kind: shape.kind, sides: polygonSidesForShape(shape), segments: shape.segments, taper, deform });
+    return JSON.stringify({ kind: shape.kind, sides: polygonSidesForShape(shape), segments: shape.segments, taper, deform, sideHeights });
   }
   if (shape.kind === "sphere") {
-    return JSON.stringify({ kind: "sphere", steps: shape.steps, taper, deform });
+    return JSON.stringify({ kind: "sphere", steps: shape.steps, taper, deform, sideHeights });
   }
   if (shape.kind === "ruler") {
     // Die Strichteilung sitzt in der Beschichtung, nicht in der Geometrie -
@@ -1385,6 +1393,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     extrudeTwist: shape.extrudeTwist,
     extrudeTopOffsetX: shape.extrudeTopOffsetX,
     extrudeTopOffsetZ: shape.extrudeTopOffsetZ,
+    sideHeights,
     teeth: shape.teeth,
     toothSize: shape.toothSize,
     toothWidth: shape.toothWidth,
@@ -2183,7 +2192,7 @@ function importedShapeProjectionBounds(
   const deformed = shapeHasExtrudeDeform(shape);
   let taperMinY = Number.POSITIVE_INFINITY;
   let taperMaxY = Number.NEGATIVE_INFINITY;
-  if (tapered || deformed) {
+  if (tapered || deformed || shapeHasSideHeights(shape)) {
     for (let index = 1; index < positions.length; index += 3) {
       const localY = positions[index] * scaleY;
       taperMinY = Math.min(taperMinY, localY);
@@ -2192,13 +2201,17 @@ function importedShapeProjectionBounds(
   }
   const taperHeight = Math.max(1e-6, taperMaxY - taperMinY);
 
+  const lowered = shapeHasSideHeights(shape);
   for (let index = 0; index + 2 < positions.length; index += 3) {
-    const localY = positions[index + 1] * scaleY;
-    const normalizedHeight = (tapered || deformed) ? (localY - taperMinY) / taperHeight : 0;
+    const baseX = positions[index] * scaleX;
+    const baseZ = positions[index + 2] * scaleZ;
+    const rawY = positions[index + 1] * scaleY;
+    const localY = lowered ? taperMinY + (rawY - taperMinY) * shapeSideHeightScaleAt(shape, baseX, baseZ) : rawY;
+    const normalizedHeight = (tapered || deformed) ? (rawY - taperMinY) / taperHeight : 0;
     const widthScale = tapered ? shapeTaperScaleAt(shape, normalizedHeight, "width") : 1;
     const depthScale = tapered ? shapeTaperScaleAt(shape, normalizedHeight, "depth") : 1;
-    let localX = positions[index] * scaleX * widthScale;
-    let localZ = positions[index + 2] * scaleZ * depthScale;
+    let localX = baseX * widthScale;
+    let localZ = baseZ * depthScale;
     if (deformed) {
       const deform = shapeExtrudeDeformAt(shape, normalizedHeight);
       const cos = Math.cos(deform.twistRadians);
@@ -9366,11 +9379,18 @@ function taperGeometryForShape(geometry: THREE.BufferGeometry, shape: WorkplaneS
   const centerX = (box.min.x + box.max.x) / 2;
   const centerZ = (box.min.z + box.max.z) / 2;
   const deformed = shapeHasExtrudeDeform(shape);
+  const lowered = shapeHasSideHeights(shape);
   for (let index = 0; index < position.count; index += 1) {
     const y = position.getY(index);
     const normalizedHeight = (y - box.min.y) / height;
     const widthScale = shapeTaperScaleAt(shape, normalizedHeight, "width");
     const depthScale = shapeTaperScaleAt(shape, normalizedHeight, "depth");
+    // Die Hoehe an dieser Stelle richtet sich nach der Grundflaeche, also
+    // nach dem Punkt vor der Verjuengung - sonst wanderte der Keil mit,
+    // waehrend die Seiten sich neigen.
+    const standing = lowered
+      ? box.min.y + (y - box.min.y) * shapeSideHeightScaleAt(shape, position.getX(index) - centerX, position.getZ(index) - centerZ)
+      : y;
     let localX = centerX + (position.getX(index) - centerX) * widthScale;
     let localZ = centerZ + (position.getZ(index) - centerZ) * depthScale;
     if (deformed) {
@@ -9382,7 +9402,7 @@ function taperGeometryForShape(geometry: THREE.BufferGeometry, shape: WorkplaneS
       localX = centerX + relativeX * cos - relativeZ * sin + deform.offsetX;
       localZ = centerZ + relativeX * sin + relativeZ * cos + deform.offsetZ;
     }
-    position.setXYZ(index, localX, y, localZ);
+    position.setXYZ(index, localX, standing, localZ);
   }
   position.needsUpdate = true;
   tapered.computeVertexNormals();
@@ -9397,6 +9417,7 @@ function applyGroupedContentTaper(content: THREE.Group, shape: WorkplaneShape, b
   const centerX = (baseBounds.min.x + baseBounds.max.x) / 2;
   const centerZ = (baseBounds.min.z + baseBounds.max.z) / 2;
   const deformed = shapeHasExtrudeDeform(shape);
+  const lowered = shapeHasSideHeights(shape);
   content.updateMatrixWorld(true);
   const contentWorldInverse = content.matrixWorld.clone().invert();
   content.traverse((object) => {
@@ -9419,6 +9440,9 @@ function applyGroupedContentTaper(content: THREE.Group, shape: WorkplaneShape, b
       const normalizedHeight = (point.y - baseBounds.min.y) / height;
       const widthScale = shapeTaperScaleAt(shape, normalizedHeight, "width");
       const depthScale = shapeTaperScaleAt(shape, normalizedHeight, "depth");
+      if (lowered) {
+        point.y = baseBounds.min.y + (point.y - baseBounds.min.y) * shapeSideHeightScaleAt(shape, point.x - centerX, point.z - centerZ);
+      }
       point.x = centerX + (point.x - centerX) * widthScale;
       point.z = centerZ + (point.z - centerZ) * depthScale;
       if (deformed) {

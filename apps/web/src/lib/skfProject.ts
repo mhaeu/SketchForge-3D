@@ -977,6 +977,13 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
     const offset = finiteNumber(definition[field], `${label}.${field}`);
     if (Math.abs(offset) > 80) throw new Error(`${label}.${field} is outside the supported range`);
   });
+  // Die Hoehe an den vier Seiten steht als Anteil der Koerperhoehe da. Sie
+  // senkt nur ab, liegt also zwischen null und eins.
+  (["taperHeightLeft", "taperHeightRight", "taperHeightFront", "taperHeightBack"] as const).forEach((field) => {
+    if (definition[field] === undefined) return;
+    const side = finiteNumber(definition[field], `${label}.${field}`);
+    if (side < 0 || side > 1) throw new Error(`${label}.${field} is outside the supported range`);
+  });
   if (kind === "pyramid") {
     // Null heisst Spitze, alles darueber ist die Deckflaeche eines Stumpfs.
     (["topWidth", "topDepth"] as const).forEach((field) => {

@@ -13,6 +13,7 @@ export const BODY_PARAMETER_KEYS = [
   "steps", "sides", "bevel", "segments",
   "topRadius", "baseRadius",
   "taperTopWidth", "taperTopDepth", "taperBottomWidth", "taperBottomDepth",
+  "taperHeightLeft", "taperHeightRight", "taperHeightFront", "taperHeightBack",
   "teeth", "toothSize", "toothWidth", "centerHoleSize", "gearType", "helixAngle", "helixQuality",
   "threadRole", "threadHead", "threadDrive", "threadHand", "threadProfile", "threadDiameter",
   "threadPitch", "threadClearance", "threadQuality", "threadHeadHeight", "threadChamfer",

@@ -282,6 +282,10 @@ export type ParametricSource = {
   extrudeTwist?: number;
   extrudeTopOffsetX?: number;
   extrudeTopOffsetZ?: number;
+  taperHeightLeft?: number;
+  taperHeightRight?: number;
+  taperHeightFront?: number;
+  taperHeightBack?: number;
 };
 
 export type CadPrimitiveFrame = {
@@ -356,6 +360,25 @@ export type WorkplaneShape = {
   extrudeTopOffsetX?: number;
   /** Schiebt die Deckflaeche entlang der eigenen Z-Achse, in mm. */
   extrudeTopOffsetZ?: number;
+  /**
+   * Die Hoehe an den vier Seiten, als Anteil der Hoehe des Koerpers (0 bis 1).
+   * Damit wird aus dem Koerper ein Keil oder eine schiefe Ebene. Fehlt ein
+   * Wert, steht die Seite auf voller Hoehe.
+   *
+   * Als Anteil und nicht in Millimetern, damit die Neigung erhalten bleibt,
+   * wenn der Koerper hoeher oder niedriger gezogen wird - ein Mass in
+   * Millimetern muesste dabei mitgerechnet werden und ginge beim Verkleinern
+   * verloren. Das Merkmalsfeld zeigt trotzdem Millimeter.
+   *
+   * Abgesenkt wird nur: Die Hoehe des Koerpers bleibt seine Hoehe, und die
+   * Seiten liegen darunter. Sonst muesste jede Stelle, die mit `height`
+   * rechnet - Auswahlrahmen, Aufstellhoehe, Teilbereich, Ausfuhr - die
+   * Verjuengung mitdenken.
+   */
+  taperHeightLeft?: number;
+  taperHeightRight?: number;
+  taperHeightFront?: number;
+  taperHeightBack?: number;
   teeth?: number;
   toothSize?: number;
   toothWidth?: number;

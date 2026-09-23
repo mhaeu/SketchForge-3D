@@ -55,6 +55,10 @@ export function shapeWithParametricSource(shape: WorkplaneShape): WorkplaneShape
     extrudeTwist: source.extrudeTwist,
     extrudeTopOffsetX: source.extrudeTopOffsetX,
     extrudeTopOffsetZ: source.extrudeTopOffsetZ,
+    taperHeightLeft: source.taperHeightLeft,
+    taperHeightRight: source.taperHeightRight,
+    taperHeightFront: source.taperHeightFront,
+    taperHeightBack: source.taperHeightBack,
   };
 }
 
@@ -169,6 +173,136 @@ export function shapeTaperScaleAt(shape: WorkplaneShape, normalizedHeight: numbe
   return (bottom + (top - bottom) * t) / Math.max(0.01, base);
 }
 
+export type ShapeSides<T = number> = { left: T; right: T; front: T; back: T };
+
+/**
+ * Die vier Kanten der Deckflaeche, in mm von der Mitte des Koerpers aus.
+ *
+ * Das ist dieselbe Verjuengung wie oben, nur anders angesehen. Breite und
+ * Tiefe der Deckflaeche sagen, wie gross sie ist, und der Versatz, wo sie
+ * sitzt; zusammen sagen sie, wo ihre vier Kanten liegen - und genau danach
+ * fragt, wer eine einzelne Seite schraeg stellen will. Links ist die kleinere
+ * Breite, vorn die kleinere Tiefe, wie ueberall sonst beim Ausrichten.
+ *
+ * Es kommt kein neues Feld dazu: Beide Ansichten beschreiben dieselbe Form,
+ * und zwei Felder fuer dieselbe Sache wuerden frueher oder spaeter
+ * auseinanderlaufen.
+ */
+export function shapeTopFaceEdges(shape: WorkplaneShape): ShapeSides {
+  const taper = shapeTaperDimensions(shape);
+  const offsetX = shape.extrudeTopOffsetX ?? 0;
+  const offsetZ = shape.extrudeTopOffsetZ ?? 0;
+  return {
+    left: offsetX - taper.topWidth / 2,
+    right: offsetX + taper.topWidth / 2,
+    front: offsetZ - taper.topDepth / 2,
+    back: offsetZ + taper.topDepth / 2,
+  };
+}
+
+/**
+ * Eine einzelne Kante der Deckflaeche verschieben. Die Gegenkante bleibt
+ * stehen - das ist der Sinn der Sache: eine Seite schraeg stellen, ohne die
+ * andere anzufassen.
+ */
+export function shapeTopFaceEdgePatch(shape: WorkplaneShape, requested: Partial<ShapeSides>): Partial<WorkplaneShape> {
+  if (!shapeSupportsTaper(shape.kind)) return {};
+  const edges = { ...shapeTopFaceEdges(shape), ...requested };
+  // Die Kanten duerfen sich nicht ueberholen, und der Versatz hat seine
+  // eigene Grenze - die Deckflaeche bleibt in ihr.
+  const span = (low: number, high: number, offsetLimit: number) => {
+    const size = Math.max(0.01, high - low);
+    const centre = Math.min(offsetLimit, Math.max(-offsetLimit, (low + high) / 2));
+    return { size, centre };
+  };
+  const horizontal = span(Math.min(edges.left, edges.right), Math.max(edges.left, edges.right), EXTRUDE_OFFSET_MAX);
+  const vertical = span(Math.min(edges.front, edges.back), Math.max(edges.front, edges.back), EXTRUDE_OFFSET_MAX);
+  const taper = shapeTaperDimensions(shape);
+  return {
+    taperTopWidth: horizontal.size,
+    taperTopDepth: vertical.size,
+    taperBottomWidth: taper.bottomWidth,
+    taperBottomDepth: taper.bottomDepth,
+    taperTopScale: undefined,
+    extrudeTopOffsetX: horizontal.centre,
+    extrudeTopOffsetZ: vertical.centre,
+  };
+}
+
+/**
+ * Der Anteil der Hoehe, den der Koerper an jeder seiner vier Seiten noch
+ * stehen laesst. Abgesenkt wird nur - die Hoehe des Koerpers bleibt seine
+ * Hoehe, und die Seiten liegen darunter.
+ */
+export function shapeSideHeightFactors(shape: WorkplaneShape): ShapeSides {
+  const side = (value: number | undefined) => Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value as number))
+    : 1;
+  return {
+    left: side(shape.taperHeightLeft),
+    right: side(shape.taperHeightRight),
+    front: side(shape.taperHeightFront),
+    back: side(shape.taperHeightBack),
+  };
+}
+
+/** Dieselben vier Werte in Millimetern - so stehen sie im Merkmalsfeld. */
+export function shapeSideHeights(shape: WorkplaneShape): ShapeSides {
+  const height = Math.max(0.01, shape.height);
+  const factors = shapeSideHeightFactors(shape);
+  return {
+    left: factors.left * height,
+    right: factors.right * height,
+    front: factors.front * height,
+    back: factors.back * height,
+  };
+}
+
+export function shapeHasSideHeights(shape: WorkplaneShape) {
+  if (!shapeSupportsTaper(shape.kind)) return false;
+  const factors = shapeSideHeightFactors(shape);
+  return Math.abs(factors.left - 1) > 1e-9
+    || Math.abs(factors.right - 1) > 1e-9
+    || Math.abs(factors.front - 1) > 1e-9
+    || Math.abs(factors.back - 1) > 1e-9;
+}
+
+/**
+ * Wie hoch der Koerper ueber der Stelle (x, z) seiner Grundflaeche steht, als
+ * Anteil seiner vollen Hoehe.
+ *
+ * Quer und laengs wird jeweils zwischen den beiden Seiten geradlinig
+ * ueberblendet, und beide Neigungen werden zusammengezaehlt: Steht nur eine
+ * Seite tiefer, entsteht eine schiefe Ebene; stehen zwei gegenueberliegende
+ * tiefer, ein Dach. Die volle Hoehe kommt einmal heraus, wenn alle vier
+ * Seiten sie haben.
+ */
+export function shapeSideHeightScaleAt(shape: WorkplaneShape, x: number, z: number) {
+  if (!shapeHasSideHeights(shape)) return 1;
+  const factors = shapeSideHeightFactors(shape);
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+  // x und z zaehlen von der Mitte der Grundflaeche aus - so, wie die Netze
+  // der Grundkoerper aufgebaut sind.
+  const u = clamp01(x / Math.max(1e-6, shapeWidth(shape)) + 0.5);
+  const v = clamp01(z / Math.max(1e-6, shapeDepth(shape)) + 0.5);
+  const alongWidth = factors.left + (factors.right - factors.left) * u;
+  const alongDepth = factors.front + (factors.back - factors.front) * v;
+  return Math.max(0, alongWidth + alongDepth - 1);
+}
+
+/** Setzen - in Millimetern, wie im Merkmalsfeld, abgelegt als Anteil. */
+export function shapeSideHeightPatch(shape: WorkplaneShape, requested: Partial<ShapeSides>): Partial<WorkplaneShape> {
+  if (!shapeSupportsTaper(shape.kind)) return {};
+  const height = Math.max(0.01, shape.height);
+  const share = (value: number) => Math.min(1, Math.max(0, value / height));
+  const patch: Partial<WorkplaneShape> = {};
+  if (requested.left !== undefined) patch.taperHeightLeft = share(requested.left);
+  if (requested.right !== undefined) patch.taperHeightRight = share(requested.right);
+  if (requested.front !== undefined) patch.taperHeightFront = share(requested.front);
+  if (requested.back !== undefined) patch.taperHeightBack = share(requested.back);
+  return patch;
+}
+
 const DEGREES_TO_RADIANS = Math.PI / 180;
 const EXTRUDE_TWIST_MAX = 720;
 const EXTRUDE_OFFSET_MAX = 80;
@@ -195,7 +329,7 @@ export function shapeHasExtrudeDeform(shape: WorkplaneShape) {
  * wissen will, ob er sich die Muehe machen muss, fragt einmal hier.
  */
 export function shapeHasShapeDeform(shape: WorkplaneShape) {
-  return shapeHasTaper(shape) || shapeHasExtrudeDeform(shape);
+  return shapeHasTaper(shape) || shapeHasExtrudeDeform(shape) || shapeHasSideHeights(shape);
 }
 
 /**
@@ -515,6 +649,10 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.segments === b.segments &&
     a.topRadius === b.topRadius &&
     a.baseRadius === b.baseRadius &&
+    a.taperHeightLeft === b.taperHeightLeft &&
+    a.taperHeightRight === b.taperHeightRight &&
+    a.taperHeightFront === b.taperHeightFront &&
+    a.taperHeightBack === b.taperHeightBack &&
     a.taperTopWidth === b.taperTopWidth &&
     a.taperTopDepth === b.taperTopDepth &&
     a.taperBottomWidth === b.taperBottomWidth &&

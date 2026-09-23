@@ -102,6 +102,8 @@ import {
   shapeExtrudeDeformPatch,
   shapeHasExtrudeDeform,
   shapeHasShapeDeform,
+  shapeHasSideHeights,
+  shapeSideHeightScaleAt,
   shapeHasTaper,
   shapeTransformShouldRemainEditable,
   shapeTaperScaleAt,
@@ -1892,7 +1894,8 @@ function transformMesh(mesh: MeshData, shape: WorkplaneShape): MeshData {
   const deformed = shapeHasExtrudeDeform(shape);
   let minLocalY = 0;
   let maxLocalY = 1;
-  if ((tapered || deformed) && mesh.vertices.length) {
+  const lowered = shapeHasSideHeights(shape);
+  if ((tapered || deformed || lowered) && mesh.vertices.length) {
     minLocalY = Number.POSITIVE_INFINITY;
     maxLocalY = Number.NEGATIVE_INFINITY;
     mesh.vertices.forEach((vertex) => {
@@ -1919,6 +1922,9 @@ function transformMesh(mesh: MeshData, shape: WorkplaneShape): MeshData {
       const normalizedHeight = (y - minLocalY) / taperHeight;
       const widthScale = tapered ? shapeTaperScaleAt(shape, normalizedHeight, "width") : 1;
       const depthScale = tapered ? shapeTaperScaleAt(shape, normalizedHeight, "depth") : 1;
+      // Die Hoehe an dieser Stelle richtet sich nach der Grundflaeche, also
+      // nach dem Punkt vor der Verjuengung.
+      const standingY = lowered ? minLocalY + (y - minLocalY) * shapeSideHeightScaleAt(shape, x, z) : y;
       let localX = x * widthScale;
       let localZ = z * depthScale;
       if (deformed) {
@@ -1930,7 +1936,7 @@ function transformMesh(mesh: MeshData, shape: WorkplaneShape): MeshData {
         localX = twistedX + deform.offsetX;
         localZ = twistedZ + deform.offsetZ;
       }
-      const vertex = new THREE.Vector3(localX * mirrorX, (y - centerY) * mirrorY, localZ * mirrorZ).applyMatrix4(matrix);
+      const vertex = new THREE.Vector3(localX * mirrorX, (standingY - centerY) * mirrorY, localZ * mirrorZ).applyMatrix4(matrix);
       return [vertex.x + shape.x, vertex.y + (shape.elevation ?? 0) + centerY, vertex.z + shape.z] as Vec3;
     }),
     faces: reversedWinding ? mesh.faces.map(([a, b, c]) => [a, c, b] as [number, number, number]) : mesh.faces,

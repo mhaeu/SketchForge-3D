@@ -25,7 +25,7 @@ import {
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
-import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
@@ -231,6 +231,8 @@ function loftShapeOptions(): SelectPropertyOption[] {
 function propertyUsesLengthUnit(id: string) {
   // The region bounds ("lengthFrom" ...) are lengths as well.
   if (/^(length|width|height)(From|To)$/.test(id)) return true;
+  // Die vier Deckkanten und die vier Seitenhoehen sind ebenfalls Laengen.
+  if (/^(side|height)(Left|Right|Front|Back)$/.test(id)) return true;
   return ["radius", "length", "width", "height", "bevel", "topRadius", "baseRadius", "thickness", "toothSize", "toothWidth", "centerHole", "topLength", "topWidth", "bottomLength", "bottomWidth", "diameter", "pitch", "threadLength", "clearance", "headHeight", "chamfer", "headChamfer", "rimChamfer", "wire", "x", "y", "z", "crossSize", "markerSize"].includes(id);
 }
 
@@ -1175,22 +1177,51 @@ export function ShapeInspector({
       onChange: (extrudeTopOffsetZ) => onUpdate({ extrudeTopOffsetZ }),
     },
   ] : [];
+  /*
+   * Die Deckflaeche wird ueber ihre vier Kanten eingestellt, nicht ueber
+   * Breite und Tiefe: Wer eine Seite schraeg stellen will, meint diese eine
+   * Seite und nicht die Groesse der ganzen Flaeche. Dahinter stehen dieselben
+   * Felder wie vorher - Groesse und Versatz -, nur anders angesehen.
+   */
+  const edges = shapeTopFaceEdges(shape);
+  const edgeBound = Math.max(taperDimensionMax / 2, shapeWidth(shape), shapeDepth(shape));
+  const sideHeights = shapeSideHeights(shape);
   const taperProperties: ShapePropertyConfig[] = shape.kind === "gear" ? [] : [
     {
-      id: "topLength",
-      label: t("prop.topLength"),
-      value: taper.topDepth,
-      min: MIN_SHAPE_SIZE,
-      max: taperDimensionMax,
-      onChange: (taperTopDepth) => onUpdate({ taperTopDepth, taperTopWidth: taper.topWidth, taperTopScale: undefined }),
+      id: "sideLeft",
+      label: t("prop.sideLeft"),
+      value: edges.left,
+      min: -edgeBound,
+      max: edgeBound,
+      step: 0.1,
+      onChange: (left) => onUpdate(shapeTopFaceEdgePatch(shape, { left })),
     },
     {
-      id: "topWidth",
-      label: t("prop.topWidth"),
-      value: taper.topWidth,
-      min: MIN_SHAPE_SIZE,
-      max: taperDimensionMax,
-      onChange: (taperTopWidth) => onUpdate({ taperTopWidth, taperTopDepth: taper.topDepth, taperTopScale: undefined }),
+      id: "sideRight",
+      label: t("prop.sideRight"),
+      value: edges.right,
+      min: -edgeBound,
+      max: edgeBound,
+      step: 0.1,
+      onChange: (right) => onUpdate(shapeTopFaceEdgePatch(shape, { right })),
+    },
+    {
+      id: "sideFront",
+      label: t("prop.sideFront"),
+      value: edges.front,
+      min: -edgeBound,
+      max: edgeBound,
+      step: 0.1,
+      onChange: (front) => onUpdate(shapeTopFaceEdgePatch(shape, { front })),
+    },
+    {
+      id: "sideBack",
+      label: t("prop.sideBack"),
+      value: edges.back,
+      min: -edgeBound,
+      max: edgeBound,
+      step: 0.1,
+      onChange: (back) => onUpdate(shapeTopFaceEdgePatch(shape, { back })),
     },
     {
       id: "bottomLength",
@@ -1209,6 +1240,25 @@ export function ShapeInspector({
       onChange: (taperBottomWidth) => onUpdate({ taperBottomWidth, taperBottomDepth: taper.bottomDepth, taperBottomScale: undefined }),
     },
   ];
+  /*
+   * Die Hoehe an den vier Seiten - damit wird aus dem Koerper ein Keil oder
+   * eine schiefe Ebene. Abgesenkt wird nur: Die Hoehe des Koerpers bleibt
+   * seine Hoehe, und die Seiten liegen darunter.
+   */
+  const sideHeightProperties: ShapePropertyConfig[] = shape.kind === "gear" ? [] : ([
+    ["heightLeft", "left", sideHeights.left],
+    ["heightRight", "right", sideHeights.right],
+    ["heightFront", "front", sideHeights.front],
+    ["heightBack", "back", sideHeights.back],
+  ] as const).map(([id, side, value]) => ({
+    id,
+    label: t(`prop.${id}` as Parameters<typeof t>[0]),
+    value,
+    min: 0.1,
+    max: Math.max(0.1, shape.height),
+    step: 0.1,
+    onChange: (next: number) => onUpdate(shapeSideHeightPatch(shape, { [side]: next })),
+  }));
   const isSketchRevolve = shape.sketchOperation === "revolve" || Boolean(shape.sketchRevolve);
   // Absolute position on the workplane: X = shape.x, Z = shape.z (centers),
   // Y = elevation (underside height). Slider range follows the workspace size;
@@ -1246,6 +1296,7 @@ export function ShapeInspector({
   const [crossOpen, setCrossOpen] = useState(true);
   const [taperOpen, setTaperOpen] = useState(false);
   const [twistOpen, setTwistOpen] = useState(false);
+  const [sideHeightOpen, setSideHeightOpen] = useState(false);
   const [gearTeethOpen, setGearTeethOpen] = useState(true);
   const [gearHelixOpen, setGearHelixOpen] = useState(true);
   const [colorOpen, setColorOpen] = useState(false);
@@ -1509,6 +1560,25 @@ export function ShapeInspector({
           {taperOpen ? (
             <div className="property-list" id={`taper-${shape.id}`}>
               <ShapePropertyRows properties={taperProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {shape.kind !== "gear" && shape.kind !== "reference" ? (
+        <div className={`property-card ${sideHeightOpen ? "" : "collapsed"}`}>
+          <button
+            className="property-card-header"
+            type="button"
+            aria-expanded={sideHeightOpen}
+            aria-controls={`side-height-${shape.id}`}
+            onClick={() => setSideHeightOpen((open) => !open)}
+          >
+            <span>{t("inspector.sideHeights")}</span>
+            <ChevronUp className={sideHeightOpen ? "" : "collapsed"} size={25} strokeWidth={2.8} />
+          </button>
+          {sideHeightOpen ? (
+            <div className="property-list" id={`side-height-${shape.id}`}>
+              <ShapePropertyRows properties={sideHeightProperties} workspace={workspace} disabled={locked} onInteractionActiveChange={onInteractionActiveChange} />
             </div>
           ) : null}
         </div>
