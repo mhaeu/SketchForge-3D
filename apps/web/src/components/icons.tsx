@@ -140,6 +140,48 @@ export function ToolbarIntersectionIcon(props: IconProps) {
   );
 }
 
+/** Abschneiden: ein Koerper, durch den eine Ebene geht, und darueber faellt es weg. */
+export function ToolbarTrimIcon({ side = "above", ...props }: IconProps & { side?: "above" | "below" }) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <rect
+        x="13"
+        y={side === "above" ? "24" : "9"}
+        width="22"
+        height="15"
+        fill="currentColor"
+        opacity="0.82"
+      />
+      <rect
+        x="13"
+        y={side === "above" ? "9" : "24"}
+        width="22"
+        height="15"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeDasharray="3 3"
+      />
+      <path d="M6 24H42" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ToolbarTrimBelowIcon(props: IconProps) {
+  return <ToolbarTrimIcon side="below" {...props} />;
+}
+
+/** Innenraum aussparen: ein Ring, dessen Kern herausfaellt. */
+export function ToolbarBoreIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <circle cx="24" cy="24" r="15" fill="none" stroke="currentColor" strokeWidth="2.6" />
+      <circle cx="24" cy="24" r="8.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeDasharray="3.5 3" />
+      <path d="M17.5 17.5L30.5 30.5M30.5 17.5L17.5 30.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.7" />
+    </svg>
+  );
+}
+
 export function ToolbarAlignIcon(props: IconProps) {
   return <ToolbarSpriteIcon rect={{ x: 97.3, y: 46.7, width: 29.1, height: 32.5 }} {...props} />;
 }

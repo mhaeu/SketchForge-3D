@@ -66,6 +66,9 @@ import {
   ToolbarHomeIcon,
   ToolbarImportIcon,
   ToolbarIntersectionIcon,
+  ToolbarTrimIcon,
+  ToolbarTrimBelowIcon,
+  ToolbarBoreIcon,
   ToolbarFilletIcon,
   ToolbarVariableFilletIcon,
   ToolbarMirrorIcon,
@@ -174,6 +177,7 @@ import {
   type PlacementPoint,
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
+import { boreCutShape, cutReachForShapes, shapeHasBore, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
 import { placeSketchExtrusion } from "@/lib/sketchPlacement";
 import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
@@ -8891,6 +8895,73 @@ export function SketchForgeEditor({
     commitShapes([...shapesRef.current.filter((shape) => !selected.has(shape.id)), editableGroup], editableGroup.id, t("status.groupedMany", { count: selectedShapes.length }));
   }, [commitShapes, selectedIds, selectedShapes]);
 
+  /**
+   * An der Arbeitsebene abschneiden.
+   *
+   * Der Werkzeugquader liegt mit seiner Grundflaeche in der Ebene und deckt
+   * die Seite ab, die weg soll; geschnitten wird damit ueber denselben Weg
+   * wie beim Gruppieren mit einer Aussparung. Die Arbeitsebene kann auf jeder
+   * Flaeche liegen, also schneidet das auch schraeg.
+   */
+  const trimAtWorkplane = useCallback(async (side: CutSide) => {
+    const targets = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
+    if (targets.length === 0) {
+      setNotice(t("status.selectToTrim"));
+      return;
+    }
+    const cutter = workplaneCutBox(placementWorkplaneRef.current, side, cutReachForShapes(targets), createLocalId);
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    const trimmed: WorkplaneShape[] = [];
+    for (const target of targets) {
+      const result = await buildGroupedShapeFromSelection([target, { ...cutter, id: createLocalId("cut-tool") }]);
+      // Ein Koerper, der ganz auf der geschnittenen Seite lag, ist danach weg.
+      if (result.group) trimmed.push(canonicalizeShape({ ...result.group, groupOperation: "group" }));
+    }
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setNotice(t("status.groupChanged"));
+      return;
+    }
+    const cut = new Set(targets.map((shape) => shape.id));
+    commitShapes(
+      [...shapesRef.current.filter((shape) => !cut.has(shape.id)), ...trimmed],
+      trimmed.map((shape) => shape.id),
+      trimmed.length === 0 ? t("status.trimmedAway") : t("status.trimmed", { count: trimmed.length }),
+    );
+  }, [commitShapes, selectedShapes]);
+
+  /**
+   * Den Innenraum eines Rohrs oder Rings aus allem anderen Ausgewaehlten
+   * herausnehmen - das Rohr selbst bleibt stehen. Jeder Koerper wird fuer
+   * sich geschnitten, damit aus mehreren nicht ungefragt einer wird.
+   */
+  const subtractBoreFromSelection = useCallback(async () => {
+    const usable = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
+    const tubes = usable.filter(shapeHasBore);
+    const targets = usable.filter((shape) => !shapeHasBore(shape));
+    if (tubes.length !== 1 || targets.length === 0) {
+      setNotice(t("status.selectTubeAndBody"));
+      return;
+    }
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    const cut: WorkplaneShape[] = [];
+    for (const target of targets) {
+      const bore = boreCutShape(tubes[0], createLocalId);
+      if (!bore) continue;
+      const result = await buildGroupedShapeFromSelection([target, bore]);
+      if (result.group) cut.push(canonicalizeShape({ ...result.group, groupOperation: "group" }));
+    }
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setNotice(t("status.groupChanged"));
+      return;
+    }
+    const replaced = new Set(targets.map((shape) => shape.id));
+    commitShapes(
+      [...shapesRef.current.filter((shape) => !replaced.has(shape.id)), ...cut],
+      cut.map((shape) => shape.id),
+      t("status.boreSubtracted", { count: cut.length }),
+    );
+  }, [commitShapes, selectedShapes]);
+
   const intersectSelected = useCallback(async () => {
     const groupable = selectedShapes.filter((shape) => !shape.locked);
     const hasSolid = groupable.some((shape) => !shape.hole);
@@ -10431,6 +10502,10 @@ export function SketchForgeEditor({
         onAlignToWorkplane={alignSelectionToWorkplane}
         onGroup={groupSelected}
         onIntersect={intersectSelected}
+        onTrim={trimAtWorkplane}
+        onSubtractBore={subtractBoreFromSelection}
+        canSubtractBore={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).some(shapeHasBore)
+          && selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape) && !shapeHasBore(shape)).length > 0}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
         onVariableFillet={() => edgeModifier?.kind === "variableFillet" ? cancelEdgeModifier() : startEdgeModifier("variableFillet")}
         onMirror={toggleMirrorMode}
@@ -10829,6 +10904,9 @@ function SecondaryToolbar({
   onAlignToWorkplane,
   onGroup,
   onIntersect,
+  onTrim,
+  onSubtractBore,
+  canSubtractBore,
   onFillet,
   onVariableFillet,
   onMirror,
@@ -10912,6 +10990,9 @@ function SecondaryToolbar({
   onAlignToWorkplane: () => void;
   onGroup: () => void;
   onIntersect: () => void;
+  onTrim: (side: CutSide) => void;
+  onSubtractBore: () => void;
+  canSubtractBore: boolean;
   onFillet: () => void;
   onVariableFillet: () => void;
   onMirror: () => void;
@@ -11088,6 +11169,9 @@ function SecondaryToolbar({
     { label: t("editor.tool.group"), icon: ToolbarGroupIcon, action: onGroup, enabled: canGroup },
     { label: t("editor.tool.ungroup"), icon: ToolbarUngroupIcon, action: onUngroup, enabled: canUngroup },
     { label: t("editor.tool.intersect"), icon: ToolbarIntersectionIcon, action: onIntersect, enabled: canIntersect },
+    { label: t("editor.tool.trimAbove"), icon: ToolbarTrimIcon, action: () => onTrim("above"), enabled: hasSelection },
+    { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },
+    { label: t("editor.tool.subtractBore"), icon: ToolbarBoreIcon, action: onSubtractBore, enabled: canSubtractBore },
   ];
   const modifyTools = [
     { label: t("editor.tool.align"), icon: ToolbarAlignIcon, action: onAlign, enabled: canAlign, active: alignMode },
