@@ -1,3 +1,4 @@
+import { arcBulgeThrough, arcPointAt, segmentArcGeometry } from "@/lib/sketchArcs";
 import type { SketchPoint, SketchProfile, SketchSegment } from "@/types/sketchforge";
 
 export type SketchSegmentPlacement = {
@@ -57,6 +58,19 @@ export function closestPointOnSketchSegment(
   end: SketchPoint,
   target: { x: number; z: number },
 ): SketchSegmentPlacement {
+  // Auf dem Bogen wird laengs des Bogens gemessen, nicht laengs der Sehne -
+  // sonst laege der eingesetzte Punkt neben der Linie, die man angeklickt hat.
+  const arc = segmentArcGeometry(segment, start, end);
+  if (arc) {
+    const angle = Math.atan2(target.z - arc.centre.z, target.x - arc.centre.x);
+    // Gemessen wird von der Mitte des Bogens aus: So faellt ein Punkt kurz
+    // vor dem Anfang auch auf den Anfang und nicht einmal herum auf das Ende.
+    const half = arc.sweep / 2;
+    const offset = angle - arc.startAngle - half;
+    const centred = ((offset + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    const amount = clamp01((centred + half) / arc.sweep);
+    return { point: arcPointAt(arc, amount), amount };
+  }
   const first = start.handleOut;
   const second = end.handleIn;
   if (isStraightSegment(segment) || !first || !second) {
@@ -118,6 +132,28 @@ export function splitSketchSegment(
   const newPointId = createId("sketch-point");
   let point: SketchPoint;
   let nextPoints = profile.points;
+
+  // Ein geteilter Bogen ergibt zwei Boegen auf demselben Kreis. Ihre Woelbung
+  // folgt aus dem jeweiligen Scheitel - sonst wuerde aus der Rundung an der
+  // Teilstelle ein Knick.
+  const arc = segmentArcGeometry(segment, start, end);
+  if (arc) {
+    const position = arcPointAt(arc, amount);
+    const splitPoint: SketchPoint = { id: newPointId, ...position, mode: "corner" };
+    const secondId = createId("sketch-segment");
+    return {
+      profile: {
+        ...profile,
+        points: [...profile.points, splitPoint],
+        segments: profile.segments.flatMap((entry) => entry.id === segmentId ? [
+          { ...entry, endId: splitPoint.id, bulge: arcBulgeThrough(start, position, arcPointAt(arc, amount / 2)) },
+          { ...entry, id: secondId, startId: splitPoint.id, bulge: arcBulgeThrough(position, end, arcPointAt(arc, (amount + 1) / 2)) },
+        ] : [entry]),
+      },
+      pointId: splitPoint.id,
+      inserted: true,
+    };
+  }
 
   if (!isStraightSegment(segment) && first && second) {
     const a = lerpPoint(start, first, amount);

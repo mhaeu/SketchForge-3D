@@ -2,7 +2,8 @@
 
 import { OcctKernel, type ShapeHandle } from "occt-wasm";
 import { cadSketchRegions, type OrderedCadSketchPath } from "@/lib/sketchCadProfile";
-import { sweepPathPoint, sweepSpineFromLowestEnd, sweepSpinePath, sweepStartLeavesProfilePlane } from "@/lib/sketchSweep";
+import { segmentArcGeometry } from "@/lib/sketchArcs";
+import { splitSweepDrawing, sweepPathPoint, sweepProfilePlacement } from "@/lib/sketchSweep";
 import type { SketchCadBuildRequest, SketchCadBuildResponse } from "@/lib/sketchCadTypes";
 import { SKETCH_CAD_DEFLECTION } from "@/lib/cadModifierRuntime";
 
@@ -34,6 +35,12 @@ function post(message: SketchCadBuildResponse, transfer: Transferable[] = []) {
 
 function pathWire(cad: OcctKernel, path: OrderedCadSketchPath) {
   const edges = path.steps.map(({ segment, from, to }) => {
+    // Ein Bogen wird als Bogen gebaut, nicht als Kurve, die einem aehnlich
+    // sieht: Der Kern legt ihn durch Anfang, Scheitel und Ende.
+    const arc = segmentArcGeometry(segment, from, to);
+    if (arc) {
+      return cad.makeArcEdge({ x: from.x, y: 0, z: from.z }, { x: arc.apex.x, y: 0, z: arc.apex.z }, { x: to.x, y: 0, z: to.z });
+    }
     const forward = segment.startId === from.id;
     const first = forward ? from.handleOut : from.handleIn;
     const second = forward ? to.handleIn : to.handleOut;
@@ -56,6 +63,8 @@ function pathWire(cad: OcctKernel, path: OrderedCadSketchPath) {
  */
 function spineWire(cad: OcctKernel, path: OrderedCadSketchPath) {
   const edges = path.steps.map(({ segment, from, to }) => {
+    const arc = segmentArcGeometry(segment, from, to);
+    if (arc) return cad.makeArcEdge(sweepPathPoint(from), sweepPathPoint(arc.apex), sweepPathPoint(to));
     const forward = segment.startId === from.id;
     const first = forward ? from.handleOut : from.handleIn;
     const second = forward ? to.handleIn : to.handleOut;
@@ -73,7 +82,13 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
   try {
     cad = await kernel();
     cad.releaseAll();
-    const regions = cadSketchRegions(request.profile);
+    // Beim Folgen wird der Weg aus der Zeichnung genommen, bevor daraus
+    // Flaechen werden - sonst zaehlte ein geschlossener Weg als zweite Form.
+    const drawing = request.type === "sweep" ? splitSweepDrawing(request.profile) : null;
+    if (request.type === "sweep" && !drawing) {
+      throw new Error("Draw a path for the shape to follow: an open stroke, or a second closed loop wider than the shape");
+    }
+    const regions = cadSketchRegions(drawing ? drawing.shape : request.profile);
     if (regions.length === 0) throw new Error("No closed profile found. Draw at least one closed loop and ensure it has no degenerate (zero-area) geometry.");
     const faceFor = (region: (typeof regions)[number]) => {
       let face = cad!.makeFace(pathWire(cad!, region.outer));
@@ -81,32 +96,27 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
       return face;
     };
     let solids: ShapeHandle[];
-    if (request.type === "sweep") {
-      const drawn = sweepSpinePath(request.profile);
-      if (!drawn) throw new Error("Draw an open path for the shape to follow, beside the closed outline");
-      const spine = sweepSpineFromLowestEnd(drawn);
-      if (!sweepStartLeavesProfilePlane(spine)) {
-        throw new Error("The path starts inside the plane of the shape - draw it running out of that plane");
-      }
+    if (drawing) {
+      const { spine } = drawing;
       const wire = spineWire(cad, spine);
       /*
-       * Die Form sitzt mit ihrer Mitte am Anfang des Pfades. Beide
-       * Zeichnungen haben denselben Nullpunkt, aber sie meinen verschiedene
-       * Ebenen - ohne das Zusammenruecken stuende der Koerper dort, wo die
-       * Form gezeichnet wurde, statt dort, wo der Weg beginnt.
+       * Die Form steht quer auf dem Weg, mit ihrer Mitte an dessen Anfang.
+       * Beide Zeichnungen haben denselben Nullpunkt, aber sie meinen
+       * verschiedene Ebenen: Ohne das Kippen und Zusammenruecken laege die
+       * Form flach da, wo sie gezeichnet wurde, statt im rechten Winkel dort,
+       * wo der Weg beginnt.
        */
-      const start = sweepPathPoint(spine.steps[0].from);
       const outline = regions.flatMap((region) => region.outer.points);
       const centre = {
         x: (Math.min(...outline.map((point) => point.x)) + Math.max(...outline.map((point) => point.x))) / 2,
         z: (Math.min(...outline.map((point) => point.z)) + Math.max(...outline.map((point) => point.z))) / 2,
       };
-      solids = regions.map((region) => cad!.pipe(
-        cad!.translate(faceFor(region), start.x - centre.x, start.y, start.z - centre.z),
-        wire,
-      ));
+      const placement = sweepProfilePlacement(spine, centre);
+      if (!placement) throw new Error("The path has no length at its start - draw it running away from the shape");
+      solids = regions.map((region) => cad!.pipe(cad!.transform(faceFor(region), placement), wire));
     } else {
-      solids = regions.map((region) => cad!.extrude(faceFor(region), 0, request.height, 0));
+      const height = request.type === "build" ? request.height : 0;
+      solids = regions.map((region) => cad!.extrude(faceFor(region), 0, height, 0));
     }
     const result = solids.length === 1 ? solids[0] : cad.makeCompound(solids);
     if (!cad.isValid(result)) throw new Error("OpenCascade produced invalid sketch topology");

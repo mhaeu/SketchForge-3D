@@ -889,6 +889,12 @@ function validateSketchProfile(value: unknown, label: string) {
     const startId = stringValue(segment.startId, `${label}.segments[${index}].startId`);
     const endId = stringValue(segment.endId, `${label}.segments[${index}].endId`);
     if (!pointIds.has(startId) || !pointIds.has(endId)) throw new Error(`${label} contains a segment with a missing point reference`);
+    // Beim Bogen haengt die ganze Kruemmung an dieser einen Zahl - eine
+    // ungueltige macht aus dem Bogen nichts, das sich noch zeichnen liesse.
+    if (segment.bulge !== undefined) {
+      const bulge = finiteNumber(segment.bulge, `${label}.segments[${index}].bulge`);
+      if (Math.abs(bulge) > 1e9) throw new Error(`${label}.segments[${index}].bulge is outside the supported range`);
+    }
   });
 }
 

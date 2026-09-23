@@ -3838,6 +3838,15 @@ svg.sketch-reference-icon {
 /* Der Pfad im Folgen-Modus: er liegt in der Zeichnung flach neben der Form,
    gemeint ist er aber senkrecht dazu - deshalb hebt er sich ab und traegt
    seinen Namen. */
+.sketch-sweep-path > path {
+  fill: none;
+  stroke: #8a4fd6;
+  stroke-width: 3;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.85;
+}
+
 .sketch-sweep-path > line {
   stroke: #8a4fd6;
   stroke-width: 3;
@@ -3910,6 +3919,49 @@ svg.sketch-reference-icon {
   fill: #e0762a;
   stroke: #ffffff;
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Die dauerhaften Hilfslinien: derselbe Ton, aber viel leiser. Sie stehen
+   die ganze Zeit da und duerfen deshalb nicht so laut sein wie die eine
+   Linie, die beim Ziehen gerade einrastet. */
+.sketch-standing-guides > line {
+  stroke: #e0762a;
+  stroke-width: 1;
+  stroke-dasharray: 2 6;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.4;
+}
+
+/* Die Mitte eines Kreises: ein kleines Kreuz. Ohne sie steht der Kreis ohne
+   Bezug in der Zeichnung - man sieht seinen Rand, aber nicht, worauf er
+   sitzt. */
+.sketch-circle-centre > line {
+  stroke: #2c3f52;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.8;
+}
+
+/* Der Griff am Scheitel eines Bogens: daran zieht man seine Woelbung. Rund,
+   wie die Groessengriffe des Kreises, und in derselben Farbe wie alles, was
+   zur Auswahl gehoert. */
+.sketch-arc-handle {
+  fill: #ffffff;
+  stroke: #169fce;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: grab;
+}
+
+.sketch-arc-handle:active {
+  cursor: grabbing;
+}
+
+.sketch-arc-handle-stem {
+  stroke: #169fce;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
 }
 

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  MIN_SWEEP_START_RISE,
+  splitSweepDrawing,
   sweepPathPoint,
+  sweepProfilePlacement,
   sweepSpineFromLowestEnd,
   sweepSpinePath,
   sweepStartDirection,
-  sweepStartLeavesProfilePlane,
 } from "@/lib/sketchSweep";
 import type { SketchProfile } from "@/types/sketchforge";
 
@@ -44,7 +44,7 @@ describe("der Pfad, dem die Form folgt", () => {
     expect(spine.closed).toBe(false);
   });
 
-  it("meldet nichts, wenn nur ein geschlossener Umriss dasteht", () => {
+  it("nimmt nichts, wenn nur ein geschlossener Umriss dasteht", () => {
     const onlyShape = path(
       [["q1", 0, 0], ["q2", 10, 0], ["q3", 10, 10], ["q4", 0, 10]],
       [["q12", "q1", "q2"], ["q23", "q2", "q3"], ["q34", "q3", "q4"], ["q41", "q4", "q1"]],
@@ -74,15 +74,140 @@ describe("der Pfad, dem die Form folgt", () => {
     }
   });
 
-  it("weist einen Pfad ab, der in der Formebene losgeht", () => {
-    // Waagerecht heisst: der Pfad laeuft in der Ebene der Form. Die Form
-    // wuerde in sich selbst geschoben, ein Koerper entstuende nicht.
-    const flat = sweepSpinePath(path([["a", 0, 0], ["b", 20, 0]], [["ab", "a", "b"]]))!;
-    expect(sweepStartLeavesProfilePlane(flat)).toBe(false);
-    const steep = sweepSpinePath(path([["a", 0, 0], ["b", 20, -20]], [["ab", "a", "b"]]))!;
-    expect(sweepStartLeavesProfilePlane(steep)).toBe(true);
-    // Genau an der Grenze zaehlt es noch als Aufstieg.
-    const grazing = sweepSpinePath(path([["a", 0, 0], ["b", 10, -10 * MIN_SWEEP_START_RISE / Math.sqrt(1 - MIN_SWEEP_START_RISE ** 2)]], [["ab", "a", "b"]]))!;
-    expect(sweepStartLeavesProfilePlane(grazing)).toBe(true);
+  it("nimmt auch einen geschlossenen Zug als Weg, und zwar den weitesten", () => {
+    // Ein Reifen: der enge Ring ist die Form, der weite die Bahn. Ohne einen
+    // offenen Zug gibt es kein anderes Merkmal als die Weite.
+    const ring = path(
+      [["s1", -1, -1], ["s2", 1, -1], ["s3", 1, 1], ["s4", -1, 1],
+        ["p1", -20, -20], ["p2", 20, -20], ["p3", 20, 20], ["p4", -20, 20]],
+      [["s12", "s1", "s2"], ["s23", "s2", "s3"], ["s34", "s3", "s4"], ["s41", "s4", "s1"],
+        ["p12", "p1", "p2"], ["p23", "p2", "p3"], ["p34", "p3", "p4"], ["p41", "p4", "p1"]],
+    );
+    const spine = sweepSpinePath(ring)!;
+    expect(spine.closed).toBe(true);
+    expect(spine.points.map((point) => point.id).sort()).toEqual(["p1", "p2", "p3", "p4"]);
+  });
+
+  it("laesst einen offenen Zug vor jedem geschlossenen den Vortritt", () => {
+    // Was offen bleibt, umschliesst nichts und kann keine Flaeche sein - also
+    // ist es der Weg, auch wenn daneben ein viel weiterer Ring steht.
+    const both = path(
+      [["a", 0, 0], ["b", 0, -4],
+        ["p1", -20, -20], ["p2", 20, -20], ["p3", 20, 20], ["p4", -20, 20]],
+      [["ab", "a", "b"],
+        ["p12", "p1", "p2"], ["p23", "p2", "p3"], ["p34", "p3", "p4"], ["p41", "p4", "p1"]],
+    );
+    expect(sweepSpinePath(both)!.closed).toBe(false);
+  });
+
+  it("nimmt den Weg aus der Zeichnung heraus, bevor daraus Flaechen werden", () => {
+    // Sonst zaehlte der geschlossene Weg selbst als Form, und der Reifen
+    // bekaeme seine eigene Bahn als zweiten Koerper mit.
+    const ring = path(
+      [["s1", -1, -1], ["s2", 1, -1], ["s3", 1, 1], ["s4", -1, 1],
+        ["p1", -20, -20], ["p2", 20, -20], ["p3", 20, 20], ["p4", -20, 20]],
+      [["s12", "s1", "s2"], ["s23", "s2", "s3"], ["s34", "s3", "s4"], ["s41", "s4", "s1"],
+        ["p12", "p1", "p2"], ["p23", "p2", "p3"], ["p34", "p3", "p4"], ["p41", "p4", "p1"]],
+    );
+    const split = splitSweepDrawing(ring)!;
+    expect(split.shape.points.map((point) => point.id).sort()).toEqual(["s1", "s2", "s3", "s4"]);
+    expect(split.shape.segments.map((segment) => segment.id).sort()).toEqual(["s12", "s23", "s34", "s41"]);
+  });
+
+  it("laesst einen geschlossenen Weg liegen, wie er gezeichnet wurde", () => {
+    // Ein Ring hat keine Enden, die sich umdrehen liessen - wo die Form auf
+    // ihm sitzt, ist einerlei, sie laeuft ohnehin einmal herum.
+    const ring = path(
+      [["s1", -1, -1], ["s2", 1, -1], ["s3", 1, 1], ["s4", -1, 1],
+        ["p1", -20, -20], ["p2", 20, -20], ["p3", 20, 20], ["p4", -20, 20]],
+      [["s12", "s1", "s2"], ["s23", "s2", "s3"], ["s34", "s3", "s4"], ["s41", "s4", "s1"],
+        ["p12", "p1", "p2"], ["p23", "p2", "p3"], ["p34", "p3", "p4"], ["p41", "p4", "p1"]],
+    );
+    const drawn = sweepSpinePath(ring)!;
+    expect(sweepSpineFromLowestEnd(drawn)).toBe(drawn);
+  });
+});
+
+/**
+ * Die Form haengt quer am Weg - nicht flach in der Arbeitsebene. Sonst
+ * bekaeme ein Weg, der zur Seite laeuft, eine Form mit, die in ihrer eigenen
+ * Ebene geschoben wird, und der Koerper waere platt.
+ */
+describe("wie die Form am Weg haengt", () => {
+  const spineFor = (points: Array<[string, number, number]>) => sweepSpineFromLowestEnd(sweepSpinePath(
+    path(points, points.slice(1).map((point, index) => [`s${index}`, points[index][0], point[0]] as [string, string, string])),
+  )!);
+
+  /** Die Normale der Form, durch die Abbildung geschickt. */
+  function placedNormal(placement: number[]) {
+    return [placement[1], placement[5], placement[9]];
+  }
+
+  function placedPoint(placement: number[], point: number[]) {
+    return [0, 1, 2].map((row) => placement[row * 4] * point[0] + placement[row * 4 + 1] * point[1] + placement[row * 4 + 2] * point[2] + placement[row * 4 + 3]);
+  }
+
+  it("setzt die Mitte der Form an den Anfang des Weges", () => {
+    const spine = spineFor([["a", 0, 0], ["b", 0, -10]]);
+    const placement = sweepProfilePlacement(spine, { x: 7, z: -3 })!;
+    placedPoint(placement, [7, 0, -3]).forEach((value, index) => expect(value).toBeCloseTo([0, 0, 0][index], 9));
+  });
+
+  it("laesst die Form liegen, wo der Weg schon hinauffuehrt", () => {
+    const spine = spineFor([["a", 0, 0], ["b", 0, -10]]);
+    const placement = sweepProfilePlacement(spine, { x: 0, z: 0 })!;
+    expect(placedNormal(placement).map((value) => Number(value.toFixed(9)))).toEqual([0, 1, 0]);
+  });
+
+  it("stellt die Form quer, wenn der Weg zur Seite laeuft", () => {
+    // Waagerecht war frueher der Fall, den das Folgen abgelehnt hat: Die Form
+    // haette flach in ihrer eigenen Bahn gelegen. Jetzt kippt sie mit.
+    const spine = spineFor([["a", 0, 0], ["b", 20, 0]]);
+    const placement = sweepProfilePlacement(spine, { x: 0, z: 0 })!;
+    const normal = placedNormal(placement);
+    expect(Math.abs(normal[0])).toBeCloseTo(1, 9);
+    expect(normal[1]).toBeCloseTo(0, 9);
+    expect(normal[2]).toBeCloseTo(0, 9);
+  });
+
+  it("stellt sie auch quer zu einem schraegen Weg", () => {
+    const spine = spineFor([["a", 0, 0], ["b", 10, -10]]);
+    const placement = sweepProfilePlacement(spine, { x: 0, z: 0 })!;
+    const direction = sweepStartDirection(spine)!;
+    const normal = placedNormal(placement);
+    // Die Normale der Form zeigt genau dorthin, wo der Weg losgeht.
+    expect(normal[0]).toBeCloseTo(direction.x, 9);
+    expect(normal[1]).toBeCloseTo(direction.y, 9);
+    expect(normal[2]).toBeCloseTo(direction.z, 9);
+  });
+
+  it("schlaegt die Form um, wenn der Weg nach unten faellt", () => {
+    // Der kuerzeste Weg von der Hochachse auf ihr Gegenteil hat keine
+    // eindeutige Achse - dort muss eine gewaehlt werden, statt durch Null zu
+    // teilen.
+    const steps = [{ segment: { id: "s", startId: "a", endId: "b", kind: "line" as const }, from: { id: "a", x: 0, z: 0 }, to: { id: "b", x: 0, z: 10 } }];
+    const spine = { id: "s", points: [steps[0].from, steps[0].to], steps, closed: false };
+    const placement = sweepProfilePlacement(spine, { x: 0, z: 0 })!;
+    expect(placedNormal(placement).map((value) => Number(value.toFixed(9)))).toEqual([0, -1, 0]);
+    // Und es bleibt eine Drehung: Laengen aendern sich nicht.
+    const moved = placedPoint(placement, [3, 0, 4]);
+    expect(Math.hypot(...moved)).toBeCloseTo(5, 9);
+  });
+
+  it("bleibt in jedem Fall eine Drehung, ohne Stauchen oder Spiegeln", () => {
+    for (const spine of [spineFor([["a", 0, 0], ["b", 3, -4]]), spineFor([["a", 0, 0], ["b", 20, 0]])]) {
+      const placement = sweepProfilePlacement(spine, { x: 0, z: 0 })!;
+      const rows = [0, 1, 2].map((row) => [placement[row * 4], placement[row * 4 + 1], placement[row * 4 + 2]]);
+      rows.forEach((row) => expect(Math.hypot(...row)).toBeCloseTo(1, 9));
+      const determinant = rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+        - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+        + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0]);
+      expect(determinant).toBeCloseTo(1, 9);
+    }
+  });
+
+  it("meldet nichts, wo der Weg an seinem Anfang keine Laenge hat", () => {
+    const steps = [{ segment: { id: "s", startId: "a", endId: "b", kind: "line" as const }, from: { id: "a", x: 2, z: 2 }, to: { id: "b", x: 2, z: 2 } }];
+    expect(sweepProfilePlacement({ id: "s", points: [], steps, closed: false }, { x: 0, z: 0 })).toBeNull();
   });
 });

@@ -24,17 +24,60 @@ export function sweepPathPoint(point: { x: number; z: number }): SweepPoint3D {
  * Der Zug, dem die Form folgt.
  *
  * Beides steht in derselben Zeichnung, und was wofuer gilt, sagt die Form
- * selbst: Was geschlossen ist, ist die Form - daraus wird die Flaeche. Was
- * offen bleibt, ist der Weg. Gibt es mehrere offene Zuege, gilt der laengste;
- * die uebrigen sind Reste, keine zweite Absicht.
+ * selbst. Ein offener Zug ist immer der Weg - was offen bleibt, umschliesst
+ * nichts und kann keine Flaeche sein. Gibt es mehrere, gilt der laengste; die
+ * uebrigen sind Reste, keine zweite Absicht.
+ *
+ * Ist gar nichts offen, darf auch ein geschlossener Zug der Weg sein - ein
+ * Ring, ein Rahmen, ein Reifen. Dann gilt der groesste: Der Weg fuehrt die
+ * Form herum, also ist er die weite Linie und sie die enge. Dafuer braucht es
+ * mindestens zwei geschlossene Zuege, sonst waere die Form selbst ihr eigener
+ * Weg.
  */
 export function sweepSpinePath(profile: SketchProfile): OrderedCadSketchPath | null {
-  let longest: OrderedCadSketchPath | null = null;
-  for (const candidate of orderedCadSketchPaths(profile)) {
-    if (candidate.closed || candidate.steps.length === 0) continue;
-    if (!longest || candidate.steps.length > longest.steps.length) longest = candidate;
+  const paths = orderedCadSketchPaths(profile);
+  let longestOpen: OrderedCadSketchPath | null = null;
+  const closed: Array<{ path: OrderedCadSketchPath; extent: number }> = [];
+  for (const candidate of paths) {
+    if (candidate.steps.length === 0) continue;
+    if (!candidate.closed) {
+      if (!longestOpen || candidate.steps.length > longestOpen.steps.length) longestOpen = candidate;
+      continue;
+    }
+    closed.push({ path: candidate, extent: pathExtent(candidate) });
   }
-  return longest;
+  if (longestOpen) return longestOpen;
+  if (closed.length < 2) return null;
+  return closed.reduce((widest, candidate) => candidate.extent > widest.extent ? candidate : widest).path;
+}
+
+/** Die Flaeche des Rahmens um einen Zug - das Mass fuer "der groessere". */
+function pathExtent(path: OrderedCadSketchPath) {
+  const xs = path.points.map((point) => point.x);
+  const zs = path.points.map((point) => point.z);
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs));
+}
+
+export type SweepDrawing = { spine: OrderedCadSketchPath; shape: SketchProfile };
+
+/**
+ * Die Zeichnung in Form und Weg zerlegen.
+ *
+ * Der Weg wird aus der Zeichnung herausgenommen, bevor daraus Flaechen
+ * werden: Sonst zaehlte ein geschlossener Weg selbst als Form, und ein Reifen
+ * bekaeme seine eigene Bahn als zweiten Koerper mit.
+ */
+export function splitSweepDrawing(profile: SketchProfile): SweepDrawing | null {
+  const drawn = sweepSpinePath(profile);
+  if (!drawn) return null;
+  const spine = sweepSpineFromLowestEnd(drawn);
+  const spineSegments = new Set(spine.steps.map((step) => step.segment.id));
+  const segments = profile.segments.filter((segment) => !spineSegments.has(segment.id));
+  const used = new Set(segments.flatMap((segment) => [segment.startId, segment.endId]));
+  return {
+    spine,
+    shape: { ...profile, points: profile.points.filter((point) => used.has(point.id)), segments },
+  };
 }
 
 /**
@@ -47,6 +90,9 @@ export function sweepSpinePath(profile: SketchProfile): OrderedCadSketchPath | n
  * Zeichenfenster, denn dort zaehlt die Tiefe nach unten.
  */
 export function sweepSpineFromLowestEnd(spine: OrderedCadSketchPath): OrderedCadSketchPath {
+  // Ein geschlossener Weg hat keine Enden. Wo die Form auf ihm sitzt, ist
+  // einerlei - sie laeuft ohnehin einmal herum.
+  if (spine.closed) return spine;
   const first = spine.steps[0];
   const last = spine.steps[spine.steps.length - 1];
   if (!first || !last) return spine;
@@ -61,10 +107,9 @@ export function sweepSpineFromLowestEnd(spine: OrderedCadSketchPath): OrderedCad
 /**
  * Die Richtung, in die der Pfad aus seinem Anfang herauslaeuft.
  *
- * Sie entscheidet, ob sich ueberhaupt etwas bauen laesst: Laeuft der Pfad an
- * seinem Anfang in der Ebene der Form, gaebe es keinen Koerper - die Form
- * wuerde in sich selbst geschoben. Gemessen wird deshalb der Anteil quer zu
- * dieser Ebene, also die Hoehe.
+ * Sie bestimmt, wie die Form am Weg haengt: quer dazu, im rechten Winkel.
+ * Nur wenn der Pfad an seinem Anfang keine Laenge hat, gibt es keine
+ * Richtung - und dann auch keinen Koerper.
  */
 export function sweepStartDirection(spine: OrderedCadSketchPath): SweepPoint3D | null {
   const first = spine.steps[0];
@@ -80,10 +125,51 @@ export function sweepStartDirection(spine: OrderedCadSketchPath): SweepPoint3D |
   return { x: direction.x / length, y: direction.y / length, z: direction.z / length };
 }
 
-/** So schraeg darf der Anfang des Pfades hoechstens zur Formebene liegen. */
-export const MIN_SWEEP_START_RISE = 0.08;
-
-export function sweepStartLeavesProfilePlane(spine: OrderedCadSketchPath) {
+/**
+ * Wie die Form an den Anfang des Weges gesetzt wird.
+ *
+ * Zwei Dinge muessen dafuer geschehen. Die Form liegt gezeichnet flach in der
+ * Arbeitsebene, ihre Flaechennormale zeigt nach oben; sie wird auf dem
+ * kuerzesten Weg so gekippt, dass diese Normale in die Richtung des Weges
+ * zeigt - damit steht die Form im rechten Winkel auf dem Pfad, ganz gleich,
+ * wohin er laeuft. Und sie wird verschoben, bis ihre Mitte am Anfang des
+ * Weges sitzt.
+ *
+ * Herauskommt eine Abbildung als 3x4-Matrix, zeilenweise: erst die drei
+ * Zeilen der Drehung, jede mit ihrer Verschiebung am Ende.
+ */
+export function sweepProfilePlacement(spine: OrderedCadSketchPath, centre: { x: number; z: number }): number[] | null {
   const direction = sweepStartDirection(spine);
-  return Boolean(direction && Math.abs(direction.y) >= MIN_SWEEP_START_RISE);
+  if (!direction) return null;
+  const start = sweepPathPoint(spine.steps[0].from);
+
+  // Die Drehung von der Hochachse auf die Richtung des Weges, um die Achse,
+  // die auf beiden senkrecht steht. Laeuft der Weg schon hinauf, bleibt die
+  // Form, wie sie liegt; laeuft er genau hinab, wird sie umgeschlagen - eine
+  // Achse gaebe das Kreuzprodukt dort nicht mehr her.
+  const dot = direction.y;
+  let rotation: number[][];
+  if (dot > 1 - 1e-12) {
+    rotation = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  } else if (dot < -1 + 1e-12) {
+    rotation = [[1, 0, 0], [0, -1, 0], [0, 0, -1]];
+  } else {
+    // Kreuzprodukt der Hochachse (0,1,0) mit der Richtung.
+    const axis = { x: direction.z, y: 0, z: -direction.x };
+    const length = Math.hypot(axis.x, axis.y, axis.z);
+    const unit = { x: axis.x / length, y: axis.y / length, z: axis.z / length };
+    const cosine = dot;
+    const sine = length;
+    const inverse = 1 - cosine;
+    rotation = [
+      [cosine + unit.x * unit.x * inverse, unit.x * unit.y * inverse - unit.z * sine, unit.x * unit.z * inverse + unit.y * sine],
+      [unit.y * unit.x * inverse + unit.z * sine, cosine + unit.y * unit.y * inverse, unit.y * unit.z * inverse - unit.x * sine],
+      [unit.z * unit.x * inverse - unit.y * sine, unit.z * unit.y * inverse + unit.x * sine, cosine + unit.z * unit.z * inverse],
+    ];
+  }
+
+  const anchor = [centre.x, 0, centre.z];
+  const moved = rotation.map((row) => row[0] * anchor[0] + row[1] * anchor[1] + row[2] * anchor[2]);
+  const target = [start.x, start.y, start.z];
+  return rotation.flatMap((row, index) => [...row, target[index] - moved[index]]);
 }

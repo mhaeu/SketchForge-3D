@@ -62,3 +62,51 @@ export function alignSketchPoint(
   // der der Punkt am Ende gar nicht liegt.
   return { point, guides: guides.map((guide) => ({ ...guide, to: { ...point } })) };
 }
+
+/**
+ * Die Hilfslinien, die dauerhaft stehen bleiben.
+ *
+ * Beim Ziehen zeigt eine Linie, woran gerade eingerastet wurde - danach ist
+ * sie weg, und ob zwei Punkte wirklich uebereinander liegen, muesste man
+ * wieder nachmessen. Diese hier bleiben: Wo zwei Punkte dieselbe Breite oder
+ * dieselbe Tiefe haben, steht eine Linie dazwischen.
+ *
+ * Damit daraus kein Netz wird, gilt zweierlei. Verbunden wird nur mit dem
+ * naechsten Nachbarn auf der Linie, nicht jeder mit jedem - eine Reihe von
+ * fuenf Punkten ergibt vier Linien und nicht zehn. Und wo ohnehin eine Kante
+ * zwischen zwei Punkten laeuft, sagt die Kante schon alles; dort kommt keine
+ * Hilfslinie dazu.
+ */
+export function persistentSketchGuides(
+  points: readonly SketchAlignmentTarget[],
+  segments: readonly { startId: string; endId: string }[],
+  tolerance = 1e-6,
+): SketchAlignmentGuide[] {
+  const joined = new Set(segments.map((segment) => [segment.startId, segment.endId].sort().join("\u0000")));
+  const guides: SketchAlignmentGuide[] = [];
+
+  for (const axis of ["x", "z"] as const) {
+    const other = axis === "x" ? "z" : "x";
+    const sorted = [...points].sort((a, b) => a[axis] - b[axis] || a[other] - b[other]);
+    let group: SketchAlignmentTarget[] = [];
+    const flush = () => {
+      if (group.length >= 2) {
+        const ordered = [...group].sort((a, b) => a[other] - b[other]);
+        for (let index = 1; index < ordered.length; index += 1) {
+          const from = ordered[index - 1];
+          const to = ordered[index];
+          if (joined.has([from.id, to.id].sort().join("\u0000"))) continue;
+          guides.push({ axis, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z } });
+        }
+      }
+      group = [];
+    };
+    for (const point of sorted) {
+      if (group.length > 0 && Math.abs(point[axis] - group[0][axis]) > tolerance) flush();
+      group.push(point);
+    }
+    flush();
+  }
+
+  return guides;
+}

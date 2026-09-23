@@ -10,8 +10,9 @@ export type SketchCadBuildRequest =
   | {
     /**
      * Folgen: die Form wandert den Pfad entlang, statt gerade hochgezogen zu
-     * werden. Beides steht in derselben Zeichnung - der geschlossene Umriss
-     * ist die Form, der offene Zug der Weg.
+     * werden. Beides steht in derselben Zeichnung - der offene Zug ist der
+     * Weg, und wo alles geschlossen ist, der weiteste Ring. Der Rest ist die
+     * Form, und sie steht quer auf dem Weg.
      */
     type: "sweep";
     requestId: number;

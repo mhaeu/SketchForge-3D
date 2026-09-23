@@ -1,3 +1,4 @@
+import { arcBulgeAlong, arcSamples, isArcSegment, stepsEncloseArea } from "@/lib/sketchArcs";
 import type { ManifoldToplevel } from "manifold-3d";
 import type { SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment } from "@/types/sketchforge";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
@@ -78,7 +79,7 @@ function orderedPaths(profile: SketchProfile): OrderedPath[] {
       currentId = to.id;
       if (currentId === startId) break;
     }
-    if (steps.length > 0) paths.push({ steps, closed: currentId === startId && steps.length >= 3 });
+    if (steps.length > 0) paths.push({ steps, closed: currentId === startId && stepsEncloseArea(steps) });
   }
   return paths;
 }
@@ -97,6 +98,10 @@ function samplePath(path: OrderedPath, quality: number) {
   const sampled = [{ x: first.x, z: first.z }];
   const curveSamples = 4 + quality * 6;
   path.steps.forEach(({ segment, from, to }) => {
+    if (isArcSegment(segment)) {
+      arcSamples(from, to, arcBulgeAlong(segment, from), curveSamples * 2).forEach((sample) => sampled.push(sample));
+      return;
+    }
     const forward = segment.startId === from.id;
     const firstControl = forward ? from.handleOut : from.handleIn;
     const secondControl = forward ? to.handleIn : to.handleOut;

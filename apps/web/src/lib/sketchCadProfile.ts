@@ -1,3 +1,4 @@
+import { arcSamples, segmentArcGeometry, stepsEncloseArea } from "@/lib/sketchArcs";
 import type { SketchPoint, SketchProfile, SketchSegment } from "@/types/sketchforge";
 
 export type OrderedCadSketchStep = { segment: SketchSegment; from: SketchPoint; to: SketchPoint };
@@ -50,7 +51,7 @@ export function orderedCadSketchPaths(profile: SketchProfile): OrderedCadSketchP
       if (currentId === startId) break;
       points.push(to);
     }
-    paths.push({ id: seed.id, points, steps, closed: currentId === startId && steps.length >= 3 });
+    paths.push({ id: seed.id, points, steps, closed: currentId === startId && stepsEncloseArea(steps) });
   }
   return paths;
 }
@@ -59,6 +60,10 @@ function sampledPath(path: OrderedCadSketchPath) {
   const samples: Array<{ x: number; z: number }> = [];
   path.steps.forEach(({ segment, from, to }, stepIndex) => {
     if (stepIndex === 0) samples.push({ x: from.x, z: from.z });
+    if (segmentArcGeometry(segment, from, to)) {
+      arcSamples(from, to, segment.startId === from.id ? segment.bulge ?? 0 : -(segment.bulge ?? 0)).forEach((sample) => samples.push(sample));
+      return;
+    }
     const forward = segment.startId === from.id;
     const first = forward ? from.handleOut : from.handleIn;
     const second = forward ? to.handleIn : to.handleOut;

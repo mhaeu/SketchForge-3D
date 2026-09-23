@@ -143,7 +143,14 @@ export type SketchSegment = {
   id: string;
   startId: string;
   endId: string;
-  kind?: "line" | "bezier" | "smooth";
+  kind?: "line" | "bezier" | "smooth" | "arc";
+  /**
+   * Nur beim Bogen: seine Hoehe ueber der Sehne, mit Vorzeichen, in Richtung
+   * der um 90 Grad gedrehten Kante von `startId` nach `endId`. Mehr braucht
+   * ein Kreisbogen nicht - er haengt an seinen beiden Punkten, und nur die
+   * Woelbung laesst sich aendern.
+   */
+  bulge?: number;
 };
 
 export type SketchCircle = {

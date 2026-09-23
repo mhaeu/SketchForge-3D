@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Split, Trash2, Waves } from "lucide-react";
+import { ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Split, Trash2, Waves } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { SnapGridControl } from "@/components/workplane/ShapeInspector";
 import { SketchRevolvePreview } from "@/components/SketchRevolvePreview";
@@ -13,7 +13,8 @@ import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes"
 import { selectWholeValue } from "@/lib/numberField";
 import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives";
 import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngle";
-import { alignSketchPoint, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
+import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_ARC_BULGE, segmentArcGeometry, stepsEncloseArea } from "@/lib/sketchArcs";
+import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
 import { sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
@@ -41,6 +42,8 @@ type SketchWorkspaceProps = {
   tool: SketchTool;
   /** Ob Laengen und Winkel in der Zeichnung stehen. */
   dimensionsVisible?: boolean;
+  /** Ob die dauerhaften Hilfslinien zwischen ausgerichteten Punkten stehen. */
+  guidesVisible?: boolean;
   activePointId: string | null;
   selected: SketchSelection;
   measurement: SketchMeasurement;
@@ -65,6 +68,10 @@ type SketchWorkspaceProps = {
   onMoveHandle: (id: string, handle: "in" | "out", point: { x: number; z: number }) => void;
   onInsertPoint: (segmentId: string, point: { x: number; z: number }, amount: number) => void;
   onSetPointMode: (id: string, mode: "corner" | "smooth" | "split") => void;
+  /** Aus der Ecke einen echten Kreisbogen machen. */
+  onRoundPoint: (id: string) => void;
+  /** Die Woelbung eines Bogens setzen - null macht wieder eine Strecke daraus. */
+  onBendSegment: (id: string, bulge: number | null, message: string) => void;
   onClearMeasurement: () => void;
 };
 
@@ -90,6 +97,14 @@ type PointerAction =
   | { kind: "move-handle"; pointerId: number; pointId: string; handle: "in" | "out"; current: { x: number; z: number } }
   | { kind: "move-circle"; pointerId: number; circleId: string; origin: { x: number; z: number }; current: { x: number; z: number }; start: { x: number; z: number } }
   | { kind: "resize-circle"; pointerId: number; circleId: string; center: { x: number; z: number }; current: { x: number; z: number } }
+  | {
+    kind: "bend-arc";
+    pointerId: number;
+    segmentId: string;
+    /** Die beiden Punkte, an denen der Bogen haengt - sie bleiben stehen. */
+    ends: [{ x: number; z: number }, { x: number; z: number }];
+    current: { x: number; z: number };
+  }
   | { kind: "pan"; pointerId: number; clientX: number; clientY: number }
   | { kind: "marquee"; pointerId: number; origin: { x: number; z: number }; current: { x: number; z: number } }
   | { kind: "move-image"; pointerId: number; imageId: string; origin: { x: number; z: number }; current: { x: number; z: number }; start: SketchImage }
@@ -216,6 +231,10 @@ function segmentDimension(segment: SketchSegment, pointById: Map<string, SketchP
   const start = pointById.get(segment.startId);
   const end = pointById.get(segment.endId);
   if (!start || !end) return null;
+  const arc = segmentArcGeometry(segment, start, end);
+  // Am Bogen zaehlt die Bogenlaenge, nicht die Sehne, und das Mass sitzt an
+  // seinem Scheitel - sonst staende es neben dem Bogen in der Luft.
+  if (arc) return { length: Math.abs(arc.sweep) * arc.radius, midpoint: arc.apex };
   const first = start.handleOut;
   const second = end.handleIn;
   if (segment.kind === "line" || !first || !second) {
@@ -276,9 +295,21 @@ function orderedPaths(profile: SketchProfile): DisplayPath[] {
       if (currentId === startId) break;
       points.push(to);
     }
-    paths.push({ id: seed.id, points, steps, closed: currentId === startId && steps.length >= 3 });
+    paths.push({ id: seed.id, points, steps, closed: currentId === startId && stepsEncloseArea(steps) });
   }
   return paths;
+}
+
+/**
+ * Der Bogen als Zeichenbefehle - dieselbe Naeherung in Vierteln, aus der auch
+ * die Geometrie entsteht. Ein eigener Kreisbefehl waere zwar genauer, aber
+ * dann zeigte der Schirm etwas anderes, als am Ende gebaut wird.
+ */
+function arcCommands(segment: SketchSegment, from: SketchPoint, to: SketchPoint) {
+  if (!isArcSegment(segment)) return null;
+  const cubics = arcCubics(from, to, arcBulgeAlong(segment, from));
+  if (cubics.length === 0) return null;
+  return cubics.map((cubic) => `C ${cubic.control1.x} ${cubic.control1.z} ${cubic.control2.x} ${cubic.control2.z} ${cubic.to.x} ${cubic.to.z}`).join(" ");
 }
 
 function curveControls(step: PathStep) {
@@ -294,6 +325,11 @@ function pathData(path: DisplayPath) {
   if (!first) return "";
   const commands = [`M ${first.x} ${first.z}`];
   path.steps.forEach((step) => {
+    const arc = arcCommands(step.segment, step.from, step.to);
+    if (arc) {
+      commands.push(arc);
+      return;
+    }
     const controls = curveControls(step);
     if (step.segment.kind !== "line" && controls.first && controls.second) {
       commands.push(`C ${controls.first.x} ${controls.first.z} ${controls.second.x} ${controls.second.z} ${step.to.x} ${step.to.z}`);
@@ -309,6 +345,8 @@ function segmentData(segment: SketchSegment, pointById: Map<string, SketchPoint>
   const from = pointById.get(segment.startId);
   const to = pointById.get(segment.endId);
   if (!from || !to) return "";
+  const arc = arcCommands(segment, from, to);
+  if (arc) return `M ${from.x} ${from.z} ${arc}`;
   const step = { segment, from, to };
   const controls = curveControls(step);
   return segment.kind !== "line" && controls.first && controls.second
@@ -473,6 +511,7 @@ export function SketchWorkspace({
   referenceShapes,
   tool,
   dimensionsVisible = true,
+  guidesVisible = true,
   activePointId,
   selected,
   measurement,
@@ -497,6 +536,8 @@ export function SketchWorkspace({
   onMoveHandle,
   onInsertPoint,
   onSetPointMode,
+  onRoundPoint,
+  onBendSegment,
   onClearMeasurement,
 }: SketchWorkspaceProps) {
   const workspace = useMemo(() => normalizeWorkspaceSettings(initialWorkspace, DEFAULT_WORKPLANE_WORKSPACE), [initialWorkspace]);
@@ -541,6 +582,16 @@ export function SketchWorkspace({
       const resized = resizeSketchPoints(pointerAction.startPoints, pointerAction.bounds, pointerAction.handle, pointerAction.current, lockAspect);
       const resizedById = new Map(resized.map((point) => [point.id, point]));
       return { ...profile, points: profile.points.map((point) => resizedById.get(point.id) ?? point) };
+    }
+    if (pointerAction?.kind === "bend-arc") {
+      const action = pointerAction;
+      const bulge = arcBulgeThrough(action.ends[0], action.ends[1], action.current);
+      return {
+        ...profile,
+        segments: profile.segments.map((segment) => segment.id === action.segmentId
+          ? { ...segment, kind: "arc" as const, bulge }
+          : segment),
+      };
     }
     if (pointerAction?.kind === "move-circle" || pointerAction?.kind === "resize-circle") {
       const action = pointerAction;
@@ -614,6 +665,20 @@ export function SketchWorkspace({
   const pointById = useMemo(() => new Map(displayProfile.points.map((point) => [point.id, point])), [displayProfile.points]);
   const paths = useMemo(() => orderedPaths(displayProfile), [displayProfile]);
 
+  /**
+   * Der Weg im Folgen-Modus, und woran man ihn erkennt. Er gehoert nicht zur
+   * Form: Was er umschliesst, wird nicht gefuellt, denn gemeint ist er
+   * senkrecht zur Zeichenebene - flach liegt er hier nur zum Zeichnen.
+   */
+  const sweepSpine = useMemo(
+    () => operation === "sweep" ? sweepSpinePath(displayProfile) : null,
+    [displayProfile, operation],
+  );
+  const sweepSpineSegmentIds = useMemo(
+    () => new Set((sweepSpine?.steps ?? []).map((step) => step.segment.id)),
+    [sweepSpine],
+  );
+
   // Applies a typed length to a straight-line segment: keep the start point,
   // move the end point along the current direction so the segment becomes
   // exactly `lengthMm` long. Dependent segments sharing the end point move with
@@ -668,6 +733,16 @@ export function SketchWorkspace({
     [displayProfile.points],
   );
   const alignmentExclusion = pointerAction?.kind === "move-point" ? pointerAction.pointId : null;
+
+  /**
+   * Die Hilfslinien, die stehen bleiben. Sie sagen auch nach dem Loslassen
+   * noch, welche Punkte uebereinanderliegen - beim Ziehen zeigt das nur die
+   * eine Linie, die gerade einrastet, und danach waere es wieder Ratesache.
+   */
+  const standingGuides = useMemo(
+    () => guidesVisible ? persistentSketchGuides(alignmentTargets, displayProfile.segments) : [],
+    [alignmentTargets, displayProfile.segments, guidesVisible],
+  );
   const [alignmentGuides, setAlignmentGuides] = useState<SketchAlignmentGuide[]>([]);
 
   /** Der Zeiger in Zeichenkoordinaten, ohne Raster - zum Drehen. */
@@ -830,6 +905,15 @@ export function SketchWorkspace({
     } else if (action.kind === "resize-circle") {
       const radius = Math.max(MIN_SKETCH_CIRCLE_RADIUS, Math.hypot(action.current.x - action.center.x, action.current.z - action.center.z));
       onUpdateCircle(action.circleId, { radius }, t("sketch.circleResized"));
+    } else if (action.kind === "bend-arc") {
+      // Wird der Griff auf die Sehne zurueckgezogen, ist es wieder eine
+      // Strecke - so kommt man ohne Umweg aus dem Bogen heraus.
+      const bulge = arcBulgeThrough(action.ends[0], action.ends[1], action.current);
+      onBendSegment(
+        action.segmentId,
+        Math.abs(bulge) < MIN_ARC_BULGE ? null : bulge,
+        Math.abs(bulge) < MIN_ARC_BULGE ? t("sketch.arcStraightened") : t("sketch.arcBent"),
+      );
     } else if (action.kind === "rotate-selection") {
       if (action.degrees !== 0) {
         onTransformPoints(
@@ -1046,7 +1130,11 @@ export function SketchWorkspace({
             />
           ) : null}
           <g className="sketch-profile-fills" pointerEvents="none">
-            {paths.some((path) => path.closed) ? <path d={paths.filter((path) => path.closed).map(pathData).join(" ")} /> : null}
+            {(() => {
+              const filled = paths.filter((path) => path.closed
+                && !path.steps.every((step) => sweepSpineSegmentIds.has(step.segment.id)));
+              return filled.length > 0 ? <path d={filled.map(pathData).join(" ")} /> : null;
+            })()}
           </g>
           <g className="sketch-segments">
             {displayProfile.segments.map((segment) => (
@@ -1129,23 +1217,66 @@ export function SketchWorkspace({
           ) : null}
           {operation === "sweep" ? (() => {
             /*
-             * Im Folgen-Modus sagt die Zeichnung selbst, was wofuer gilt: Was
-             * geschlossen ist, ist die Form; der offene Zug ist der Weg. Damit
-             * das nicht geraten werden muss, traegt er seinen Namen und eine
-             * eigene Farbe - und er steht senkrecht auf der Zeichenebene, auch
-             * wenn er hier flach danebenliegt.
+             * Im Folgen-Modus sagt die Zeichnung selbst, was wofuer gilt: Ein
+             * offener Zug ist der Weg, und wo alles geschlossen ist, der
+             * weiteste Ring. Damit das nicht geraten werden muss, traegt der
+             * Weg seinen Namen und eine eigene Farbe - und er steht senkrecht
+             * auf der Zeichenebene, auch wenn er hier flach danebenliegt.
              */
-            const spine = sweepSpinePath(displayProfile);
+            const spine = sweepSpine;
             if (!spine) return null;
             const label = spine.points[Math.floor(spine.points.length / 2)] ?? spine.points[0];
             return (
               <g className="sketch-sweep-path" pointerEvents="none">
-                {spine.steps.map(({ segment, from, to }) => (
-                  <line key={`sweep-${segment.id}`} x1={from.x} y1={from.z} x2={to.x} y2={to.z} />
-                ))}
+                <path d={pathData(spine)} />
                 {label ? (
                   <text x={label.x} y={label.z - 14 * screenUnit} fontSize={12 * screenUnit}>{t("sketch.pathBadge")}</text>
                 ) : null}
+              </g>
+            );
+          })() : null}
+          {tool === "select" && selected?.kind === "segment" ? (() => {
+            /*
+             * Der Griff am Scheitel: daran wird aus einer Strecke ein
+             * Kreisbogen und aus einem Bogen ein flacherer oder runderer. Die
+             * beiden Punkte bleiben dabei stehen - das ist der Unterschied zu
+             * den Kurvengriffen, mit denen sich alles verziehen laesst.
+             */
+            const segment = displayProfile.segments.find((entry) => entry.id === selected.id);
+            if (!segment || (segment.kind === "bezier" || segment.kind === "smooth")) return null;
+            const from = pointById.get(segment.startId);
+            const to = pointById.get(segment.endId);
+            if (!from || !to) return null;
+            const bulge = segment.kind === "arc" ? segment.bulge ?? 0 : 0;
+            const apex = arcApex(from, to, bulge);
+            if (!apex) return null;
+            const middle = { x: (from.x + to.x) / 2, z: (from.z + to.z) / 2 };
+            return (
+              <g className="sketch-arc-grip">
+                {Math.abs(bulge) >= MIN_ARC_BULGE ? (
+                  <line className="sketch-arc-handle-stem" x1={middle.x} y1={middle.z} x2={apex.x} y2={apex.z} pointerEvents="none" />
+                ) : null}
+                <circle
+                  data-sketch-entity="arc-handle"
+                  className="sketch-arc-handle"
+                  cx={apex.x}
+                  cy={apex.z}
+                  r={handleSize * 0.55}
+                  onPointerDown={(event) => {
+                    if (event.button === 1) {
+                      beginPan(event);
+                      return;
+                    }
+                    if (event.button !== 0) return;
+                    beginEntityDrag(event, {
+                      kind: "bend-arc",
+                      pointerId: event.pointerId,
+                      segmentId: segment.id,
+                      ends: [{ x: from.x, z: from.z }, { x: to.x, z: to.z }],
+                      current: apex,
+                    });
+                  }}
+                />
               </g>
             );
           })() : null}
@@ -1181,6 +1312,12 @@ export function SketchWorkspace({
                       });
                     }}
                   />
+                  {/* Die Mitte als kleines Kreuz: ohne sie sieht man nur den
+                      Rand und nicht, worauf der Kreis sitzt. */}
+                  <g className="sketch-circle-centre" pointerEvents="none">
+                    <line x1={circle.x - 5 * screenUnit} y1={circle.z} x2={circle.x + 5 * screenUnit} y2={circle.z} />
+                    <line x1={circle.x} y1={circle.z - 5 * screenUnit} x2={circle.x} y2={circle.z + 5 * screenUnit} />
+                  </g>
                   {chosen ? (
                     <>
                       {/* Am Rand zieht man die Groesse - der Kreis bleibt dabei
@@ -1207,7 +1344,7 @@ export function SketchWorkspace({
                         }}
                       />
                       {dimensionsVisible ? (
-                        <g className="sketch-segment-dimensions" pointerEvents="none" transform={`translate(${circle.x} ${circle.z})`}>
+                        <g className="sketch-segment-dimensions" pointerEvents="none" transform={`translate(${circle.x} ${circle.z - 16 * screenUnit})`}>
                           <rect x={-pill.width / 2} y={-pill.height / 2} width={pill.width} height={pill.height} rx={pill.radius} />
                           <text y={4 * screenUnit} fontSize={12 * screenUnit}>{label}</text>
                         </g>
@@ -1395,6 +1532,19 @@ export function SketchWorkspace({
               </g>
             );
           })}
+          {standingGuides.length > 0 ? (
+            <g className="sketch-standing-guides" pointerEvents="none">
+              {standingGuides.map((guide, index) => (
+                <line
+                  key={`standing-${guide.axis}-${index}`}
+                  x1={guide.from.x}
+                  y1={guide.from.z}
+                  x2={guide.to.x}
+                  y2={guide.to.z}
+                />
+              ))}
+            </g>
+          ) : null}
           {alignmentGuides.length > 0 ? (
             <g className="sketch-alignment-guides" pointerEvents="none">
               {alignmentGuides.map((guide) => {
@@ -1600,6 +1750,11 @@ export function SketchWorkspace({
           <button type="button" title={t("sketch.makeCorner")} onClick={() => onSetPointMode(selectedPoint.id, "corner")}><CornerDownRight /><span>{t("sketch.corner")}</span></button>
           <button type="button" title={t("sketch.makeSmooth")} onClick={() => onSetPointMode(selectedPoint.id, "smooth")}><Waves /><span>{t("sketch.smoothPoint")}</span></button>
           <button type="button" title={t("sketch.splitHandles")} onClick={() => onSetPointMode(selectedPoint.id, "split")}><Split /><span>{t("sketch.split")}</span></button>
+          {/* Rund ist kein Zustand des Punktes, sondern ein Umbau: Der Punkt
+              weicht zwei Punkten auf den Schenkeln und dazwischen sitzt ein
+              echter Kreisbogen - eine Rundung mit einem Halbmesser, den man
+              nennen kann, statt einer Kurve mit Griffen. */}
+          <button type="button" title={t("sketch.roundCorner")} onClick={() => onRoundPoint(selectedPoint.id)}><Circle /><span>{t("sketch.round")}</span></button>
         </div>
       ) : null}
       <div className="grid-settings">

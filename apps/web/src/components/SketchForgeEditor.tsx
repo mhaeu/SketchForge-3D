@@ -1,6 +1,6 @@
 "use client";
 
-import { BoxSelect, Check, Circle as CircleIcon, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { BoxSelect, Check, Circle as CircleIcon, Grid2x2, Spline, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
@@ -137,9 +137,11 @@ import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParamet
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
+import { arcBulgeAlong, arcCubics, isArcSegment, stepsEncloseArea } from "@/lib/sketchArcs";
 import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
+import { roundSketchCorner } from "@/lib/sketchFillet";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
 import { attachProjectAsset, dedupeProjectAssets, projectAssetFromBytes, sourceFormatForFileName } from "@/lib/projectAssets";
@@ -303,6 +305,7 @@ const NOTE_COMMIT_IDLE_MS = 700;
 
 /** Wo die Stellung des Bemassungsschalters der Skizze liegen bleibt. */
 const SKETCH_DIMENSIONS_STORAGE_KEY = "sketchForge.sketch.dimensionsVisible";
+const SKETCH_GUIDES_STORAGE_KEY = "sketchForge.sketch.guidesVisible";
 const MAX_SKETCH_HISTORY_ENTRIES = 100;
 const MODEL_DIMENSION_PRECISION = 3;
 const IMPORTED_EXACT_BOOLEAN_TRIANGLE_LIMIT = 150000;
@@ -387,7 +390,7 @@ function orderedSketchPaths(profile: SketchProfile): OrderedSketchPath[] {
       if (currentId === startId) break;
       points.push(to);
     }
-    paths.push({ points, steps, closed: currentId === startId && steps.length >= 3 });
+    paths.push({ points, steps, closed: currentId === startId && stepsEncloseArea(steps) });
   }
   return paths;
 }
@@ -517,6 +520,19 @@ async function shapeFromSketchProfile(profile: SketchProfile, height: number, ex
     const first = path.points[0];
     outline.moveTo(first.x - centerX, -(first.z - centerZ));
     path.steps.forEach(({ segment, from, to }) => {
+      if (isArcSegment(segment)) {
+        // Der Bogen als Kette kurzer Stuecke - dieselbe Naeherung, die auch
+        // der Umriss auf dem Schirm nimmt, damit beides deckungsgleich ist.
+        arcCubics(from, to, arcBulgeAlong(segment, from)).forEach((cubic) => outline.bezierCurveTo(
+          cubic.control1.x - centerX,
+          -(cubic.control1.z - centerZ),
+          cubic.control2.x - centerX,
+          -(cubic.control2.z - centerZ),
+          cubic.to.x - centerX,
+          -(cubic.to.z - centerZ),
+        ));
+        return;
+      }
       const forward = segment.startId === from.id;
       const control1 = forward ? from.handleOut : from.handleIn;
       const control2 = forward ? to.handleIn : to.handleOut;
@@ -5899,6 +5915,7 @@ export function SketchForgeEditor({
    * deshalb ein Schalter, dessen Stellung ueber die Sitzung hinaus bleibt.
    */
   const [sketchDimensionsVisible, setSketchDimensionsVisible] = useState(true);
+  const [sketchGuidesVisible, setSketchGuidesVisible] = useState(true);
   // Sits here rather than in SketchWorkspace so the toolbar can show it: the
   // toggle belongs where the user looks for tools, not next to the snap grid.
   const [sketchLockAspect, setSketchLockAspect] = useState(false);
@@ -7281,6 +7298,68 @@ export function SketchForgeEditor({
     setSketchSelection({ kind: "circle", id: circle.id });
   }, [commitSketchProfile, sketchProfile, sketchSelection]);
 
+  /**
+   * Ein Kreisbogen zwischen zwei Punkten.
+   *
+   * Anders als der Kreis, auf dem die beiden Punkte nur liegen, verbindet der
+   * Bogen sie: Er haengt an ihnen und laesst sie nie los. Zu aendern ist
+   * allein seine Woelbung - am Griff auf seinem Scheitel.
+   */
+  const bendSketchSelectionIntoArc = useCallback(() => {
+    const selection = sketchSelection;
+    const pointById = new Map(sketchProfile.points.map((point) => [point.id, point]));
+    let segment = selection?.kind === "segment" ? sketchProfile.segments.find((entry) => entry.id === selection.id) ?? null : null;
+    if (!segment && selection?.kind === "multiple" && selection.pointIds.length === 2) {
+      const [first, second] = selection.pointIds;
+      segment = sketchProfile.segments.find((entry) =>
+        (entry.startId === first && entry.endId === second) || (entry.startId === second && entry.endId === first)) ?? null;
+    }
+    const start = segment ? pointById.get(segment.startId) : undefined;
+    const end = segment ? pointById.get(segment.endId) : undefined;
+    if (!segment || !start || !end || segment.kind === "bezier" || segment.kind === "smooth") {
+      setNotice(t("sketch.arcNeedsSegment"));
+      return;
+    }
+    // Ein Fuenftel der Sehne: sichtbar gewoelbt, aber noch flach genug, dass
+    // der Umriss nicht springt. Weitergezogen wird am Griff.
+    const bulge = Math.hypot(end.x - start.x, end.z - start.z) / 5;
+    commitSketchProfile({
+      ...sketchProfile,
+      segments: sketchProfile.segments.map((entry) => entry.id === segment!.id
+        ? { ...entry, kind: "arc" as const, bulge }
+        : entry),
+    }, t("sketch.arcAdded"));
+    setSketchSelection({ kind: "segment", id: segment.id });
+  }, [commitSketchProfile, sketchProfile, sketchSelection]);
+
+  const bendSketchSegment = useCallback((id: string, bulge: number | null, message: string) => {
+    commitSketchProfile({
+      ...sketchProfile,
+      segments: sketchProfile.segments.map((segment) => segment.id === id
+        ? bulge === null
+          ? { id: segment.id, startId: segment.startId, endId: segment.endId, kind: "line" as const }
+          : { ...segment, kind: "arc" as const, bulge }
+        : segment),
+    }, message);
+  }, [commitSketchProfile, sketchProfile]);
+
+  /**
+   * Aus einer Ecke eine runde machen: kein Zustand des Punktes, sondern ein
+   * Umbau. Der Eckpunkt weicht zwei Punkten auf den Schenkeln, dazwischen
+   * sitzt ein echter Kreisbogen - eine Rundung mit einem Halbmesser, den man
+   * nennen kann, statt einer Kurve, die von Griffen abhaengt.
+   */
+  const roundSketchPoint = useCallback((id: string) => {
+    const rounded = roundSketchCorner(sketchProfile, id, createLocalId);
+    if (!rounded) {
+      setNotice(t("sketch.roundNeedsCorner"));
+      return;
+    }
+    commitSketchProfile(rounded.profile, t("sketch.cornerRounded"));
+    setSketchSelection({ kind: "segment", id: rounded.arcId });
+    setSketchActivePointId(null);
+  }, [commitSketchProfile, sketchProfile]);
+
   const updateSketchCircle = useCallback((id: string, patch: Partial<SketchCircle>, message: string) => {
     const circles = sketchProfile.circles ?? [];
     if (!circles.some((circle) => circle.id === id)) return;
@@ -7342,6 +7421,7 @@ export function SketchForgeEditor({
   useEffect(() => {
     try {
       setSketchDimensionsVisible(window.localStorage.getItem(SKETCH_DIMENSIONS_STORAGE_KEY) !== "false");
+      setSketchGuidesVisible(window.localStorage.getItem(SKETCH_GUIDES_STORAGE_KEY) !== "false");
     } catch {
       // Ohne Speicher gilt die Vorgabe.
     }
@@ -7352,6 +7432,18 @@ export function SketchForgeEditor({
       const next = !visible;
       try {
         window.localStorage.setItem(SKETCH_DIMENSIONS_STORAGE_KEY, String(next));
+      } catch {
+        // Ohne Speicher gilt die Stellung wenigstens fuer diese Sitzung.
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSketchGuides = useCallback(() => {
+    setSketchGuidesVisible((visible) => {
+      const next = !visible;
+      try {
+        window.localStorage.setItem(SKETCH_GUIDES_STORAGE_KEY, String(next));
       } catch {
         // Ohne Speicher gilt die Stellung wenigstens fuer diese Sitzung.
       }
@@ -10166,6 +10258,9 @@ export function SketchForgeEditor({
         onMirrorSketch={mirrorSelectedSketch}
         canTransformSketch={sketchSelection?.kind === "multiple" && (sketchSelection.pointIds?.length ?? 0) >= 2}
         canCircleOverSelection={sketchSelection?.kind === "segment" || (sketchSelection?.kind === "multiple" && sketchSelection.pointIds.length === 2)}
+        onArcOverSelection={bendSketchSelectionIntoArc}
+        sketchGuidesVisible={sketchGuidesVisible}
+        onToggleSketchGuides={toggleSketchGuides}
         onCircleOverSelection={addSketchCircleOverSelection}
         onSketchTool={setActiveSketchTool}
         onSketchPrimitive={(primitive) => addSketchPrimitive(primitive, { x: 0, z: 0 })}
@@ -10221,6 +10316,7 @@ export function SketchForgeEditor({
             referenceShapes={sketchReferenceShapes.filter((shape) => shape.id !== editingSketchShapeId)}
             tool={sketchTool}
             dimensionsVisible={sketchDimensionsVisible}
+            guidesVisible={sketchGuidesVisible}
             lockAspect={sketchLockAspect}
             activePointId={sketchActivePointId}
             selected={sketchSelection}
@@ -10257,6 +10353,8 @@ export function SketchForgeEditor({
             onMoveHandle={moveSketchHandle}
             onInsertPoint={insertSketchPoint}
             onSetPointMode={setSketchPointMode}
+            onRoundPoint={roundSketchPoint}
+            onBendSegment={bendSketchSegment}
             onClearMeasurement={clearSketchMeasurement}
           />
         ) : (
@@ -10546,6 +10644,9 @@ function SecondaryToolbar({
   canTransformSketch,
   canCircleOverSelection,
   onCircleOverSelection,
+  onArcOverSelection,
+  sketchGuidesVisible,
+  onToggleSketchGuides,
   onToggleSketchDimensions,
   onRotateSketch,
   onMirrorSketch,
@@ -10626,6 +10727,9 @@ function SecondaryToolbar({
   canTransformSketch: boolean;
   canCircleOverSelection: boolean;
   onCircleOverSelection: () => void;
+  onArcOverSelection: () => void;
+  sketchGuidesVisible: boolean;
+  onToggleSketchGuides: () => void;
   onToggleSketchDimensions: () => void;
   onRotateSketch: (degrees: number) => void;
   onMirrorSketch: (axis: "x" | "z") => void;
@@ -11308,6 +11412,16 @@ function SecondaryToolbar({
                       <CircleIcon size={19} strokeWidth={2.2} aria-hidden="true" />
                     </button>
                     <button
+                      className={`toolbar-icon ${canCircleOverSelection ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.arcOverSelection")}
+                      title={canCircleOverSelection ? t("sketch.arcOverSelection") : t("sketch.arcNeedsSegment")}
+                      onClick={onArcOverSelection}
+                      disabled={!canCircleOverSelection}
+                    >
+                      <Spline size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                    <button
                       className={`toolbar-icon ${canTransformSketch ? "" : "disabled"}`}
                       type="button"
                       aria-label={t("sketch.rotateLeft")}
@@ -11364,6 +11478,16 @@ function SecondaryToolbar({
                       onClick={onToggleSketchDimensions}
                     >
                       <RulerDimensionLine size={19} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                    <button
+                      className={`toolbar-icon ${sketchGuidesVisible ? "active" : ""}`}
+                      type="button"
+                      aria-label={sketchGuidesVisible ? t("sketch.hideGuides") : t("sketch.showGuides")}
+                      aria-pressed={sketchGuidesVisible}
+                      title={t("sketch.guidesHint")}
+                      onClick={onToggleSketchGuides}
+                    >
+                      <Grid2x2 size={19} strokeWidth={2.2} aria-hidden="true" />
                     </button>
                   </div>
                 </div>

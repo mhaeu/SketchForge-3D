@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alignSketchPoint, type SketchAlignmentTarget } from "@/lib/sketchAlignment";
+import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentTarget } from "@/lib/sketchAlignment";
 
 const targets: SketchAlignmentTarget[] = [
   { id: "a", x: 0, z: 0 },
@@ -57,5 +57,52 @@ describe("Punkte aneinander ausrichten", () => {
 
   it("tut nichts ohne Spielraum", () => {
     expect(alignSketchPoint({ x: 19.9, z: 0 }, targets, 0).guides).toEqual([]);
+  });
+});
+
+describe("Dauerhafte Hilfslinien", () => {
+  const targets = [
+    { id: "a", x: 0, z: 0 },
+    { id: "b", x: 4, z: 0 },
+    { id: "c", x: 4, z: 3 },
+    { id: "d", x: 0, z: 3 },
+  ];
+
+  it("verbindet Punkte gleicher Breite und gleicher Tiefe", () => {
+    const guides = persistentSketchGuides(targets, []);
+    expect(guides.filter((guide) => guide.axis === "x")).toHaveLength(2);
+    expect(guides.filter((guide) => guide.axis === "z")).toHaveLength(2);
+  });
+
+  it("laesst weg, wo ohnehin eine Kante laeuft", () => {
+    // Die Kante sagt schon, dass die beiden zusammengehoeren - eine
+    // gestrichelte Linie daneben waere nur Rauschen.
+    const guides = persistentSketchGuides(targets, [
+      { startId: "a", endId: "b" },
+      { startId: "b", endId: "c" },
+      { startId: "c", endId: "d" },
+      { startId: "d", endId: "a" },
+    ]);
+    expect(guides).toHaveLength(0);
+  });
+
+  it("verbindet nur die naechsten Nachbarn, nicht jeden mit jedem", () => {
+    // Fuenf Punkte auf einer Senkrechten ergeben vier Linien und nicht zehn.
+    const column = [0, 1, 2, 3, 4].map((index) => ({ id: `p${index}`, x: 2, z: index }));
+    const guides = persistentSketchGuides(column, []);
+    expect(guides.filter((guide) => guide.axis === "x")).toHaveLength(4);
+    guides.forEach((guide) => expect(Math.abs(guide.to.z - guide.from.z)).toBeCloseTo(1, 9));
+  });
+
+  it("zaehlt einen einzelnen Punkt nicht und braucht keine Kanten", () => {
+    expect(persistentSketchGuides([{ id: "a", x: 1, z: 1 }], [])).toEqual([]);
+    expect(persistentSketchGuides([], [])).toEqual([]);
+  });
+
+  it("nimmt winzige Abweichungen als dieselbe Linie", () => {
+    const nearly = [{ id: "a", x: 1, z: 0 }, { id: "b", x: 1 + 1e-9, z: 5 }];
+    expect(persistentSketchGuides(nearly, [])).toHaveLength(1);
+    // Ein sichtbarer Unterschied ist dagegen keine Ausrichtung.
+    expect(persistentSketchGuides([{ id: "a", x: 1, z: 0 }, { id: "b", x: 1.2, z: 5 }], [])).toHaveLength(0);
   });
 });
