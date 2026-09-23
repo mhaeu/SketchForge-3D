@@ -919,6 +919,13 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
   if (definition.importedMesh || definition.groupedShapes || definition.edgeTreatmentHistory || definition.cadBrep) {
     throw new Error(`${label} contains inline package-only geometry fields`);
   }
+  // Der mitgeschriebene Winkel eines gebackenen Koerpers.
+  if (definition.bakedRotation !== undefined) {
+    const turn = objectRecord(definition.bakedRotation, `${label}.bakedRotation`);
+    (["rotation", "rotationX", "rotationZ"] as const).forEach((field) => {
+      finiteNumber(turn[field], `${label}.bakedRotation.${field}`);
+    });
+  }
   if (definition.parametricSource !== undefined) {
     // Was der Koerper vor dem Drehen war. Fehlt oder stimmt hier etwas nicht,
     // ist der Koerper immer noch da - nur seine Bauwerte waeren nicht mehr zu

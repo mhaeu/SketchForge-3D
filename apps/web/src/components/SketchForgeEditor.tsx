@@ -140,7 +140,7 @@ import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatment
 import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
 import { geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
-import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
+import { bakedRotationForBake, parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
@@ -2765,6 +2765,10 @@ function bakeShapeTransformIntoMesh(shape: WorkplaneShape, force = false): Workp
     },
     ...bakedCadMetadata,
     parametricSource: parametricSourceForBake(shape),
+    // Auch ohne Urform bleibt wenigstens der Winkel stehen, unter dem der
+    // Koerper wirklich steht - sonst faengt der Zaehler nach jeder Drehung
+    // wieder bei null an.
+    bakedRotation: bakedRotationForBake(shape),
     imagePlate: undefined,
     groupedShapes: undefined,
     groupedBaseWidth: undefined,
@@ -9071,6 +9075,26 @@ export function SketchForgeEditor({
    * Zeichnung ohne ihre Loecher noch einmal hochgezogen - was der volle
    * Koerper mehr hat als der hohle, ist genau der Hohlraum.
    */
+  /**
+   * Den neu gebauten vollen Koerper so drehen, wie der hohle steht.
+   *
+   * Wurde der hohle Koerper von Hand gedreht, sitzt die Drehung in den
+   * Punkten seines Netzes und `rotation` steht auf null - der neu gebaute
+   * kaeme also ungedreht heraus und laege quer zu ihm. Der mitgeschriebene
+   * Winkel holt das nach. Dass beide danach an derselben Stelle sitzen,
+   * stimmt, weil das Fuellen nur nach innen wirkt: Der Kasten um den vollen
+   * Koerper ist derselbe wie der um den hohlen.
+   */
+  const turnedLikeTool = useCallback((built: WorkplaneShape, tool: WorkplaneShape) => {
+    const turn = tool.bakedRotation;
+    if (!turn || [turn.rotation, turn.rotationX, turn.rotationZ].every((angle) => Math.abs(angle) < 1e-6)) return built;
+    const turned = canonicalizeShape(bakeShapeTransformIntoMesh(
+      canonicalizeShape({ ...built, ...turn, bakedRotation: undefined }),
+      true,
+    ));
+    return canonicalizeShape({ ...turned, x: tool.x, z: tool.z, elevation: tool.elevation ?? 0, bakedRotation: undefined });
+  }, []);
+
   const cavityHoleForShape = useCallback(async (tool: WorkplaneShape): Promise<WorkplaneShape | null> => {
     const bore = boreCutShape(tool, createLocalId);
     if (bore) return bore;
@@ -9081,7 +9105,7 @@ export function SketchForgeEditor({
     // ueber weggelassene Loecher, sondern ueber den Schatten des
     // Querschnitts zur Achse hin.
     if (tool.sketchOperation === "revolve") {
-      const solid = await shapeFromRevolvedSketchProfile(profile, tool.sketchRevolve ?? {}, tool, true);
+      const solid = turnedLikeTool(await shapeFromRevolvedSketchProfile(profile, tool.sketchRevolve ?? {}, tool, true), tool);
       if (!cutFullyConsumesSolids([tool, { ...solid, id: createLocalId("fill-probe"), hole: true }])) return null;
       const hollow = await buildGroupedShapeFromSelection([solid, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
       if (!hollow.group) return null;
@@ -9094,7 +9118,7 @@ export function SketchForgeEditor({
     const built = tool.sketchOperation === "sweep"
       ? sweptShapeFromSketchProfile(filledProfile, tool)
       : await cadShapeFromSketchProfile(filledProfile, tool.height, tool);
-    const filled = placeSketchExtrusion(built, placementWorkplaneRef.current, tool);
+    const filled = turnedLikeTool(placeSketchExtrusion(built, placementWorkplaneRef.current, tool), tool);
 
     /*
      * Die Probe: Der hohle Koerper muss ganz im vollen stecken. Faellt sie
@@ -9108,7 +9132,7 @@ export function SketchForgeEditor({
     const cavity = await buildGroupedShapeFromSelection([filled, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
     if (!cavity.group) return null;
     return { ...cutResultShape(cavity.group), id: createLocalId("cavity-tool"), hole: true };
-  }, [hollowSketchTool]);
+  }, [hollowSketchTool, turnedLikeTool]);
 
   /**
    * Den Hohlraum eines Koerpers aus allem anderen Ausgewaehlten herausnehmen -

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  bakedRotationForBake,
   parametricRebuildPlan,
   parametricSourceForBake,
   patchTouchesBodyParameters,
   patchTouchesRotation,
 } from "@/lib/parametricSource";
-import { canonicalizeShape } from "@/lib/workplaneShapes";
+import { canonicalizeShape, shapeAccumulatedRotation } from "@/lib/workplaneShapes";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 function shape(overrides: Partial<WorkplaneShape> = {}): WorkplaneShape {
@@ -115,5 +116,44 @@ describe("welcher Patch den Koerper meint", () => {
     expect(patchTouchesBodyParameters({ x: 5, width: 20 })).toBe(false);
     expect(patchTouchesRotation({ rotationZ: 0 })).toBe(true);
     expect(patchTouchesRotation({ x: 5 })).toBe(false);
+  });
+});
+
+/**
+ * Ein Koerper ohne Urform - ein Skizzen- oder Rotationskoerper, ein
+ * eingelesenes Netz - laesst sich nicht neu bauen, sein Winkel aber
+ * festhalten. Ohne ihn fing der Zaehler nach jeder Drehung wieder bei null
+ * an: Man wusste nicht mehr, wie schief das Objekt steht, und konnte es
+ * nicht wieder gerade stellen.
+ */
+describe("Der Winkel eines Koerpers ohne Urform", () => {
+  const mesh = {
+    id: "m", name: "Rotationskoerper", kind: "mesh", color: "#fff",
+    x: 0, z: 0, elevation: 0, size: 20, width: 20, depth: 20, height: 40,
+    rotation: 0, rotationX: 0, rotationZ: 0,
+    importedMesh: { positions: [], triangleCount: 0 },
+  } as unknown as WorkplaneShape;
+
+  it("haelt die erste Drehung fest, wo es keine Urform gibt", () => {
+    expect(parametricSourceForBake({ ...mesh, rotation: 30 })).toBeUndefined();
+    expect(bakedRotationForBake({ ...mesh, rotation: 30 })).toEqual({ rotation: 30, rotationX: 0, rotationZ: 0 });
+  });
+
+  it("verkettet eine zweite Drehung mit der ersten", () => {
+    const once = bakedRotationForBake({ ...mesh, rotation: 30 })!;
+    const twice = bakedRotationForBake({ ...mesh, rotation: 45, bakedRotation: once } as unknown as WorkplaneShape)!;
+    expect(twice.rotation).toBeCloseTo(75, 6);
+  });
+
+  it("wird vom Winkelzaehler gelesen, wenn keine Urform dasteht", () => {
+    const turned = { ...mesh, bakedRotation: { rotation: 75, rotationX: 0, rotationZ: 0 } } as unknown as WorkplaneShape;
+    expect(shapeAccumulatedRotation(turned).rotation).toBeCloseTo(75, 6);
+    // Eine noch nicht gebackene Drehung kommt obendrauf.
+    expect(shapeAccumulatedRotation({ ...turned, rotation: 15 } as WorkplaneShape).rotation).toBeCloseTo(90, 6);
+  });
+
+  it("merkt sich nichts von einem gespiegelten Koerper", () => {
+    // Eine Spiegelung liesse sich nicht als Winkel wieder auftragen.
+    expect(bakedRotationForBake({ ...mesh, rotation: 30, mirrorX: true } as WorkplaneShape)).toBeUndefined();
   });
 });

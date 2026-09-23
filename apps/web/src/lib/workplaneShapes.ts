@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import { createLocalId } from "@/lib/localIds";
 import { createThreadShapeFields } from "@/lib/threadShape";
 import { threadFootprintPatch } from "@/lib/threadGeometry";
@@ -71,12 +72,56 @@ export function shapeWithParametricSource(shape: WorkplaneShape): WorkplaneShape
  * aufgelaufene Winkel steht in der Urform, und genau den zeigt das Drehfeld,
  * damit man ein Objekt auch wieder gerade stellen kann.
  */
+type RotationAngles = { rotation: number; rotationX?: number; rotationZ?: number };
+
+/**
+ * Zwei Drehungen hintereinander, als die drei Winkel, die der Datensatz
+ * fuehrt. Ueber Eulerwinkel liesse sich das nicht ehrlich addieren, ueber
+ * Quaternionen schon.
+ *
+ * Dieselbe Rechnung steht in `geometryRotation`; hier steht sie noch einmal,
+ * weil jene Datei von hier liest und ein Ringschluss zwischen beiden nichts
+ * besser machte als diese zwoelf Zeilen.
+ */
+function composedRotationDegrees(outer: RotationAngles, inner: RotationAngles) {
+  const toRadians = Math.PI / 180;
+  const quaternion = (angles: RotationAngles) => {
+    const euler = new THREE.Euler(
+      (angles.rotationX ?? 0) * toRadians,
+      angles.rotation * toRadians,
+      (angles.rotationZ ?? 0) * toRadians,
+      "XYZ",
+    );
+    return new THREE.Quaternion().setFromEuler(euler);
+  };
+  const euler = new THREE.Euler().setFromQuaternion(quaternion(outer).multiply(quaternion(inner)), "XYZ");
+  return {
+    rotation: cleanRotationDegrees(euler.y / toRadians),
+    rotationX: cleanRotationDegrees(euler.x / toRadians),
+    rotationZ: cleanRotationDegrees(euler.z / toRadians),
+  };
+}
+
 export function shapeAccumulatedRotation(shape: WorkplaneShape) {
   const source = shape.parametricSource;
+  if (source) {
+    return { rotation: source.rotation, rotationX: source.rotationX, rotationZ: source.rotationZ };
+  }
+  /*
+   * Ein Koerper ohne Urform - ein Skizzen- oder Rotationskoerper, ein
+   * eingelesenes Netz - fuehrt seinen Winkel getrennt mit. Steht daneben noch
+   * eine Drehung am Koerper selbst, weil sie noch nicht gebacken wurde, so
+   * kommt sie obendrauf.
+   */
+  const baked = shape.bakedRotation;
+  if (baked) {
+    const composed = composedRotationDegrees(shape, baked);
+    return composed;
+  }
   return {
-    rotation: source ? source.rotation : shape.rotation,
-    rotationX: source ? source.rotationX : (shape.rotationX ?? 0),
-    rotationZ: source ? source.rotationZ : (shape.rotationZ ?? 0),
+    rotation: shape.rotation,
+    rotationX: shape.rotationX ?? 0,
+    rotationZ: shape.rotationZ ?? 0,
   };
 }
 
@@ -667,6 +712,9 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.honeycombCellSize === b.honeycombCellSize &&
     a.honeycombWallThickness === b.honeycombWallThickness &&
     a.honeycombFrameWidth === b.honeycombFrameWidth &&
+    a.bakedRotation?.rotation === b.bakedRotation?.rotation &&
+    a.bakedRotation?.rotationX === b.bakedRotation?.rotationX &&
+    a.bakedRotation?.rotationZ === b.bakedRotation?.rotationZ &&
     a.cornerFillet === b.cornerFillet &&
     a.topBottomFillet === b.topBottomFillet &&
     a.roundedBoxQuality === b.roundedBoxQuality &&

@@ -75,6 +75,25 @@ export function parametricSourceForBake(shape: WorkplaneShape): ParametricSource
   };
 }
 
+/**
+ * Die aufgelaufene Drehung eines Koerpers, der keine Urform hat.
+ *
+ * Ein Skizzen- oder Rotationskoerper, ein eingelesenes Netz: Aus ihnen laesst
+ * sich der Koerper nicht neu bauen, also haelt `parametricSource` nichts von
+ * ihnen fest. Der Winkel aber liesse sich festhalten, und ohne ihn fing der
+ * Zaehler nach jeder Drehung wieder bei null an - man wusste nicht mehr, wie
+ * schief das Objekt steht, und konnte es nicht wieder gerade stellen.
+ *
+ * Eine Spiegelung wird auch hier nicht mitgeschrieben: Sie liesse sich nicht
+ * als Winkel wieder auftragen.
+ */
+export function bakedRotationForBake(shape: WorkplaneShape) {
+  if (shape.mirrorX || shape.mirrorY || shape.mirrorZ) return undefined;
+  const previous = shape.bakedRotation ?? { rotation: 0, rotationX: 0, rotationZ: 0 };
+  const composed = composedShapeRotation(shape, previous);
+  return { rotation: composed.rotation, rotationX: composed.rotationX, rotationZ: composed.rotationZ };
+}
+
 export type ParametricRebuildPlan = {
   /** Der ungedrehte Koerper mit der Aenderung darin. */
   original: WorkplaneShape;

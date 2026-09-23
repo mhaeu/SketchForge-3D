@@ -465,6 +465,18 @@ export type WorkplaneShape = {
     pixelHeight: number;
   };
   parametricSource?: ParametricSource;
+  /**
+   * Der Winkel, unter dem ein gebackener Koerper wirklich steht.
+   *
+   * Beim Backen wandert die Drehung in die Punkte des Netzes und `rotation`
+   * steht wieder auf null. Ein Koerper mit parametrischem Ursprung fuehrt sie
+   * dort mit; einer ohne - ein Skizzen- oder Rotationskoerper, ein
+   * eingelesenes Netz - hatte danach gar kein Gedaechtnis mehr: Der
+   * Winkelzaehler fing wieder bei null an, und nichts konnte ihn wieder
+   * gerade stellen.
+   */
+  bakedRotation?: { rotation: number; rotationX: number; rotationZ: number };
+
   sketchProfile?: SketchProfile;
   sketchOperation?: SketchOperation;
   sketchRevolve?: SketchRevolveSettings;
