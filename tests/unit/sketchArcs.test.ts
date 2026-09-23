@@ -7,6 +7,7 @@ import {
   arcPointAt,
   arcSamples,
   MAX_ARC_BULGE_RATIO,
+  retargetSketchArcs,
   segmentArcGeometry,
   stepsEncloseArea,
 } from "@/lib/sketchArcs";
@@ -255,5 +256,63 @@ describe("Wann ein zurueckgekehrter Zug eine Flaeche umschliesst", () => {
     // und eine Sehne einen Halbkreis.
     expect(stepsEncloseArea([arc, arc])).toBe(true);
     expect(stepsEncloseArea([arc, line])).toBe(true);
+  });
+});
+
+describe("Boegen mitziehen", () => {
+  const points = (entries: Array<[string, number, number]>) =>
+    new Map(entries.map(([id, x, z]) => [id, { x, z }]));
+  const arc = { id: "ab", startId: "a", endId: "b", kind: "arc" as const, bulge: 2 };
+  const before = points([["a", -3, 0], ["b", 3, 0]]);
+
+  it("laesst einen Bogen in Ruhe, der sich nicht bewegt hat", () => {
+    const [same] = retargetSketchArcs([arc], before, before);
+    expect(same).toBe(arc);
+  });
+
+  it("verkleinert die Woelbung mit der Sehne", () => {
+    // Bleibt die Woelbung beim Verkleinern stehen, waelbt sich der Bogen
+    // immer staerker heraus - genau das war zu sehen.
+    const [smaller] = retargetSketchArcs([arc], before, points([["a", -1.5, 0], ["b", 1.5, 0]]));
+    expect(smaller.bulge).toBeCloseTo(1, 9);
+  });
+
+  it("behaelt dabei die Form des Bogens", () => {
+    // Gleichmaessig verkleinert bleibt derselbe Kreisausschnitt: derselbe
+    // ueberstrichene Winkel, der halbe Halbmesser.
+    const whole = arcGeometry({ x: -3, z: 0 }, { x: 3, z: 0 }, 2)!;
+    const [smaller] = retargetSketchArcs([arc], before, points([["a", -1.5, 0], ["b", 1.5, 0]]));
+    const half = arcGeometry({ x: -1.5, z: 0 }, { x: 1.5, z: 0 }, smaller.bulge!)!;
+    expect(half.radius).toBeCloseTo(whole.radius / 2, 9);
+    expect(half.sweep).toBeCloseTo(whole.sweep, 9);
+  });
+
+  it("dreht die Woelbung um, wenn gespiegelt wurde", () => {
+    // Beim Spiegeln liegt dieselbe Zahl auf der anderen Seite der Sehne -
+    // ohne das Umkehren stuelpt sich der Bogen nach innen.
+    const mirrored = points([["a", 3, 0], ["b", -3, 0]]);
+    const [flipped] = retargetSketchArcs([arc], before, mirrored, true);
+    expect(flipped.bulge).toBeCloseTo(-2, 9);
+    // Und der Scheitel liegt danach dort, wo ihn die Spiegelung hinlegt: auf
+    // derselben Seite der Zeichnung wie vorher.
+    expect(arcApex({ x: -3, z: 0 }, { x: 3, z: 0 }, 2)!.z).toBeCloseTo(2, 9);
+    expect(arcApex({ x: 3, z: 0 }, { x: -3, z: 0 }, flipped.bulge!)!.z).toBeCloseTo(2, 9);
+  });
+
+  it("ruehrt Strecken und Kurven nicht an", () => {
+    const others = [
+      { id: "l", startId: "a", endId: "b", kind: "line" as const },
+      { id: "c", startId: "a", endId: "b", kind: "bezier" as const },
+      { id: "flach", startId: "a", endId: "b", kind: "arc" as const, bulge: 0 },
+    ];
+    expect(retargetSketchArcs(others, before, points([["a", -1, 0], ["b", 1, 0]]))).toEqual(others);
+  });
+
+  it("laesst einen Bogen stehen, dessen Punkte es nicht mehr gibt", () => {
+    const [kept] = retargetSketchArcs([arc], before, points([["a", -3, 0]]));
+    expect(kept).toBe(arc);
+    // Und eine Sehne ohne Laenge gibt kein Verhaeltnis her.
+    const [alsoKept] = retargetSketchArcs([arc], points([["a", 0, 0], ["b", 0, 0]]), before);
+    expect(alsoKept).toBe(arc);
   });
 });

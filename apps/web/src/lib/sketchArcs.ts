@@ -196,3 +196,42 @@ export function stepsEncloseArea(steps: readonly { segment: SketchSegment }[]): 
   if (steps.length < 2) return false;
   return steps.some((step) => step.segment.kind && step.segment.kind !== "line");
 }
+
+/**
+ * Die Boegen mitziehen, wenn ihre Punkte sich bewegt haben.
+ *
+ * Die Woelbung steht als Laenge an der Kante, nicht als Verhaeltnis, und sie
+ * gilt quer zur Sehne in einer bestimmten Richtung. Beides macht sie von den
+ * beiden Punkten abhaengig: Wird die Sehne kuerzer und die Woelbung bleibt,
+ * so waelbt sich der Bogen staerker heraus, als er sollte. Und wird die
+ * Zeichnung gespiegelt, liegt dieselbe Zahl ploetzlich auf der anderen Seite
+ * der Sehne - der Bogen stuelpt sich nach innen.
+ *
+ * Deshalb wird die Woelbung mitgezogen: im Verhaeltnis der Sehnenlaengen, und
+ * mit umgekehrtem Vorzeichen, wenn die Abbildung den Umlaufsinn umkehrt. Das
+ * haelt den Bogen bei einer gleichmaessigen Aenderung genau auf seinem Kreis.
+ * Wird ungleich in Breite und Tiefe gezogen, entstuende ein Ellipsenbogen,
+ * den diese Beschreibung nicht kennt; dort bleibt der ueberstrichene Winkel
+ * erhalten, und die Rundung trifft ihre Schenkel noch, aber nicht mehr genau
+ * im rechten Winkel.
+ */
+export function retargetSketchArcs(
+  segments: readonly SketchSegment[],
+  before: ReadonlyMap<string, ArcPoint>,
+  after: ReadonlyMap<string, ArcPoint>,
+  flipped = false,
+): SketchSegment[] {
+  const chord = (points: ReadonlyMap<string, ArcPoint>, segment: SketchSegment) => {
+    const from = points.get(segment.startId);
+    const to = points.get(segment.endId);
+    return from && to ? Math.hypot(to.x - from.x, to.z - from.z) : null;
+  };
+  return segments.map((segment) => {
+    if (segment.kind !== "arc" || !segment.bulge) return segment;
+    const was = chord(before, segment);
+    const now = chord(after, segment);
+    if (!was || now === null) return segment;
+    const bulge = segment.bulge * (now / was) * (flipped ? -1 : 1);
+    return bulge === segment.bulge ? segment : { ...segment, bulge };
+  });
+}

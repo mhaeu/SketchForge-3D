@@ -137,7 +137,7 @@ import { parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParamet
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
-import { arcBulgeAlong, arcCubics, isArcSegment, stepsEncloseArea } from "@/lib/sketchArcs";
+import { arcBulgeAlong, arcCubics, isArcSegment, retargetSketchArcs, stepsEncloseArea } from "@/lib/sketchArcs";
 import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
@@ -7465,12 +7465,21 @@ export function SketchForgeEditor({
     });
   }, []);
 
-  const transformSketchPoints = useCallback((points: SketchPoint[], message = t("status.sketchTransformed")) => {
+  /**
+   * `flipped` sagt, ob die Abbildung den Umlaufsinn umkehrt - beim Spiegeln
+   * ja, beim Drehen, Verschieben und Ziehen nein. Die Boegen haengen daran:
+   * Ihre Woelbung ist eine Laenge quer zur Sehne in einer bestimmten
+   * Richtung, und beides aendert sich mit den Punkten.
+   */
+  const transformSketchPoints = useCallback((points: SketchPoint[], message = t("status.sketchTransformed"), flipped = false) => {
     if (!points.length) return;
     const byId = new Map(points.map((point) => [point.id, point]));
+    const nextPoints = sketchProfile.points.map((point) => byId.get(point.id) ?? point);
+    const position = (list: SketchPoint[]) => new Map(list.map((point) => [point.id, { x: point.x, z: point.z }]));
     commitSketchProfile({
       ...sketchProfile,
-      points: sketchProfile.points.map((point) => byId.get(point.id) ?? point),
+      points: nextPoints,
+      segments: retargetSketchArcs(sketchProfile.segments, position(sketchProfile.points), position(nextPoints), flipped),
     }, message);
   }, [commitSketchProfile, sketchProfile]);
 
@@ -7479,14 +7488,14 @@ export function SketchForgeEditor({
    * Umriss - zwei Punkte genuegen, und ein offener Zug dreht sich so gut wie
    * ein Rechteck. Gedreht wird um die Mitte des Rahmens um die Auswahl.
    */
-  const transformSelectedSketch = useCallback((change: (points: SketchPoint[]) => SketchPoint[], message: string) => {
+  const transformSelectedSketch = useCallback((change: (points: SketchPoint[]) => SketchPoint[], message: string, flipped = false) => {
     const selection = sketchSelection?.kind === "multiple" ? sketchSelection : null;
     const points = selection ? selectedSketchPoints(sketchProfile, selection) : null;
     if (!points) {
       setNotice(t("sketch.selectToTransform"));
       return;
     }
-    transformSketchPoints(change(points), message);
+    transformSketchPoints(change(points), message, flipped);
   }, [sketchProfile, sketchSelection, transformSketchPoints]);
 
   const rotateSelectedSketch = useCallback((degrees: number) => {
@@ -7497,7 +7506,9 @@ export function SketchForgeEditor({
   }, [transformSelectedSketch]);
 
   const mirrorSelectedSketch = useCallback((axis: "x" | "z") => {
-    transformSelectedSketch((points) => mirrorSketchPoints(points, axis), t("status.sketchMirrored"));
+    // Spiegeln kehrt den Umlaufsinn um; ohne das wuerden die Boegen sich
+    // nach innen stuelpen, waehrend alles andere richtig herum liegt.
+    transformSelectedSketch((points) => mirrorSketchPoints(points, axis), t("status.sketchMirrored"), true);
   }, [transformSelectedSketch]);
 
   const rotateSelectedClosedSketch45 = useCallback(() => {

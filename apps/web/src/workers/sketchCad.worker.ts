@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { OcctKernel, type ShapeHandle } from "occt-wasm";
+import { OcctKernel, SweepMode, TransitionMode, type ShapeHandle } from "occt-wasm";
 import { cadSketchRegions, type OrderedCadSketchPath } from "@/lib/sketchCadProfile";
 import { segmentArcGeometry } from "@/lib/sketchArcs";
 import { splitSweepDrawing, sweepPathPoint, sweepProfilePlacement } from "@/lib/sketchSweep";
@@ -113,7 +113,36 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
       };
       const placement = sweepProfilePlacement(spine, centre);
       if (!placement) throw new Error("The path has no length at its start - draw it running away from the shape");
-      solids = regions.map((region) => cad!.pipe(cad!.transform(faceFor(region), placement), wire));
+      /*
+       * Zwei Anlaeufe, weil zwei Arten von Weg vorkommen. Ein glatter Weg
+       * laeuft mit `pipe` sauber durch. Ein Weg mit Ecken dagegen hat dort
+       * keinen stetigen Verlauf, und `pipe` legt ueber die Ecke eine Flaeche,
+       * die sich selbst durchdringt - herauskommt ein Koerper, den der Kern
+       * hinterher als ungueltig meldet. Fuer diesen Fall gibt es den Sweep
+       * mit ausdruecklicher Eckbehandlung: Er setzt an jeder Ecke des Weges
+       * eine Gehrung. Er ist der aufwendigere Weg, deshalb steht er hinten.
+       */
+      const carried = regions.map((region) => cad!.transform(faceFor(region), placement));
+      const attempt = (build: (face: ShapeHandle) => ShapeHandle) => {
+        try {
+          const built = carried.map(build);
+          return built.every((solid) => cad!.isValid(solid)) ? built : null;
+        } catch {
+          // Der zweite Anlauf ist der Grund, warum das hier nicht durchfaellt.
+          return null;
+        }
+      };
+      solids = attempt((face) => cad!.pipe(face, wire))
+        ?? attempt((face) => cad!.sweepAdvanced(face, wire, {
+          mode: SweepMode.Fixed,
+          transitionMode: TransitionMode.RightCorner,
+          withCorrection: true,
+        }))
+        ?? (() => {
+          throw new Error(
+            "The path cannot carry this shape. Usually the path bends tighter than the shape is wide, so the body folds into itself - widen the bend or make the shape smaller. A path that crosses itself does the same.",
+          );
+        })();
     } else {
       const height = request.type === "build" ? request.height : 0;
       solids = regions.map((region) => cad!.extrude(faceFor(region), 0, height, 0));

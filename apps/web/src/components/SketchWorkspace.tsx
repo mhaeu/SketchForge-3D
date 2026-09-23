@@ -13,7 +13,7 @@ import { mirrorSign, resizedImportedMeshPositions } from "@/lib/workplaneShapes"
 import { selectWholeValue } from "@/lib/numberField";
 import { isSketchPrimitive, type SketchPrimitive } from "@/lib/sketchPrimitives";
 import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngle";
-import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_ARC_BULGE, segmentArcGeometry, stepsEncloseArea } from "@/lib/sketchArcs";
+import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_ARC_BULGE, retargetSketchArcs, segmentArcGeometry, stepsEncloseArea } from "@/lib/sketchArcs";
 import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
 import { hasMarkedSweepPath, sweepSpinePath } from "@/lib/sketchSweep";
@@ -584,7 +584,15 @@ export function SketchWorkspace({
     if (pointerAction?.kind === "resize-selection") {
       const resized = resizeSketchPoints(pointerAction.startPoints, pointerAction.bounds, pointerAction.handle, pointerAction.current, lockAspect);
       const resizedById = new Map(resized.map((point) => [point.id, point]));
-      return { ...profile, points: profile.points.map((point) => resizedById.get(point.id) ?? point) };
+      const points = profile.points.map((point) => resizedById.get(point.id) ?? point);
+      // Die Boegen ziehen mit: Ihre Woelbung ist eine Laenge und muesste
+      // sonst waehrend des Zugs staerker heraustreten, je kleiner es wird.
+      const position = (list: SketchPoint[]) => new Map(list.map((point) => [point.id, { x: point.x, z: point.z }]));
+      return {
+        ...profile,
+        points,
+        segments: retargetSketchArcs(profile.segments, position(profile.points), position(points)),
+      };
     }
     if (pointerAction?.kind === "bend-arc") {
       const action = pointerAction;
