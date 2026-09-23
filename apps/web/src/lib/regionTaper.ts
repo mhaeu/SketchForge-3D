@@ -9,8 +9,15 @@ import type { WorkplaneShape } from "@/types/sketchforge";
  * `edges` sind die vier Kanten der Deckflaeche des Kastens, in mm von dessen
  * Mitte aus - genau wie am ganzen Koerper. `heights` ist der Anteil der
  * Kastenhoehe, den er an jeder Seite noch stehen laesst.
+ *
+ * Der Kasten selbst gehoert dazu, und zwar aus einem Grund: Die vier Kanten
+ * sind Masse *in* ihm. Wurden sie an einem Kasten abgelesen und an einem
+ * anderen aufgetragen, so bedeutet schon der unveraenderte Stand eine
+ * Verschiebung - das Objekt verzerrt sich, ohne dass jemand etwas
+ * eingestellt haette. Weil beides zusammengehoert, reist es zusammen.
  */
 export type RegionTaper = {
+  box: ResizeRegion;
   edges: ShapeSides;
   heights: ShapeSides;
 };
@@ -20,6 +27,7 @@ export function untouchedRegionTaper(region: ResizeRegion): RegionTaper {
   const centreX = (region.minX + region.maxX) / 2;
   const centreZ = (region.minZ + region.maxZ) / 2;
   return {
+    box: { ...region },
     edges: {
       left: region.minX - centreX,
       right: region.maxX - centreX,
@@ -30,8 +38,8 @@ export function untouchedRegionTaper(region: ResizeRegion): RegionTaper {
   };
 }
 
-export function regionTaperIsUntouched(region: ResizeRegion, taper: RegionTaper) {
-  const plain = untouchedRegionTaper(region);
+export function regionTaperIsUntouched(taper: RegionTaper) {
+  const plain = untouchedRegionTaper(taper.box);
   return (["left", "right", "front", "back"] as const).every((side) =>
     Math.abs(taper.edges[side] - plain.edges[side]) < 1e-6 && Math.abs(taper.heights[side] - 1) < 1e-9);
 }
@@ -43,8 +51,8 @@ export function regionTaperIsUntouched(region: ResizeRegion, taper: RegionTaper)
  * `taperPositionsInRegion` mit derselben Maschinerie, die auch den Kasten
  * aendert. Hier steht nur, wie die acht Werte dorthin gereicht werden.
  */
-export function taperRegionPositions(positions: readonly number[], region: ResizeRegion, taper: RegionTaper): number[] {
-  return taperPositionsInRegion(positions.slice() as number[], region, taper.edges, taper.heights);
+export function taperRegionPositions(positions: readonly number[], taper: RegionTaper): number[] {
+  return taperPositionsInRegion(positions.slice() as number[], taper.box, taper.edges, taper.heights);
 }
 
 export type RegionTaperResult = {
@@ -59,12 +67,13 @@ export type RegionTaperResult = {
  * verformten Punkte werden das neue Grundnetz, Groesse und Lage folgen den
  * neuen Grenzen, und alles, was die alte Oberflaeche beschrieb, faellt weg.
  */
-export function regionTaperedShape(shape: WorkplaneShape, region: ResizeRegion, taper: RegionTaper, displayPositions: number[]): RegionTaperResult | null {
+export function regionTaperedShape(shape: WorkplaneShape, taper: RegionTaper, displayPositions: number[]): RegionTaperResult | null {
   const mesh = shape.importedMesh;
   if (!mesh || displayPositions.length < 9) return null;
-  if (regionTaperIsUntouched(region, taper)) return null;
+  if (regionTaperIsUntouched(taper)) return null;
 
-  const positions = taperRegionPositions(displayPositions, region, taper);
+  const region = taper.box;
+  const positions = taperRegionPositions(displayPositions, taper);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let minZ = Number.POSITIVE_INFINITY;

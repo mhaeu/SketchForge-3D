@@ -1515,7 +1515,7 @@ export function ShapeInspector({
                   weiterer Umbau auf dem vorigen. */}
               <div className="property-list">
                 <ShapePropertyRows
-                  properties={regionTaperProperties(resizeRegion, pendingRegionTaper, setPendingRegionTaper)}
+                  properties={regionTaperProperties(pendingRegionTaper, setPendingRegionTaper)}
                   workspace={workspace}
                   disabled={locked}
                   onInteractionActiveChange={onInteractionActiveChange}
@@ -1525,7 +1525,7 @@ export function ShapeInspector({
                 <button
                   type="button"
                   className="region-taper-apply"
-                  disabled={locked || regionTaperIsUntouched(resizeRegion, pendingRegionTaper)}
+                  disabled={locked || regionTaperIsUntouched(pendingRegionTaper)}
                   onClick={() => onRegionTaper(pendingRegionTaper)}
                 >
                   {t("inspector.applyRegionTaper")}
@@ -1767,13 +1767,14 @@ function regionBoundProperties(shape: WorkplaneShape, region: ResizeRegion, onCh
  * als Anteil.
  */
 function regionTaperProperties(
-  region: ResizeRegion,
   taper: RegionTaper,
   onChange: (next: RegionTaper) => void,
 ): ShapePropertyConfig[] {
-  const width = Math.max(MIN_REGION_SIZE, region.maxX - region.minX);
-  const depth = Math.max(MIN_REGION_SIZE, region.maxZ - region.minZ);
-  const height = Math.max(MIN_REGION_SIZE, region.maxY - region.minY);
+  // Die Masse beziehen sich auf den Kasten, den die Verjuengung mitbringt -
+  // denselben, gegen den sie am Ende gerechnet wird.
+  const width = Math.max(MIN_REGION_SIZE, taper.box.maxX - taper.box.minX);
+  const depth = Math.max(MIN_REGION_SIZE, taper.box.maxZ - taper.box.minZ);
+  const height = Math.max(MIN_REGION_SIZE, taper.box.maxY - taper.box.minY);
   const edgeRows = ([
     ["sideLeft", "left", width],
     ["sideRight", "right", width],

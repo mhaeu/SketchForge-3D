@@ -42,9 +42,25 @@ const plain = untouchedRegionTaper(whole);
 
 describe("Verjuengung eines Teilbereichs", () => {
   it("erkennt, dass nichts eingestellt ist", () => {
-    expect(regionTaperIsUntouched(whole, plain)).toBe(true);
-    expect(regionTaperIsUntouched(whole, { ...plain, edges: { ...plain.edges, left: -4 } })).toBe(false);
-    expect(regionTaperIsUntouched(whole, { ...plain, heights: { ...plain.heights, left: 0.5 } })).toBe(false);
+    expect(regionTaperIsUntouched(plain)).toBe(true);
+    expect(regionTaperIsUntouched({ ...plain, edges: { ...plain.edges, left: -4 } })).toBe(false);
+    expect(regionTaperIsUntouched({ ...plain, heights: { ...plain.heights, left: 0.5 } })).toBe(false);
+  });
+
+  it("traegt den Kasten mit sich, an dem die Masse abgelesen wurden", () => {
+    /*
+     * Die vier Deckkanten sind Masse *in* einem Kasten. Wurden sie an einem
+     * abgelesen und an einem anderen aufgetragen, so bedeutet schon der
+     * unveraenderte Stand eine Verschiebung: Das Objekt verzerrt sich, ohne
+     * dass jemand etwas eingestellt haette - und wer nur eine Hoehe absenkte,
+     * sah stattdessen die Laenge davonlaufen.
+     */
+    const narrow: ResizeRegion = { ...whole, minZ: -5, maxZ: 5 };
+    expect(untouchedRegionTaper(whole).box).toEqual(whole);
+    expect(untouchedRegionTaper(narrow).box).toEqual(narrow);
+    // Derselbe Zahlenstand, an verschiedenen Kaesten abgelesen, ist nicht
+    // derselbe Stand - und als unveraendert gilt nur der eigene.
+    expect(regionTaperIsUntouched({ ...untouchedRegionTaper(narrow), box: whole })).toBe(false);
   });
 
   it("verjuengt den ganzen Koerper, wenn der Kasten ihn ganz umfasst", () => {
@@ -102,6 +118,22 @@ describe("Verjuengung eines Teilbereichs", () => {
     expect(watertight(result)).toBe(true);
   });
 
+  it("laesst die Laenge in Ruhe, wenn nur eine Hoehe abgesenkt wird", () => {
+    /*
+     * Genau das war der Fehler: Die vier Deckkanten waren an einem Kasten
+     * abgelesen und an einem anderen aufgetragen, also flog die Tiefe
+     * auseinander, sobald man irgendetwas anfasste - auch eine Hoehe.
+     */
+    const plainWhole = untouchedRegionTaper(whole);
+    const result = taperPositionsInRegion(body, whole, plainWhole.edges, { left: 0.5, right: 1, front: 1, back: 1 });
+    const zs = points(result).map((p) => p[2]);
+    expect(Math.min(...zs)).toBeCloseTo(-10, 6);
+    expect(Math.max(...zs)).toBeCloseTo(10, 6);
+    const xs = points(result).map((p) => p[0]);
+    expect(Math.min(...xs)).toBeCloseTo(-10, 6);
+    expect(Math.max(...xs)).toBeCloseTo(10, 6);
+  });
+
   it("ruehrt nichts an, wenn der Kasten unveraendert beschrieben wird", () => {
     const result = taperPositionsInRegion(body, whole, plain.edges, plain.heights);
     // Geschnitten wird, aber die Oberflaeche bleibt, wo sie war.
@@ -126,13 +158,13 @@ describe("Der Koerper nach dem Verjuengen des Teilbereichs", () => {
      * einen Bauwert anfasst - und die Verjuengung des Gesamtobjekts ist so
      * ein Bauwert. Die Arbeit am Teilbereich verfiel damit sofort wieder.
      */
-    const result = regionTaperedShape(shape, whole, { edges: { left: -5, right: 5, front: -10, back: 10 }, heights: plain.heights }, body);
+    const result = regionTaperedShape(shape, { box: whole, edges: { left: -5, right: 5, front: -10, back: 10 }, heights: plain.heights }, body);
     expect(result).not.toBeNull();
     expect("parametricSource" in result!.patch).toBe(true);
     expect(result!.patch.parametricSource).toBeUndefined();
   });
 
   it("meldet nichts, wenn nichts eingestellt ist", () => {
-    expect(regionTaperedShape(shape, whole, plain, body)).toBeNull();
+    expect(regionTaperedShape(shape, plain, body)).toBeNull();
   });
 });

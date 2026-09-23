@@ -9068,7 +9068,15 @@ export function SketchForgeEditor({
       setNotice(t("status.unlockBeforeTaper"));
       return;
     }
-    const result = regionTaperedShape(shape, current.region, taper, displayPositions(shape));
+    /*
+     * Gerechnet wird gegen den Kasten, den die Verjuengung selbst mitbringt -
+     * und das ist der, dessen Zahlen im Merkmalsfeld standen. Frueher stand
+     * hier der engere, an die Geometrie herangezogene Kasten: Die vier
+     * Deckkanten waren dann Masse in einem anderen Kasten als dem, in dem sie
+     * aufgetragen wurden, und schon der unveraenderte Stand verzerrte das
+     * Objekt.
+     */
+    const result = regionTaperedShape(shape, taper, displayPositions(shape));
     if (!result) {
       setNotice(t("status.regionTaperUnchanged"));
       return;
