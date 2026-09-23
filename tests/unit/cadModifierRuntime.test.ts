@@ -107,7 +107,24 @@ describe("tessellation deflection", () => {
   it("gets finer with the quality and with a smaller radius", () => {
     expect(cadModifierBaseDeflection("draft", 6).linear).toBeGreaterThan(cadModifierBaseDeflection("standard", 6).linear);
     expect(cadModifierBaseDeflection("standard", 6).linear).toBeGreaterThan(cadModifierBaseDeflection("fine", 6).linear);
-    expect(cadModifierBaseDeflection("fine", 12).linear).toBeGreaterThan(cadModifierBaseDeflection("fine", 1).linear);
+    // Ein kleinerer Halbmesser loest feiner auf, solange er unter der
+    // Obergrenze bleibt.
+    expect(cadModifierBaseDeflection("fine", 0.4).linear).toBeLessThan(cadModifierBaseDeflection("fine", 0.8).linear);
+    expect(cadModifierBaseDeflection("standard", 0.4).linear).toBeLessThan(cadModifierBaseDeflection("standard", 0.8).linear);
+  });
+
+  it("wird bei einem grossen Halbmesser nicht grober als die Obergrenze", () => {
+    /*
+     * Frueher stand hier eine Untergrenze statt einer Obergrenze: Je groesser
+     * der Halbmesser, desto groeber durfte das Netz werden. Eine Verrundung
+     * von zehn Millimetern kam facettiert heraus, waehrend die von einem
+     * Millimeter daneben glatt war.
+     */
+    expect(cadModifierBaseDeflection("fine", 40).linear).toBeCloseTo(0.025, 9);
+    expect(cadModifierBaseDeflection("standard", 40).linear).toBeCloseTo(0.05, 9);
+    expect(cadModifierBaseDeflection("draft", 40).linear).toBeCloseTo(0.12, 9);
+    // Und auch nicht feiner, als noch sinnvoll zu rechnen ist.
+    expect(cadModifierBaseDeflection("fine", 0.0001).linear).toBeCloseTo(0.005, 9);
   });
 
   it("never gets coarser than what the body already needed", () => {

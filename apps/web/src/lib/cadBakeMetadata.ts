@@ -102,7 +102,7 @@ function isRoundFootprint(shape: WorkplaneShape) {
 }
 
 /**
- * Cylinder, cone and sphere as analytic solids. Without this they reach the
+ * Cylinder, cone, sphere and torus as analytic solids. Without this they reach the
  * CAD worker as tessellated meshes, i.e. as prisms whose rings of near-tangent
  * edges break OCCT's fillet builder - see CadModifierPrimitivePart.
  */
@@ -135,6 +135,19 @@ export function cadModifierPrimitiveForRoundShape(shape: WorkplaneShape): CadMod
     // primitive for.
     if (Math.abs(width - depth) > 0.0005 || Math.abs(width - height) > 0.0005) return null;
     return { kind: "sphere", radius: height / 2, transform: primitivePlacementTransform(shape, height) };
+  }
+
+  if (shape.kind === "torus") {
+    // Nur ein Kreisring: Ist die Grundflaeche kein Kreis, entsteht ein
+    // elliptischer Ring, fuer den es keinen Grundkoerper gibt. Die beiden
+    // Halbmesser werden genauso gelesen wie beim Bauen des Netzes - die Hoehe
+    // ist die Dicke des Schlauchs, die Breite der Aussendurchmesser.
+    if (!isRoundFootprint(shape)) return null;
+    const minorRadius = height / 2;
+    const majorRadius = Math.min(width, depth) / 2 - minorRadius;
+    if (!Number.isFinite(minorRadius) || minorRadius <= 0) return null;
+    if (!Number.isFinite(majorRadius) || majorRadius <= 0) return null;
+    return { kind: "torus", majorRadius, minorRadius, transform: primitivePlacementTransform(shape, height) };
   }
 
   return null;

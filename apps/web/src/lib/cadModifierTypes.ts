@@ -37,7 +37,8 @@ export type CadModifierPrimitivePart =
   | { kind: "box"; width: number; depth: number; height: number; transform?: number[] }
   | { kind: "cylinder"; radius: number; height: number; transform?: number[] }
   | { kind: "cone"; baseRadius: number; topRadius: number; height: number; transform?: number[] }
-  | { kind: "sphere"; radius: number; transform?: number[] };
+  | { kind: "sphere"; radius: number; transform?: number[] }
+  | { kind: "torus"; majorRadius: number; minorRadius: number; transform?: number[] };
 
 export type CadModifierMeshPart = {
   positions?: Float32Array;

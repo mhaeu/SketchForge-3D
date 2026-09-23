@@ -113,7 +113,7 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
       maxDimension: optionalShapeDimension(source.maxDimension, fallbackEntry?.maxDimension),
     };
     if (kind === "sphere" || kind === "halfSphere") {
-      entry.steps = optionalShapeNumber(source.steps, fallbackEntry?.steps, 6, 64, true);
+      entry.steps = optionalShapeNumber(source.steps, fallbackEntry?.steps, 6, MAX_HIGH_RESOLUTION_STEPS, true);
     }
     if (kind === "cylinder" || kind === "ellipse" || kind === "cone") {
       entry.sides = optionalShapeNumber(source.sides, fallbackEntry?.sides, 3, MAX_HIGH_RESOLUTION_SIDES, true);
@@ -184,6 +184,15 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
 export function shapeDimensionLimit(workspace: WorkplaneWorkspaceSettings, kind: ShapeKind, appDefault: number) {
   return workspace.shapeCustomizations[kind]?.maxDimension ?? appDefault;
 }
+
+/**
+ * Wie fein eine Kugel oder Halbkugel hoechstens facettiert wird.
+ *
+ * Zweihundertsechsundfuenfzig Stufen sind fuenfhundertzwoelf Segmente im
+ * Rund - genug, dass auch eine grosse Kugel im Druck nicht mehr kantig
+ * wirkt. Das kostet Netz: Wer es nicht braucht, bleibt tiefer.
+ */
+export const MAX_HIGH_RESOLUTION_STEPS = 256;
 
 export function normalizeSnapGrid(value: unknown, fallback: GridSize = DEFAULT_SNAP_GRID): GridSize {
   return snapGridOptions.includes(value as GridSize) ? (value as GridSize) : fallback;

@@ -255,6 +255,16 @@ function buildPrimitiveSolid(cad: OcctKernel, primitive: CadModifierPrimitivePar
     return applyCadTransform(cad, cad.makeCone(baseRadius, topRadius, height), primitiveToLocalFrame(true, 0));
   }
 
+  if (primitive.kind === "torus") {
+    const { majorRadius, minorRadius } = primitive;
+    if (![majorRadius, minorRadius].every((value) => Number.isFinite(value) && value > 0)) {
+      throw new Error("The selected primitive has invalid dimensions");
+    }
+    // Der Ring liegt beim Kern um die Z-Achse; gedreht liegt er flach, und
+    // angehoben um seinen Schlauchhalbmesser sitzt seine Unterseite auf null.
+    return applyCadTransform(cad, cad.makeTorus(majorRadius, minorRadius), primitiveToLocalFrame(true, minorRadius));
+  }
+
   const { radius } = primitive;
   if (!Number.isFinite(radius) || radius <= 0) {
     throw new Error("The selected primitive has invalid dimensions");

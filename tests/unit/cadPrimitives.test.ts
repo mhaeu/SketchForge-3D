@@ -37,6 +37,10 @@ function buildSolid(primitive: CadModifierPrimitivePart) {
     solid = kernel.transform(kernel.makeCylinder(primitive.radius, primitive.height), localFrame(true, 0));
   } else if (primitive.kind === "cone") {
     solid = kernel.transform(kernel.makeCone(primitive.baseRadius, primitive.topRadius, primitive.height), localFrame(true, 0));
+  } else if (primitive.kind === "torus") {
+    // Der Ring liegt beim Kern um die Z-Achse; gedreht liegt er flach, und
+    // angehoben um seinen Schlauchhalbmesser sitzt seine Unterseite auf null.
+    solid = kernel.transform(kernel.makeTorus(primitive.majorRadius, primitive.minorRadius), localFrame(true, primitive.minorRadius));
   } else {
     solid = kernel.transform(kernel.makeSphere(primitive.radius), localFrame(false, primitive.radius));
   }
@@ -69,6 +73,18 @@ describe("analytic CAD primitives for round shapes", () => {
       shape: { ...baseShape, kind: "sphere", width: 16, depth: 16, height: 16 },
       volume: (4 / 3) * Math.PI * 8 ** 3,
     },
+    {
+      // Aussendurchmesser zwanzig, Schlauch sechs dick: Der Schlauchhalbmesser
+      // ist drei, der Ringhalbmesser zehn minus drei.
+      label: "torus",
+      shape: { ...baseShape, kind: "torus", width: 20, depth: 20, height: 6 },
+      volume: 2 * Math.PI ** 2 * 7 * 3 ** 2,
+    },
+    {
+      label: "torus placed off-origin and raised",
+      shape: { ...baseShape, kind: "torus", width: 30, depth: 30, height: 10, x: -8, z: 5, elevation: 4 },
+      volume: 2 * Math.PI ** 2 * 10 * 5 ** 2,
+    },
   ];
 
   it.each(cases)("$label occupies exactly the box the viewport draws", ({ shape, volume }) => {
@@ -96,6 +112,10 @@ describe("analytic CAD primitives for round shapes", () => {
     expect(cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "cylinder", width: 20, depth: 12, height: 20 })).toBeNull();
     expect(cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "sphere", width: 20, depth: 20, height: 12 })).toBeNull();
     expect(cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "box", width: 20, depth: 20, height: 20 })).toBeNull();
+    // Ein Ring mit unrunder Grundflaeche waere elliptisch, und einer, dessen
+    // Schlauch dicker ist als der Aussenhalbmesser, hat kein Loch mehr.
+    expect(cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "torus", width: 20, depth: 12, height: 6 })).toBeNull();
+    expect(cadModifierPrimitiveForRoundShape({ ...baseShape, kind: "torus", width: 20, depth: 20, height: 20 })).toBeNull();
   });
 
   it("fillets the top edge past the radius that broke on the tessellated path", () => {

@@ -12,11 +12,22 @@ export const CAD_MODIFIER_RUNTIME_BASE = "/occt";
  */
 export const SKETCH_CAD_DEFLECTION: CadModifierDeflection = { linear: 0.05, angular: 0.16 };
 
-/** Wie fein eine einzelne Kantenbearbeitung den ganzen Koerper vernetzt - ohne Untergrenze. */
+/**
+ * Wie fein eine einzelne Kantenbearbeitung den ganzen Koerper vernetzt.
+ *
+ * Die zulaessige Abweichung ist nach **oben** begrenzt, nicht nach unten. Das
+ * war vorher andersherum, und daran lag ein sichtbarer Fehler: Je groesser
+ * der Halbmesser, desto groeber durfte das Netz werden - eine Verrundung von
+ * zehn Millimetern kam facettiert heraus, waehrend die von einem Millimeter
+ * daneben glatt war. Umgekehrt ist es richtig: Ein grosser Halbmesser darf
+ * nie gruober werden als die Obergrenze, ein kleiner geht darunter, damit
+ * feine Stellen aufgeloest werden.
+ */
 export function cadModifierBaseDeflection(quality: CadModifierQuality, amount: number): CadModifierDeflection {
-  if (quality === "draft") return { linear: Math.max(0.12, amount / 3), angular: 0.42 };
-  if (quality === "fine") return { linear: Math.max(0.025, amount / 12), angular: 0.1 };
-  return { linear: Math.max(0.055, amount / 7), angular: 0.2 };
+  const safeAmount = Math.max(0.01, Number.isFinite(amount) ? amount : 1);
+  if (quality === "draft") return { linear: Math.min(0.12, Math.max(0.03, safeAmount / 10)), angular: 0.35 };
+  if (quality === "fine") return { linear: Math.min(0.025, Math.max(0.005, safeAmount / 40)), angular: 0.1 };
+  return { linear: Math.min(0.05, Math.max(0.01, safeAmount / 20)), angular: 0.16 };
 }
 
 /**
