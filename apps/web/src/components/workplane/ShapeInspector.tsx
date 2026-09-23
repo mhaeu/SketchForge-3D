@@ -1188,15 +1188,23 @@ export function ShapeInspector({
    * Felder wie vorher - Groesse und Versatz -, nur anders angesehen.
    */
   const edges = shapeTopFaceEdges(shape);
-  const edgeBound = Math.max(taperDimensionMax / 2, shapeWidth(shape), shapeDepth(shape));
+  /*
+   * Der Weg des Reglers richtet sich nach dem Koerper selbst: von der
+   * Mittellinie aus bis zur doppelten eigenen Breite beziehungsweise Tiefe.
+   * Ein fester, weiter Bereich waere hier unbrauchbar - bei einem Kasten von
+   * zwanzig Millimetern sprangen schon ein paar Bildpunkte Mausweg um
+   * Dutzende Millimeter, und die Deckflaeche flog zur Seite davon.
+   */
+  const edgeBoundX = Math.max(1, shapeWidth(shape));
+  const edgeBoundZ = Math.max(1, shapeDepth(shape));
   const sideHeights = shapeSideHeights(shape);
   const taperProperties: ShapePropertyConfig[] = shape.kind === "gear" ? [] : [
     {
       id: "sideLeft",
       label: t("prop.sideLeft"),
       value: edges.left,
-      min: -edgeBound,
-      max: edgeBound,
+      min: -edgeBoundX,
+      max: edgeBoundX,
       step: 0.1,
       onChange: (left) => onUpdate(shapeTopFaceEdgePatch(shape, { left })),
     },
@@ -1204,8 +1212,8 @@ export function ShapeInspector({
       id: "sideRight",
       label: t("prop.sideRight"),
       value: edges.right,
-      min: -edgeBound,
-      max: edgeBound,
+      min: -edgeBoundX,
+      max: edgeBoundX,
       step: 0.1,
       onChange: (right) => onUpdate(shapeTopFaceEdgePatch(shape, { right })),
     },
@@ -1213,8 +1221,8 @@ export function ShapeInspector({
       id: "sideFront",
       label: t("prop.sideFront"),
       value: edges.front,
-      min: -edgeBound,
-      max: edgeBound,
+      min: -edgeBoundZ,
+      max: edgeBoundZ,
       step: 0.1,
       onChange: (front) => onUpdate(shapeTopFaceEdgePatch(shape, { front })),
     },
@@ -1222,8 +1230,8 @@ export function ShapeInspector({
       id: "sideBack",
       label: t("prop.sideBack"),
       value: edges.back,
-      min: -edgeBound,
-      max: edgeBound,
+      min: -edgeBoundZ,
+      max: edgeBoundZ,
       step: 0.1,
       onChange: (back) => onUpdate(shapeTopFaceEdgePatch(shape, { back })),
     },
@@ -1744,13 +1752,12 @@ function regionTaperProperties(
   const width = Math.max(MIN_REGION_SIZE, region.maxX - region.minX);
   const depth = Math.max(MIN_REGION_SIZE, region.maxZ - region.minZ);
   const height = Math.max(MIN_REGION_SIZE, region.maxY - region.minY);
-  const bound = Math.max(width, depth);
   const edgeRows = ([
-    ["sideLeft", "left"],
-    ["sideRight", "right"],
-    ["sideFront", "front"],
-    ["sideBack", "back"],
-  ] as const).map(([id, side]) => ({
+    ["sideLeft", "left", width],
+    ["sideRight", "right", width],
+    ["sideFront", "front", depth],
+    ["sideBack", "back", depth],
+  ] as const).map(([id, side, bound]) => ({
     id,
     label: t(`prop.${id}` as MessageKey),
     value: taper.edges[side],

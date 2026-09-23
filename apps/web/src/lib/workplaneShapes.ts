@@ -277,17 +277,29 @@ export function shapeHasSideHeights(shape: WorkplaneShape) {
  * tiefer, ein Dach. Die volle Hoehe kommt einmal heraus, wenn alle vier
  * Seiten sie haben.
  */
-export function shapeSideHeightScaleAt(shape: WorkplaneShape, x: number, z: number) {
+export function shapeSideHeightScaleAtShare(shape: WorkplaneShape, acrossWidth: number, acrossDepth: number) {
   if (!shapeHasSideHeights(shape)) return 1;
   const factors = shapeSideHeightFactors(shape);
   const clamp01 = (value: number) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
-  // x und z zaehlen von der Mitte der Grundflaeche aus - so, wie die Netze
-  // der Grundkoerper aufgebaut sind.
-  const u = clamp01(x / Math.max(1e-6, shapeWidth(shape)) + 0.5);
-  const v = clamp01(z / Math.max(1e-6, shapeDepth(shape)) + 0.5);
+  const u = clamp01(acrossWidth);
+  const v = clamp01(acrossDepth);
   const alongWidth = factors.left + (factors.right - factors.left) * u;
   const alongDepth = factors.front + (factors.back - factors.front) * v;
   return Math.max(0, alongWidth + alongDepth - 1);
+}
+
+/**
+ * Dasselbe, aber nach Millimetern gefragt - x und z zaehlen von der Mitte der
+ * Grundflaeche aus. Nur dort brauchbar, wo die Punkte wirklich in
+ * Millimetern stehen; ein Netz, das erst am Objekt auf seine Groesse gezogen
+ * wird, fragt ueber den Anteil.
+ */
+export function shapeSideHeightScaleAt(shape: WorkplaneShape, x: number, z: number) {
+  return shapeSideHeightScaleAtShare(
+    shape,
+    x / Math.max(1e-6, shapeWidth(shape)) + 0.5,
+    z / Math.max(1e-6, shapeDepth(shape)) + 0.5,
+  );
 }
 
 /** Setzen - in Millimetern, wie im Merkmalsfeld, abgelegt als Anteil. */

@@ -57,7 +57,8 @@ import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import type { RegionTaper } from "@/lib/regionTaper";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { deformShapePoint } from "@/lib/shapeMeshDeform";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeightScaleAtShare, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -9379,34 +9380,10 @@ function taperGeometryForShape(geometry: THREE.BufferGeometry, shape: WorkplaneS
   const box = tapered.boundingBox;
   const position = tapered.getAttribute("position");
   if (!box || !position) return tapered;
-  const height = Math.max(1e-6, box.max.y - box.min.y);
-  const centerX = (box.min.x + box.max.x) / 2;
-  const centerZ = (box.min.z + box.max.z) / 2;
-  const deformed = shapeHasExtrudeDeform(shape);
-  const lowered = shapeHasSideHeights(shape);
+  const bounds = { minX: box.min.x, maxX: box.max.x, minY: box.min.y, maxY: box.max.y, minZ: box.min.z, maxZ: box.max.z };
   for (let index = 0; index < position.count; index += 1) {
-    const y = position.getY(index);
-    const normalizedHeight = (y - box.min.y) / height;
-    const widthScale = shapeTaperScaleAt(shape, normalizedHeight, "width");
-    const depthScale = shapeTaperScaleAt(shape, normalizedHeight, "depth");
-    // Die Hoehe an dieser Stelle richtet sich nach der Grundflaeche, also
-    // nach dem Punkt vor der Verjuengung - sonst wanderte der Keil mit,
-    // waehrend die Seiten sich neigen.
-    const standing = lowered
-      ? box.min.y + (y - box.min.y) * shapeSideHeightScaleAt(shape, position.getX(index) - centerX, position.getZ(index) - centerZ)
-      : y;
-    let localX = centerX + (position.getX(index) - centerX) * widthScale;
-    let localZ = centerZ + (position.getZ(index) - centerZ) * depthScale;
-    if (deformed) {
-      const deform = shapeExtrudeDeformAt(shape, normalizedHeight);
-      const cos = Math.cos(deform.twistRadians);
-      const sin = Math.sin(deform.twistRadians);
-      const relativeX = localX - centerX;
-      const relativeZ = localZ - centerZ;
-      localX = centerX + relativeX * cos - relativeZ * sin + deform.offsetX;
-      localZ = centerZ + relativeX * sin + relativeZ * cos + deform.offsetZ;
-    }
-    position.setXYZ(index, localX, standing, localZ);
+    const moved = deformShapePoint(shape, bounds, { x: position.getX(index), y: position.getY(index), z: position.getZ(index) });
+    position.setXYZ(index, moved.x, moved.y, moved.z);
   }
   position.needsUpdate = true;
   tapered.computeVertexNormals();
@@ -9417,11 +9394,14 @@ function taperGeometryForShape(geometry: THREE.BufferGeometry, shape: WorkplaneS
 
 function applyGroupedContentTaper(content: THREE.Group, shape: WorkplaneShape, baseBounds: THREE.Box3) {
   if (!shapeHasShapeDeform(shape)) return;
-  const height = Math.max(1e-6, baseBounds.max.y - baseBounds.min.y);
-  const centerX = (baseBounds.min.x + baseBounds.max.x) / 2;
-  const centerZ = (baseBounds.min.z + baseBounds.max.z) / 2;
-  const deformed = shapeHasExtrudeDeform(shape);
-  const lowered = shapeHasSideHeights(shape);
+  const bounds = {
+    minX: baseBounds.min.x,
+    maxX: baseBounds.max.x,
+    minY: baseBounds.min.y,
+    maxY: baseBounds.max.y,
+    minZ: baseBounds.min.z,
+    maxZ: baseBounds.max.z,
+  };
   content.updateMatrixWorld(true);
   const contentWorldInverse = content.matrixWorld.clone().invert();
   content.traverse((object) => {
@@ -9441,23 +9421,8 @@ function applyGroupedContentTaper(content: THREE.Group, shape: WorkplaneShape, b
     const point = new THREE.Vector3();
     for (let index = 0; index < position.count; index += 1) {
       point.fromBufferAttribute(position, index).applyMatrix4(localToContent);
-      const normalizedHeight = (point.y - baseBounds.min.y) / height;
-      const widthScale = shapeTaperScaleAt(shape, normalizedHeight, "width");
-      const depthScale = shapeTaperScaleAt(shape, normalizedHeight, "depth");
-      if (lowered) {
-        point.y = baseBounds.min.y + (point.y - baseBounds.min.y) * shapeSideHeightScaleAt(shape, point.x - centerX, point.z - centerZ);
-      }
-      point.x = centerX + (point.x - centerX) * widthScale;
-      point.z = centerZ + (point.z - centerZ) * depthScale;
-      if (deformed) {
-        const deform = shapeExtrudeDeformAt(shape, normalizedHeight);
-        const cos = Math.cos(deform.twistRadians);
-        const sin = Math.sin(deform.twistRadians);
-        const relativeX = point.x - centerX;
-        const relativeZ = point.z - centerZ;
-        point.x = centerX + relativeX * cos - relativeZ * sin + deform.offsetX;
-        point.z = centerZ + relativeX * sin + relativeZ * cos + deform.offsetZ;
-      }
+      const moved = deformShapePoint(shape, bounds, point);
+      point.set(moved.x, moved.y, moved.z);
       point.applyMatrix4(contentToLocal);
       position.setXYZ(index, point.x, point.y, point.z);
     }
