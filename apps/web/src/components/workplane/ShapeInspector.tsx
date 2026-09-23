@@ -1497,7 +1497,7 @@ export function ShapeInspector({
           <div className="property-card-header region-card-header">
             <span>{t("inspector.region")}</span>
           </div>
-          <p className="region-card-hint">The handles now resize the box. Set its limits here - the box hugs whatever geometry lies within them.</p>
+          <p className="region-card-hint">{t("inspector.regionHint")}</p>
           <div className="property-list">
             <ShapePropertyRows
               properties={regionBoundProperties(shape, resizeRegion, onResizeRegionChange)}
@@ -1741,7 +1741,7 @@ function regionBoundProperties(shape: WorkplaneShape, region: ResizeRegion, onCh
   return rows.flatMap(({ id, label, lo, hi, min, max }) => [
     {
       id: `${id}From`,
-      label: `${label} from`,
+      label: t("inspector.rangeFrom", { label }),
       value: region[lo],
       min,
       max,
@@ -1750,7 +1750,7 @@ function regionBoundProperties(shape: WorkplaneShape, region: ResizeRegion, onCh
     },
     {
       id: `${id}To`,
-      label: `${label} to`,
+      label: t("inspector.rangeTo", { label }),
       value: region[hi],
       min,
       max,

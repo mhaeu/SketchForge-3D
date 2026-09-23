@@ -42,7 +42,7 @@ import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
 import { meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
 import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
 import { workplaneAlignRotation, workplaneCentringShift } from "@/lib/workplaneArrange";
-import { t, type MessageKey } from "@/lib/i18n";
+import { t, translateIfKey, type MessageKey } from "@/lib/i18n";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { useLanguage } from "@/lib/useLanguage";
 import {
@@ -140,8 +140,10 @@ import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
 import { arcBulgeAlong, arcCubics, isArcSegment, retargetSketchArcs, stepsEncloseArea } from "@/lib/sketchArcs";
+import { buildSweepMesh } from "@/lib/sweepMesh";
+import { splitSweepDrawing, sweepPathPoint } from "@/lib/sketchSweep";
 import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
-import { cadSketchRegions } from "@/lib/sketchCadProfile";
+import { cadSketchRegions, sampleCadSketchPath } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
 import { regionTaperedShape, type RegionTaper } from "@/lib/regionTaper";
@@ -666,6 +668,73 @@ function ensureSketchCadWorker() {
  * geht denselben Weg durch den CAD-Kern, nur der Auftrag unterscheidet sich -
  * und beim Folgen braucht es keine Hoehe, die steckt im Pfad.
  */
+/**
+ * Die Form am Weg entlangfuehren - ohne CAD-Kern.
+ *
+ * Sein Rohr-Sweep zog die Form ueber die Ecken eines eckigen Weges hinweg,
+ * statt sie abzuwinkeln, und meldete das Ergebnis noch als gueltig; keines
+ * seiner Verfahren brachte einen rechteckigen Weg zustande. Das Netz aus
+ * Ringen auf Gehrung ist dagegen eine Handvoll Vektorrechnung, sie laesst
+ * sich pruefen, und sie tut genau das, was die Sache beschreibt.
+ */
+function sweptShapeFromSketchProfile(profile: SketchProfile, existing?: WorkplaneShape | null) {
+  const prepared = expandSketchCircles(cloneSketchProfile(profile));
+  const drawing = splitSweepDrawing(prepared);
+  if (!drawing) throw new Error(t("status.sweepNeedsPath"));
+  const regions = cadSketchRegions(drawing.shape);
+  if (regions.length === 0) throw new Error(t("status.closeProfile"));
+
+  const outlines = regions.map((region) => ({
+    outer: sampleCadSketchPath(region.outer),
+    holes: region.holes.map(sampleCadSketchPath),
+  }));
+  // Die Form sitzt mit ihrer Mitte auf dem Weg - beide Zeichnungen haben
+  // denselben Nullpunkt, meinen aber verschiedene Ebenen.
+  const all = outlines.flatMap((outline) => outline.outer);
+  const centre = {
+    x: (Math.min(...all.map((point) => point.x)) + Math.max(...all.map((point) => point.x))) / 2,
+    z: (Math.min(...all.map((point) => point.z)) + Math.max(...all.map((point) => point.z))) / 2,
+  };
+  const centred = (points: Array<{ x: number; z: number }>) => points.map((point) => ({ x: point.x - centre.x, z: point.z - centre.z }));
+  const path = sampleCadSketchPath(drawing.spine).map(sweepPathPoint);
+
+  const mesh = buildSweepMesh(
+    outlines.map((outline) => ({ outer: centred(outline.outer), holes: outline.holes.map(centred) })),
+    path,
+    drawing.spine.closed,
+    (outer, holes) => THREE.ShapeUtils.triangulateShape(
+      outer.map((point) => new THREE.Vector2(point.x, point.z)),
+      holes.map((hole) => hole.map((point) => new THREE.Vector2(point.x, point.z))),
+    ),
+  );
+  if (!mesh) throw new Error(t("status.sweepPathTooSharp"));
+
+  const source = canonicalizeShape({
+    ...(existing ?? {
+      id: createLocalId("sketch-sweep"),
+      name: t("shape.sketchSweep"),
+      kind: "mesh" as const,
+      color: "#d41721",
+      x: 0,
+      z: 0,
+      size: 1,
+      width: 1,
+      depth: 1,
+      height: 1,
+      rotation: 0,
+    }),
+    sketchProfile: cloneSketchProfile(profile),
+    sketchOperation: "sweep" as const,
+    edgeTreatments: undefined,
+    edgeTreatmentHistory: undefined,
+    cadDisplayEdges: undefined,
+    cadDisplayEdgesVersion: undefined,
+  });
+  const shape = shapeFromCadMesh(source, mesh.positions, mesh.normals, mesh.indices, "");
+  if (!shape) throw new Error(t("status.sketchWorkerEmpty"));
+  return { ...shape, sketchProfile: cloneSketchProfile(profile), sketchOperation: "sweep" as const };
+}
+
 async function cadShapeFromSketchProfile(
   profile: SketchProfile,
   height: number,
@@ -686,7 +755,9 @@ async function cadShapeFromSketchProfile(
       ? { type: "sweep", requestId, profile: prepared }
       : { type: "build", requestId, profile: prepared, height: safeHeight });
   });
-  if (response.type === "error") throw new Error(response.message);
+  // Der Arbeiter kennt die eingestellte Sprache nicht und nennt deshalb
+  // den Textschluessel; uebersetzt wird hier.
+  if (response.type === "error") throw new Error(translateIfKey(response.message));
   const source = canonicalizeShape({
     ...(existing ?? {
       id: createLocalId(operation === "sweep" ? "sketch-sweep" : "sketch-extrusion"),
@@ -1524,7 +1595,7 @@ function shapeFromCadMesh(
       sourceFormat: "json",
     },
     imagePlate: undefined,
-    cadBrep: brep,
+    cadBrep: brep || undefined,
     cadMeshDeflection: deflection ?? source.cadMeshDeflection,
     cadBrepFrame: {
       x: cleanNearZero(centerX, 0.0005),
@@ -7574,12 +7645,14 @@ export function SketchForgeEditor({
         resolved = await shapeFromRevolvedSketchProfile(sketchProfile, sketchRevolveSettings, existing);
       } else {
         setNotice(t("status.buildingSketch"));
-        const built = await cadShapeFromSketchProfile(sketchProfile, height, existing, sketchOperation === "sweep" ? "sweep" : "extrude");
+        const built = sketchOperation === "sweep"
+          ? sweptShapeFromSketchProfile(sketchProfile, existing)
+          : await cadShapeFromSketchProfile(sketchProfile, height, existing);
         resolved = placeSketchExtrusion(built, activeSketchWorkplane, existing);
       }
     } catch (error) {
       setNotice(error instanceof Error
-        ? error.message
+        ? translateIfKey(error.message)
         : sketchOperation === "revolve"
           ? t("status.cannotRevolve")
           : sketchOperation === "sweep"

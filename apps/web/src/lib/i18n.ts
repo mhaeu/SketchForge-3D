@@ -106,3 +106,21 @@ export function t(key: MessageKey, values?: Record<string, string | number>): st
 }
 
 export type { MessageKey };
+
+/**
+ * Ob diese Zeichenkette ein Textschluessel ist.
+ *
+ * Fuer Meldungen, die aus einem Arbeiter kommen: Der kann nicht uebersetzen -
+ * er laeuft neben der Anwendung und weiss nichts von der eingestellten
+ * Sprache -, also nennt er den Schluessel und die Uebersetzung geschieht
+ * hier. Was kein Schluessel ist, wird unveraendert durchgereicht; so bleibt
+ * auch die Meldung eines fremden Fehlers lesbar.
+ */
+export function isMessageKey(value: string): value is MessageKey {
+  return Object.prototype.hasOwnProperty.call(MESSAGES_EN, value);
+}
+
+/** Einen Text uebersetzen, der ein Schluessel sein kann, aber nicht muss. */
+export function translateIfKey(value: string): string {
+  return isMessageKey(value) ? t(value) : value;
+}

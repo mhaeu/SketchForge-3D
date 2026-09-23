@@ -69,7 +69,7 @@ export function SketchRevolvePreview({ positions }: { positions: number[] | null
   return (
     <aside className="sketch-revolve-preview" aria-label={t("sketch.revolvePreview")}>
       <div className="sketch-revolve-preview-title">3D preview</div>
-      {positions?.length ? <canvas ref={canvasRef} /> : <div className="sketch-revolve-preview-empty">Draw a closed profile left of the axis</div>}
+      {positions?.length ? <canvas ref={canvasRef} /> : <div className="sketch-revolve-preview-empty">{t("sketch.revolveNeedsProfile")}</div>}
     </aside>
   );
 }

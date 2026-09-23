@@ -1,9 +1,8 @@
 /// <reference lib="webworker" />
 
-import { OcctKernel, SweepMode, TransitionMode, type ShapeHandle } from "occt-wasm";
+import { OcctKernel } from "occt-wasm";
 import { cadSketchRegions, type OrderedCadSketchPath } from "@/lib/sketchCadProfile";
 import { segmentArcGeometry } from "@/lib/sketchArcs";
-import { splitSweepDrawing, sweepPathPoint, sweepProfilePlacement } from "@/lib/sketchSweep";
 import type { SketchCadBuildRequest, SketchCadBuildResponse } from "@/lib/sketchCadTypes";
 import { SKETCH_CAD_DEFLECTION } from "@/lib/cadModifierRuntime";
 
@@ -57,113 +56,22 @@ function pathWire(cad: OcctKernel, path: OrderedCadSketchPath) {
   return cad.makeWire(edges);
 }
 
-/**
- * Der Pfad als Zug im Raum. Er liegt senkrecht zur Formebene: Die Tiefe der
- * Zeichnung wird zur Hoehe, die Querachse bleibt die Querachse.
- */
-function spineWire(cad: OcctKernel, path: OrderedCadSketchPath) {
-  const edges = path.steps.map(({ segment, from, to }) => {
-    const arc = segmentArcGeometry(segment, from, to);
-    if (arc) return cad.makeArcEdge(sweepPathPoint(from), sweepPathPoint(arc.apex), sweepPathPoint(to));
-    const forward = segment.startId === from.id;
-    const first = forward ? from.handleOut : from.handleIn;
-    const second = forward ? to.handleIn : to.handleOut;
-    if (segment.kind !== "line" && first && second) {
-      return cad.makeBezierEdge([sweepPathPoint(from), sweepPathPoint(first), sweepPathPoint(second), sweepPathPoint(to)]);
-    }
-    return cad.makeLineEdge(sweepPathPoint(from), sweepPathPoint(to));
-  });
-  return cad.makeWire(edges);
-}
-
 self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
   const request = event.data;
   let cad: OcctKernel | null = null;
   try {
     cad = await kernel();
     cad.releaseAll();
-    // Beim Folgen wird der Weg aus der Zeichnung genommen, bevor daraus
-    // Flaechen werden - sonst zaehlte ein geschlossener Weg als zweite Form.
-    const drawing = request.type === "sweep" ? splitSweepDrawing(request.profile) : null;
-    if (request.type === "sweep" && !drawing) {
-      throw new Error("Draw a path for the shape to follow: an open stroke, or a second closed loop wider than the shape");
-    }
-    const regions = cadSketchRegions(drawing ? drawing.shape : request.profile);
-    if (regions.length === 0) throw new Error("No closed profile found. Draw at least one closed loop and ensure it has no degenerate (zero-area) geometry.");
+    const regions = cadSketchRegions(request.profile);
+    if (regions.length === 0) throw new Error("status.cadNoClosedProfile");
     const faceFor = (region: (typeof regions)[number]) => {
       let face = cad!.makeFace(pathWire(cad!, region.outer));
       if (region.holes.length > 0) face = cad!.addHolesInFace(face, region.holes.map((hole) => pathWire(cad!, hole)));
       return face;
     };
-    let solids: ShapeHandle[];
-    if (drawing) {
-      const { spine } = drawing;
-      const wire = spineWire(cad, spine);
-      /*
-       * Die Form steht quer auf dem Weg, mit ihrer Mitte an dessen Anfang.
-       * Beide Zeichnungen haben denselben Nullpunkt, aber sie meinen
-       * verschiedene Ebenen: Ohne das Kippen und Zusammenruecken laege die
-       * Form flach da, wo sie gezeichnet wurde, statt im rechten Winkel dort,
-       * wo der Weg beginnt.
-       */
-      const outline = regions.flatMap((region) => region.outer.points);
-      const centre = {
-        x: (Math.min(...outline.map((point) => point.x)) + Math.max(...outline.map((point) => point.x))) / 2,
-        z: (Math.min(...outline.map((point) => point.z)) + Math.max(...outline.map((point) => point.z))) / 2,
-      };
-      const placement = sweepProfilePlacement(spine, centre);
-      if (!placement) throw new Error("The path has no length at its start - draw it running away from the shape");
-      /*
-       * Welches Verfahren die Form ueber die Ecken eines Weges bringt, laesst
-       * sich nicht vorher sagen - es haengt an der Form, am Weg und an dem,
-       * was der Kern daraus macht. Deshalb wird der Reihe nach probiert, vom
-       * geeignetsten zum genuegsamsten.
-       *
-       * Entscheidend ist aber nicht das Probieren, sondern die Pruefung: Der
-       * Kern meldet auch dann einen *gueltigen* Koerper, wenn die Form gar
-       * nicht abgewinkelt, sondern ueber die Ecke hinweggezogen wurde - bei
-       * einem rechteckigen Weg kam an zwei Seiten nur eine Flaeche heraus,
-       * und das galt als Erfolg. Gemessen wird deshalb das Volumen: Ein
-       * Koerper, der die Form wirklich herumfuehrt, fasst ungefaehr ihre
-       * Flaeche mal die Laenge des Weges. Bleibt er weit darunter, ist er
-       * flach - und dann gilt er nicht.
-       */
-      const carried = regions.map((region) => cad!.transform(faceFor(region), placement));
-      const spineLength = cad.getLength(wire);
-      const expected = carried.map((face) => cad!.getSurfaceArea(face) * spineLength);
-      const attempt = (build: (face: ShapeHandle) => ShapeHandle) => {
-        try {
-          const built = carried.map(build);
-          const solid = built.every((body, index) => {
-            if (!cad!.isValid(body)) return false;
-            const volume = cad!.getVolume(body);
-            return Number.isFinite(volume) && volume > Math.max(1e-9, expected[index] * 0.05);
-          });
-          return solid ? built : null;
-        } catch {
-          // Der naechste Anlauf ist der Grund, warum das hier nicht durchfaellt.
-          return null;
-        }
-      };
-      const guided = (mode: SweepMode, transitionMode: TransitionMode) =>
-        (face: ShapeHandle) => cad!.sweepAdvanced(face, wire, { mode, transitionMode, withCorrection: true });
-      solids = attempt(guided(SweepMode.Fixed, TransitionMode.Transformed))
-        ?? attempt(guided(SweepMode.Fixed, TransitionMode.RightCorner))
-        ?? attempt(guided(SweepMode.Frenet, TransitionMode.RightCorner))
-        ?? attempt(guided(SweepMode.Fixed, TransitionMode.RoundCorner))
-        ?? attempt((face) => cad!.sweepPipeShell(face, wire))
-        ?? attempt((face) => cad!.pipe(face, wire))
-        ?? (() => {
-          throw new Error(
-            "The path cannot carry this shape. Usually the path bends tighter than the shape is wide, so the body folds into itself - widen the bend or make the shape smaller. A path that crosses itself does the same.",
-          );
-        })();
-    } else {
-      const height = request.type === "build" ? request.height : 0;
-      solids = regions.map((region) => cad!.extrude(faceFor(region), 0, height, 0));
-    }
+    const solids = regions.map((region) => cad!.extrude(faceFor(region), 0, request.height, 0));
     const result = solids.length === 1 ? solids[0] : cad.makeCompound(solids);
-    if (!cad.isValid(result)) throw new Error("OpenCascade produced invalid sketch topology");
+    if (!cad.isValid(result)) throw new Error("status.cadInvalidTopology");
     const mesh = cad.tessellate(result, { linearDeflection: SKETCH_CAD_DEFLECTION.linear, angularDeflection: SKETCH_CAD_DEFLECTION.angular });
     const positions = new Float32Array(mesh.positions);
     const normals = new Float32Array(mesh.normals);
@@ -171,7 +79,7 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
     const brep = cad.toBREP(result);
     post({ type: "built", requestId: request.requestId, positions, normals, indices, triangleCount: mesh.triangleCount, brep }, [positions.buffer, normals.buffer, indices.buffer]);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error ?? "The CAD kernel could not build this sketch");
+    const message = error instanceof Error ? error.message : String(error ?? "status.cadBuildFailed");
     post({ type: "error", requestId: request.requestId, message });
     if (/memory|WebAssembly|abort/i.test(message)) kernelPromise = null;
   } finally {

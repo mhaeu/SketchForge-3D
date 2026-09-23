@@ -56,7 +56,7 @@ export function orderedCadSketchPaths(profile: SketchProfile): OrderedCadSketchP
   return paths;
 }
 
-function sampledPath(path: OrderedCadSketchPath) {
+export function sampleCadSketchPath(path: OrderedCadSketchPath) {
   const samples: Array<{ x: number; z: number }> = [];
   path.steps.forEach(({ segment, from, to }, stepIndex) => {
     if (stepIndex === 0) samples.push({ x: from.x, z: from.z });
@@ -107,7 +107,7 @@ export function cadSketchRegions(profile: SketchProfile): CadSketchRegion[] {
   const records = allPaths
     .filter((path) => path.closed)
     .map((path) => {
-      const polygon = sampledPath(path);
+      const polygon = sampleCadSketchPath(path);
       return { path, polygon, area: Math.abs(signedArea(polygon)) };
     })
     .filter((record) => record.polygon.length >= 3 && record.area > 1e-8)
@@ -150,7 +150,7 @@ export function cadSketchRegions(profile: SketchProfile): CadSketchRegion[] {
   });
 
   if (regions.length === 0 && openCount > 0 && allPaths.length > 0) {
-    throw new Error("All profile paths are open. Close at least one loop before finishing the sketch.");
+    throw new Error("status.cadAllPathsOpen");
   }
   return regions;
 }
