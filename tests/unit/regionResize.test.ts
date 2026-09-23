@@ -259,6 +259,21 @@ describe("region resize on a shape", () => {
     cadBrep: "stale", edgeTreatments: [], threadParams: { pitch: 1 },
   } as unknown as WorkplaneShape;
 
+  it("gibt den parametrischen Ursprung auf, sobald das Netz umgebaut ist", () => {
+    /*
+     * Der Ursprung wird beim Umwandeln in ein Netz festgehalten, damit sich
+     * eine Drehung spaeter wieder aufheben laesst. Sobald aber das Netz
+     * selbst umgebaut ist, beschreibt er diesen Koerper nicht mehr - ein
+     * Neubau daraus warf die ganze Arbeit am Teilbereich weg, sobald jemand
+     * irgendeinen Bauwert anfasste, etwa die Verjuengung.
+     */
+    const withSource = { ...shape, parametricSource: { kind: "box", width: 20, depth: 20, height: 20, size: 20, rotation: 0, rotationX: 0, rotationZ: 0 } } as unknown as WorkplaneShape;
+    const result = regionResizedShape(withSource, neck, { ...neck, maxY: 25 }, "push");
+    expect(result).not.toBeNull();
+    expect("parametricSource" in result!.patch).toBe(true);
+    expect(result!.patch.parametricSource).toBeUndefined();
+  });
+
   it("grows the shape around a pushed neck and keeps its footprint in place", () => {
     const result = regionResizedShape(shape, neck, { ...neck, maxY: 25 }, "push");
     expect(result).not.toBeNull();

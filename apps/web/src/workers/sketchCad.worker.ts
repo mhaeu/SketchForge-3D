@@ -114,37 +114,44 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
       const placement = sweepProfilePlacement(spine, centre);
       if (!placement) throw new Error("The path has no length at its start - draw it running away from the shape");
       /*
-       * Gefuehrt wird die Form mit dem Rohr-Sweep und nicht mit dem einfachen
-       * `pipe`. Der Unterschied zeigt sich an den Ecken: `pipe` zieht die
-       * Flaeche ueber die Ecke hinweg, statt die Form dort abzuwinkeln - bei
-       * einem rechteckigen Weg kommt an zwei Seiten nur eine Flaeche heraus,
-       * und der Kern meldet trotzdem einen gueltigen Koerper. Der Rohr-Sweep
-       * setzt an jeder Ecke des Weges eine Gehrung, und `withCorrection`
-       * haelt die Form unterwegs im rechten Winkel zum Weg.
+       * Welches Verfahren die Form ueber die Ecken eines Weges bringt, laesst
+       * sich nicht vorher sagen - es haengt an der Form, am Weg und an dem,
+       * was der Kern daraus macht. Deshalb wird der Reihe nach probiert, vom
+       * geeignetsten zum genuegsamsten.
        *
-       * `pipe` bleibt als zweiter Anlauf: Es ist das einfachere Verfahren und
-       * kommt mit mancher Form durch, an der das aufwendigere scheitert.
+       * Entscheidend ist aber nicht das Probieren, sondern die Pruefung: Der
+       * Kern meldet auch dann einen *gueltigen* Koerper, wenn die Form gar
+       * nicht abgewinkelt, sondern ueber die Ecke hinweggezogen wurde - bei
+       * einem rechteckigen Weg kam an zwei Seiten nur eine Flaeche heraus,
+       * und das galt als Erfolg. Gemessen wird deshalb das Volumen: Ein
+       * Koerper, der die Form wirklich herumfuehrt, fasst ungefaehr ihre
+       * Flaeche mal die Laenge des Weges. Bleibt er weit darunter, ist er
+       * flach - und dann gilt er nicht.
        */
       const carried = regions.map((region) => cad!.transform(faceFor(region), placement));
+      const spineLength = cad.getLength(wire);
+      const expected = carried.map((face) => cad!.getSurfaceArea(face) * spineLength);
       const attempt = (build: (face: ShapeHandle) => ShapeHandle) => {
         try {
           const built = carried.map(build);
-          return built.every((solid) => cad!.isValid(solid)) ? built : null;
+          const solid = built.every((body, index) => {
+            if (!cad!.isValid(body)) return false;
+            const volume = cad!.getVolume(body);
+            return Number.isFinite(volume) && volume > Math.max(1e-9, expected[index] * 0.05);
+          });
+          return solid ? built : null;
         } catch {
-          // Der zweite Anlauf ist der Grund, warum das hier nicht durchfaellt.
+          // Der naechste Anlauf ist der Grund, warum das hier nicht durchfaellt.
           return null;
         }
       };
-      solids = attempt((face) => cad!.sweepAdvanced(face, wire, {
-        mode: SweepMode.Fixed,
-        transitionMode: TransitionMode.RightCorner,
-        withCorrection: true,
-      }))
-        ?? attempt((face) => cad!.sweepAdvanced(face, wire, {
-          mode: SweepMode.Fixed,
-          transitionMode: TransitionMode.RoundCorner,
-          withCorrection: true,
-        }))
+      const guided = (mode: SweepMode, transitionMode: TransitionMode) =>
+        (face: ShapeHandle) => cad!.sweepAdvanced(face, wire, { mode, transitionMode, withCorrection: true });
+      solids = attempt(guided(SweepMode.Fixed, TransitionMode.Transformed))
+        ?? attempt(guided(SweepMode.Fixed, TransitionMode.RightCorner))
+        ?? attempt(guided(SweepMode.Frenet, TransitionMode.RightCorner))
+        ?? attempt(guided(SweepMode.Fixed, TransitionMode.RoundCorner))
+        ?? attempt((face) => cad!.sweepPipeShell(face, wire))
         ?? attempt((face) => cad!.pipe(face, wire))
         ?? (() => {
           throw new Error(

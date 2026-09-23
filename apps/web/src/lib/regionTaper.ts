@@ -130,6 +130,15 @@ export function regionTaperedShape(shape: WorkplaneShape, region: ResizeRegion, 
       cadBrepFrame: undefined,
       cadPrimitiveFrame: undefined,
       threadParams: undefined,
+      /*
+       * Der parametrische Ursprung beschreibt diesen Koerper nicht mehr.
+       * Er wird beim Umwandeln in ein Netz festgehalten, damit sich eine
+       * Drehung spaeter wieder aufheben laesst - sobald aber das Netz selbst
+       * umgebaut ist, wuerde ein Neubau daraus die ganze Arbeit am
+       * Teilbereich stillschweigend wegwerfen, sobald jemand irgendeinen
+       * Bauwert anfasst.
+       */
+      parametricSource: undefined,
     },
     /*
      * Der Kasten selbst aendert seine Form nicht - nur das Netz in ihm. Er

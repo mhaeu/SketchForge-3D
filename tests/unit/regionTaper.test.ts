@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { taperPositionsInRegion, type ResizeRegion } from "@/lib/regionResize";
-import { regionTaperIsUntouched, untouchedRegionTaper } from "@/lib/regionTaper";
+import { regionTaperedShape, regionTaperIsUntouched, untouchedRegionTaper } from "@/lib/regionTaper";
+import type { WorkplaneShape } from "@/types/sketchforge";
 
 /** Ein geschlossener Kasten als Dreieckssuppe, so wie ein Netz abgelegt ist. */
 const quad = (a: number[], b: number[], c: number[], d: number[]) => [...a, ...c, ...b, ...a, ...d, ...c];
@@ -108,5 +109,30 @@ describe("Verjuengung eines Teilbereichs", () => {
       expect(Math.abs(p[0]) <= 10 + 1e-6 && p[1] >= -1e-6 && p[1] <= 40 + 1e-6 && Math.abs(p[2]) <= 10 + 1e-6).toBe(true);
     });
     expect(watertight(result)).toBe(true);
+  });
+});
+
+describe("Der Koerper nach dem Verjuengen des Teilbereichs", () => {
+  const shape = {
+    id: "b", name: "Kasten", color: "#fff", kind: "mesh", x: 4, z: -2, elevation: 1, rotation: 0,
+    size: 20, width: 20, depth: 20, height: 40,
+    importedMesh: { positions: body, baseWidth: 20, baseDepth: 20, baseHeight: 40, triangleCount: body.length / 9, sourceFormat: "json" },
+    parametricSource: { kind: "box", width: 20, depth: 20, height: 40, size: 20, rotation: 0, rotationX: 0, rotationZ: 0 },
+  } as unknown as WorkplaneShape;
+
+  it("gibt den parametrischen Ursprung auf", () => {
+    /*
+     * Sonst wird der Koerper aus seiner Urform neu gebaut, sobald jemand
+     * einen Bauwert anfasst - und die Verjuengung des Gesamtobjekts ist so
+     * ein Bauwert. Die Arbeit am Teilbereich verfiel damit sofort wieder.
+     */
+    const result = regionTaperedShape(shape, whole, { edges: { left: -5, right: 5, front: -10, back: 10 }, heights: plain.heights }, body);
+    expect(result).not.toBeNull();
+    expect("parametricSource" in result!.patch).toBe(true);
+    expect(result!.patch.parametricSource).toBeUndefined();
+  });
+
+  it("meldet nichts, wenn nichts eingestellt ist", () => {
+    expect(regionTaperedShape(shape, whole, plain, body)).toBeNull();
   });
 });
