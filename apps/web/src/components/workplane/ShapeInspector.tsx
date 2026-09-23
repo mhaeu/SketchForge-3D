@@ -1199,6 +1199,28 @@ export function ShapeInspector({
   const edgeBoundZ = Math.max(1, shapeDepth(shape));
   const sideHeights = shapeSideHeights(shape);
   const taperProperties: ShapePropertyConfig[] = shape.kind === "gear" ? [] : [
+    /*
+     * Breite und Laenge oben fassen die Deckflaeche als Ganzes an: Sie
+     * aendern ihre Groesse und lassen sie sitzen, wo sie sitzt, also wandern
+     * beide Kanten gleich weit. Wer eine einzelne Seite meint, nimmt die vier
+     * Kanten darunter. Beide Wege beschreiben dieselben Felder.
+     */
+    {
+      id: "topLength",
+      label: t("prop.topLength"),
+      value: taper.topDepth,
+      min: MIN_SHAPE_SIZE,
+      max: taperDimensionMax,
+      onChange: (taperTopDepth) => onUpdate({ taperTopDepth, taperTopWidth: taper.topWidth, taperTopScale: undefined }),
+    },
+    {
+      id: "topWidth",
+      label: t("prop.topWidth"),
+      value: taper.topWidth,
+      min: MIN_SHAPE_SIZE,
+      max: taperDimensionMax,
+      onChange: (taperTopWidth) => onUpdate({ taperTopWidth, taperTopDepth: taper.topDepth, taperTopScale: undefined }),
+    },
     {
       id: "sideLeft",
       label: t("prop.sideLeft"),

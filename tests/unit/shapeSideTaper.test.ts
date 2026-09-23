@@ -62,6 +62,31 @@ describe("Die Kanten der Deckflaeche", () => {
     expect(patch.taperTopWidth).toBeGreaterThan(0);
   });
 
+  it("wandern gleich weit, wenn die Groesse der Deckflaeche geaendert wird", () => {
+    /*
+     * Breite und Laenge oben fassen die Deckflaeche als Ganzes an: Sie sitzt
+     * weiter, wo sie sass, und beide Kanten kommen gleich weit herein. So
+     * bleiben die beiden Ansichten miteinander vertraeglich - die vier
+     * Kanten zeigen danach genau das, was die Groesse sagt.
+     */
+    const shrunk = box({ taperTopWidth: 12 });
+    expect(shapeTopFaceEdges(shrunk)).toEqual({ left: -6, right: 6, front: -5, back: 5 });
+    // Und mit einem Versatz wandert die Flaeche als Ganzes mit.
+    const shifted = box({ taperTopWidth: 12, extrudeTopOffsetX: 2 });
+    expect(shapeTopFaceEdges(shifted).left).toBeCloseTo(-4, 9);
+    expect(shapeTopFaceEdges(shifted).right).toBeCloseTo(8, 9);
+  });
+
+  it("laesst sich mit den Kanten und der Groesse abwechselnd bedienen", () => {
+    // Erst eine Seite schraeg stellen, dann die Groesse aendern: Der Versatz,
+    // den die schraege Seite erzeugt hat, bleibt dabei erhalten.
+    const leaning = box(shapeTopFaceEdgePatch(box(), { left: -4 }));
+    const resized = { ...leaning, taperTopWidth: 8 } as WorkplaneShape;
+    const edges = shapeTopFaceEdges(resized);
+    expect((edges.left + edges.right) / 2).toBeCloseTo(3, 9);
+    expect(edges.right - edges.left).toBeCloseTo(8, 9);
+  });
+
   it("ruehrt eine Art ohne Verjuengung nicht an", () => {
     expect(shapeTopFaceEdgePatch(box({ kind: "gear" }), { left: -4 })).toEqual({});
   });
