@@ -69,6 +69,8 @@ import {
   ToolbarTrimIcon,
   ToolbarTrimBelowIcon,
   ToolbarBoreIcon,
+  ToolbarTrimFlushIcon,
+  ToolbarTrimFlushBelowIcon,
   ToolbarFilletIcon,
   ToolbarVariableFilletIcon,
   ToolbarMirrorIcon,
@@ -5620,6 +5622,18 @@ function hasNonZeroRotation(shape: WorkplaneShape) {
   return [rotation, rotationX, rotationZ].some((value) => value > 0.001 && Math.abs(value - 360) > 0.001);
 }
 
+/**
+ * Das Ergebnis eines Schnitts als schlichter Koerper.
+ *
+ * Eine Gruppe traegt ihre Bestandteile mit sich, damit man sie wieder
+ * aufloesen kann. Bei einem Schnitt waere einer davon der Werkzeugquader -
+ * ein Aufloesen holte ihn zurueck, riesengross mitten in der Szene. Ein
+ * Schnitt ist eben keine Gruppe, die man wieder auseinandernehmen kann.
+ */
+function cutResultShape(shape: WorkplaneShape): WorkplaneShape {
+  return canonicalizeShape({ ...shape, groupedShapes: undefined, groupOperation: undefined });
+}
+
 async function buildGroupedShapeFromSelection(groupable: WorkplaneShape[]): Promise<GroupBuildResult> {
   const booleanSelection = expandGroupsForBoolean(groupable);
   const hasSolid = booleanSelection.some((shape) => !shape.hole);
@@ -8915,7 +8929,7 @@ export function SketchForgeEditor({
     for (const target of targets) {
       const result = await buildGroupedShapeFromSelection([target, { ...cutter, id: createLocalId("cut-tool") }]);
       // Ein Koerper, der ganz auf der geschnittenen Seite lag, ist danach weg.
-      if (result.group) trimmed.push(canonicalizeShape({ ...result.group, groupOperation: "group" }));
+      if (result.group) trimmed.push(cutResultShape(result.group));
     }
     if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
       setNotice(t("status.groupChanged"));
@@ -8926,6 +8940,59 @@ export function SketchForgeEditor({
       [...shapesRef.current.filter((shape) => !cut.has(shape.id)), ...trimmed],
       trimmed.map((shape) => shape.id),
       trimmed.length === 0 ? t("status.trimmedAway") : t("status.trimmed", { count: trimmed.length }),
+    );
+  }, [commitShapes, selectedShapes]);
+
+  /**
+   * Buendig an einem anderen Koerper abschneiden.
+   *
+   * Eine Ebene schneidet flach; eine gewoelbte Flaeche trifft sie nur in
+   * einer Linie. Wer den Ueberstand eines durchgesteckten Stabs buendig an
+   * einem Zylinder enden lassen will, braucht deshalb den Zylinder selbst als
+   * Schneide.
+   *
+   * Ausgedrueckt in Verschneidungen: Weg kommt alles, was auf der gewaehlten
+   * Seite der Arbeitsebene liegt **und** ausserhalb des schneidenden Koerpers.
+   * Stehen bleibt also der Teil im Koerper - an dessen Oberflaeche buendig
+   * abgeschnitten, wie krumm sie auch sei - und der ganze Ueberstand auf der
+   * anderen Seite. Der schneidende Koerper selbst bleibt unangetastet.
+   */
+  const trimFlushToBody = useCallback(async (side: CutSide) => {
+    const usable = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
+    if (usable.length < 2) {
+      setNotice(t("status.selectBodyAndSurface"));
+      return;
+    }
+    // Der zuletzt Ausgewaehlte gibt die Flaeche - so, wie man beim Zeigen
+    // zuletzt auf das deutet, woran etwas ausgerichtet werden soll.
+    const surface = usable[usable.length - 1];
+    const targets = usable.slice(0, -1);
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+
+    const reach = cutReachForShapes([...targets, surface]);
+    const half = { ...workplaneCutBox(placementWorkplaneRef.current, side, reach, createLocalId), hole: false };
+    const outside = await buildGroupedShapeFromSelection([half, { ...surface, id: createLocalId("surface-tool"), hole: true }]);
+    if (!outside.group) {
+      // Der schneidende Koerper fuellt die ganze Seite aus - dann gibt es
+      // nichts, was weggenommen werden koennte.
+      setNotice(t("status.trimFlushNothing"));
+      return;
+    }
+
+    const trimmed: WorkplaneShape[] = [];
+    for (const target of targets) {
+      const result = await buildGroupedShapeFromSelection([target, { ...cutResultShape(outside.group), id: createLocalId("flush-tool"), hole: true }]);
+      if (result.group) trimmed.push(cutResultShape(result.group));
+    }
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setNotice(t("status.groupChanged"));
+      return;
+    }
+    const cut = new Set(targets.map((shape) => shape.id));
+    commitShapes(
+      [...shapesRef.current.filter((shape) => !cut.has(shape.id)), ...trimmed],
+      trimmed.map((shape) => shape.id),
+      trimmed.length === 0 ? t("status.trimmedAway") : t("status.trimmedFlush", { count: trimmed.length }),
     );
   }, [commitShapes, selectedShapes]);
 
@@ -8948,7 +9015,7 @@ export function SketchForgeEditor({
       const bore = boreCutShape(tubes[0], createLocalId);
       if (!bore) continue;
       const result = await buildGroupedShapeFromSelection([target, bore]);
-      if (result.group) cut.push(canonicalizeShape({ ...result.group, groupOperation: "group" }));
+      if (result.group) cut.push(cutResultShape(result.group));
     }
     if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
       setNotice(t("status.groupChanged"));
@@ -10504,6 +10571,8 @@ export function SketchForgeEditor({
         onIntersect={intersectSelected}
         onTrim={trimAtWorkplane}
         onSubtractBore={subtractBoreFromSelection}
+        onTrimFlush={trimFlushToBody}
+        canTrimFlush={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 2}
         canSubtractBore={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).some(shapeHasBore)
           && selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape) && !shapeHasBore(shape)).length > 0}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
@@ -10907,6 +10976,8 @@ function SecondaryToolbar({
   onTrim,
   onSubtractBore,
   canSubtractBore,
+  onTrimFlush,
+  canTrimFlush,
   onFillet,
   onVariableFillet,
   onMirror,
@@ -10993,6 +11064,8 @@ function SecondaryToolbar({
   onTrim: (side: CutSide) => void;
   onSubtractBore: () => void;
   canSubtractBore: boolean;
+  onTrimFlush: (side: CutSide) => void;
+  canTrimFlush: boolean;
   onFillet: () => void;
   onVariableFillet: () => void;
   onMirror: () => void;
@@ -11171,6 +11244,8 @@ function SecondaryToolbar({
     { label: t("editor.tool.intersect"), icon: ToolbarIntersectionIcon, action: onIntersect, enabled: canIntersect },
     { label: t("editor.tool.trimAbove"), icon: ToolbarTrimIcon, action: () => onTrim("above"), enabled: hasSelection },
     { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },
+    { label: t("editor.tool.trimFlushAbove"), icon: ToolbarTrimFlushIcon, action: () => onTrimFlush("above"), enabled: canTrimFlush },
+    { label: t("editor.tool.trimFlushBelow"), icon: ToolbarTrimFlushBelowIcon, action: () => onTrimFlush("below"), enabled: canTrimFlush },
     { label: t("editor.tool.subtractBore"), icon: ToolbarBoreIcon, action: onSubtractBore, enabled: canSubtractBore },
   ];
   const modifyTools = [

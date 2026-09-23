@@ -171,6 +171,29 @@ export function ToolbarTrimBelowIcon(props: IconProps) {
   return <ToolbarTrimIcon side="below" {...props} />;
 }
 
+/**
+ * Buendig abschneiden: ein Stab durch einen runden Koerper, und auf einer
+ * Seite endet er an dessen Woelbung statt an einer Ebene.
+ */
+export function ToolbarTrimFlushIcon({ side = "above", ...props }: IconProps & { side?: "above" | "below" }) {
+  const gone = side === "above" ? "M22 6H26V17H22Z" : "M22 31H26V42H22Z";
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <circle cx="24" cy="24" r="13" fill="none" stroke="currentColor" strokeWidth="2.4" />
+      <path
+        d={side === "above" ? "M22 17H26V42H22Z" : "M22 6H26V31H22Z"}
+        fill="currentColor"
+        opacity="0.82"
+      />
+      <path d={gone} fill="none" stroke="currentColor" strokeWidth="1.6" strokeDasharray="3 2.5" />
+    </svg>
+  );
+}
+
+export function ToolbarTrimFlushBelowIcon(props: IconProps) {
+  return <ToolbarTrimFlushIcon side="below" {...props} />;
+}
+
 /** Innenraum aussparen: ein Ring, dessen Kern herausfaellt. */
 export function ToolbarBoreIcon(props: IconProps) {
   return (
