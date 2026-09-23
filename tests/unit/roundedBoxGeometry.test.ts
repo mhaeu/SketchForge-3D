@@ -176,3 +176,34 @@ describe("roundedBox geometry", () => {
     expect(normalizeRoundedBoxQuality(12)).toBe(12);
   });
 });
+
+/**
+ * Der Kasten um die Form.
+ *
+ * Nicht nur die Ansicht baut aus einer Form ein Netz - das Verschneiden, das
+ * Ausfuhren und das Wiegen tun es auch, ueber einen eigenen Weg. Dieser
+ * setzt den Koerper auf seine Grundflaeche und erwartet, dass er genau die
+ * Masse hat, die an ihm stehen. Stimmt das nicht, verschneidet sich ein
+ * Koerper als ein anderer, als man sieht.
+ */
+describe("Die Masse des abgerundeten Quaders", () => {
+  it("fuellt genau den Kasten, der an ihm steht, und steht auf null", () => {
+    const geometry = createRoundedBoxGeometry({ width: 40, depth: 24, height: 12, cornerFillet: 5, topBottomFillet: 0 });
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    expect(box.max.x - box.min.x).toBeCloseTo(40, 4);
+    expect(box.max.z - box.min.z).toBeCloseTo(24, 4);
+    expect(box.max.y - box.min.y).toBeCloseTo(12, 4);
+    expect(box.min.y).toBeCloseTo(0, 6);
+  });
+
+  it("auch mit gerundeten Deckel- und Bodenkanten", () => {
+    const geometry = createRoundedBoxGeometry({ width: 40, depth: 24, height: 12, cornerFillet: 5, topBottomFillet: 3 });
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    expect(box.max.x - box.min.x).toBeCloseTo(40, 3);
+    expect(box.max.z - box.min.z).toBeCloseTo(24, 3);
+    expect(box.max.y - box.min.y).toBeCloseTo(12, 3);
+    expect(box.min.y).toBeCloseTo(0, 6);
+  });
+});

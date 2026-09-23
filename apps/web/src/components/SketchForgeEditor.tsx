@@ -181,6 +181,8 @@ import {
 } from "@/lib/placementWorkplane";
 import { boreCutShape, cutReachForShapes, shapeHasBore, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
+import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
+import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
 import { placeSketchExtrusion } from "@/lib/sketchPlacement";
 import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
@@ -2452,6 +2454,26 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
         layers: shape.loftLayers,
       });
       break;
+    case "roundedBox":
+      geometry = createRoundedBoxGeometry({
+        width,
+        depth,
+        height,
+        cornerFillet: shape.cornerFillet,
+        topBottomFillet: shape.topBottomFillet,
+        roundedBoxQuality: shape.roundedBoxQuality,
+      });
+      break;
+    case "honeycomb":
+      geometry = createHoneycombGeometry({
+        width,
+        depth,
+        height,
+        honeycombCellSize: shape.honeycombCellSize,
+        honeycombWallThickness: shape.honeycombWallThickness,
+        honeycombFrameWidth: shape.honeycombFrameWidth,
+      });
+      break;
     case "wedge":
       geometry = createBooleanWedgeGeometry(width, height, depth);
       break;
@@ -2467,8 +2489,18 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
       geometry.translate(0, height / 2, 0);
       break;
     case "sketch":
-    default:
       geometry = new THREE.BoxGeometry(size, Math.max(3, height * 0.35), size * 0.72);
+      break;
+    default:
+      /*
+       * Eine Art, die hier vergessen wurde, bekommt wenigstens ihren eigenen
+       * Kasten. Vorher stand hier derselbe geschrumpfte Platzhalter wie fuer
+       * die Skizze - ein Drittel der Hoehe, drei Viertel der Tiefe -, und
+       * damit verschnitt sich ein Koerper, dessen Art hier fehlte, als
+       * deutlich kleinerer. Falsch ist beides, aber nur eines davon frisst
+       * beim Schneiden den halben Koerper weg.
+       */
+      geometry = new THREE.BoxGeometry(width, height, depth);
       break;
   }
 

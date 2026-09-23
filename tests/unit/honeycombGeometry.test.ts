@@ -198,3 +198,17 @@ describe("honeycomb geometry", () => {
     }
   });
 });
+
+describe("Die Masse des Wabengitters", () => {
+  it("fuellt genau den Kasten, der an ihm steht, und steht auf null", () => {
+    // Dasselbe gilt fuer das Verschneiden und das Ausfuhren: Sie bauen ihr
+    // eigenes Netz und erwarten die Masse, die am Koerper stehen.
+    const geometry = createHoneycombGeometry({ width: 60, depth: 45, height: 4 });
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    expect(box.max.x - box.min.x).toBeCloseTo(60, 3);
+    expect(box.max.z - box.min.z).toBeCloseTo(45, 3);
+    expect(box.max.y - box.min.y).toBeCloseTo(4, 3);
+    expect(box.min.y).toBeCloseTo(0, 6);
+  });
+});
