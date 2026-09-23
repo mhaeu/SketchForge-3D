@@ -57,6 +57,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import type { RegionTaper } from "@/lib/regionTaper";
+import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -2443,35 +2444,22 @@ function selectionFrameWithRegion(
  * is read back as the new region.
  */
 function regionBoxShape(shape: WorkplaneShape, region: ResizeRegion): WorkplaneShape {
-  const width = region.maxX - region.minX;
-  const depth = region.maxZ - region.minZ;
+  // Der Kasten liegt im Rahmen des Koerpers und dreht sich mit ihm - sonst
+  // staende er an einem gedrehten Koerper woanders als das Material, das er
+  // meint.
+  const placement = regionBoxPlacement(shape, region);
   return {
     id: shape.id,
     name: shape.name,
     color: shape.color,
     kind: "box",
-    x: shape.x + (region.minX + region.maxX) / 2,
-    z: shape.z + (region.minZ + region.maxZ) / 2,
-    elevation: (shape.elevation ?? 0) + region.minY,
-    width,
-    depth,
-    height: region.maxY - region.minY,
-    size: Math.max(width, depth),
-    rotation: 0,
+    ...placement,
+    size: Math.max(placement.width, placement.depth),
   };
 }
 
 function regionFromBoxShape(shape: WorkplaneShape, box: WorkplaneShape): ResizeRegion {
-  const width = shapeWidth(box);
-  const depth = shapeDepth(box);
-  return {
-    minX: box.x - width / 2 - shape.x,
-    maxX: box.x + width / 2 - shape.x,
-    minY: (box.elevation ?? 0) - (shape.elevation ?? 0),
-    maxY: (box.elevation ?? 0) + box.height - (shape.elevation ?? 0),
-    minZ: box.z - depth / 2 - shape.z,
-    maxZ: box.z + depth / 2 - shape.z,
-  };
+  return regionFromBoxPlacement(shape, box);
 }
 
 function framePoint(frame: SelectionFrame, x: number, y: number, z: number) {

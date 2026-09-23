@@ -1189,6 +1189,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.cadAllPathsOpen": "Alle Züge sind offen. Schließe mindestens einen, bevor du die Skizze beendest.",
   "status.cannotRevolve": "Das Skizzenprofil lässt sich nicht zu 3D rotieren",
   "status.edgeIdsMissing": "Diese Kanten sind beim aktuellen Schwellwert nicht wählbar: {ids}",
+  "status.regionFrameAligned": "Körper für den Teilbereich in die Achsen der Arbeitsebene gedreht",
   "status.convertedToMesh": "{name} für den Teilbereich in ein Netz umgewandelt",
   "status.mcpAlreadyAligned": "MCP: schon {alignment} ausgerichtet",
   "status.savedFileTo": "{label} nach {path} gespeichert",

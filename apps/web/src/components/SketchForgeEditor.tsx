@@ -152,6 +152,7 @@ import { cadSketchRegions, sampleCadSketchPath } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
 import { regionTaperedShape, type RegionTaper } from "@/lib/regionTaper";
+import { workplaneFramePatch } from "@/lib/regionFrame";
 import { hasMarkedSweepPath, markSweepPath } from "@/lib/sketchSweep";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
@@ -9296,6 +9297,23 @@ export function SketchForgeEditor({
       }
       target = baked;
       commitShapes(shapes.map((shape) => (shape.id === baked.id ? baked : shape)), [baked.id], t("status.convertedToMesh", { name: selectedShape.name }));
+    }
+    /*
+     * Der Kasten des Teilbereichs lebt im eigenen Rahmen des Koerpers, und
+     * die sechs Schnittebenen stehen senkrecht auf dessen drei Achsen. Damit
+     * er der Arbeitsebene folgt, wird deshalb nicht die Schneidemaschinerie
+     * umgebaut, sondern das Netz in die Arbeitsebene gedreht - sichtbar
+     * aendert sich nichts, gerechnet wird danach in ihren Achsen. Auf der
+     * Hauptarbeitsebene faellt das weg, dort stimmt der Rahmen schon.
+     */
+    const aligned = workplaneFramePatch(target, placementWorkplaneRef.current);
+    if (aligned) {
+      target = canonicalizeShape({ ...target, ...aligned.patch });
+      commitShapes(
+        shapesRef.current.map((shape) => (shape.id === target.id ? target : shape)),
+        [target.id],
+        t("status.regionFrameAligned"),
+      );
     }
     const full = fullShapeRegion(target);
     setRegionResizeRemembered({ shapeId: target.id, limits: full, region: full });

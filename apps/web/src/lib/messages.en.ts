@@ -1190,6 +1190,7 @@ export const MESSAGES_EN = {
   "status.cadAllPathsOpen": "Every stroke is open. Close at least one loop before finishing the sketch.",
   "status.cannotRevolve": "The sketch profile cannot be revolved to 3D",
   "status.edgeIdsMissing": "These edge IDs are not selectable at the current threshold: {ids}",
+  "status.regionFrameAligned": "Body turned into the workplane's axes for the region",
   "status.convertedToMesh": "Converted {name} to a mesh for region resize",
   "status.mcpAlreadyAligned": "MCP alignment already {alignment}",
   "status.savedFileTo": "Saved {label} to {path}",
