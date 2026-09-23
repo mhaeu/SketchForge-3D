@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { meshYawDegrees, type ShapeSides } from "@/lib/workplaneShapes";
-import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
+import { MIN_REGION_SIZE, taperPositionsInRegion, type ResizeRegion } from "@/lib/regionResize";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 /**
@@ -37,62 +37,14 @@ export function regionTaperIsUntouched(region: ResizeRegion, taper: RegionTaper)
 }
 
 /**
- * Die Verjuengung auf die Scheibe zwischen `minY` und `maxY` legen.
+ * Die Verjuengung auf den Kasten legen.
  *
- * Gearbeitet wird ueber die Hoehe, nicht ueber den Grundriss: Unterhalb der
- * Scheibe bleibt alles stehen, in ihr waechst die Verjuengung von null auf
- * ihr volles Mass, und oberhalb faehrt das Material starr mit. Damit ist die
- * Abbildung ueberall stetig, das Netz bleibt dicht, und es muss nichts
- * geschnitten und keine Naht geschlossen werden.
- *
- * Das ist zugleich die Grenze: Es zaehlt die **Hoehe** des Kastens, nicht
- * seine Breite und Tiefe. Eine Verjuengung, die nur eine Ecke des Grundrisses
- * erfasst, liesse eine senkrechte Wand mitten im Koerper stehen - und die
- * muesste geschnitten und wieder zugenaeht werden.
+ * Die Arbeit selbst - schneiden, Naehte suchen, Baender einziehen - macht
+ * `taperPositionsInRegion` mit derselben Maschinerie, die auch den Kasten
+ * aendert. Hier steht nur, wie die acht Werte dorthin gereicht werden.
  */
-export function taperPositionsInSlice(positions: readonly number[], region: ResizeRegion, taper: RegionTaper): number[] {
-  const centreX = (region.minX + region.maxX) / 2;
-  const centreZ = (region.minZ + region.maxZ) / 2;
-  const width = Math.max(MIN_REGION_SIZE, region.maxX - region.minX);
-  const depth = Math.max(MIN_REGION_SIZE, region.maxZ - region.minZ);
-  const height = Math.max(MIN_REGION_SIZE, region.maxY - region.minY);
-
-  const topWidth = Math.max(0, taper.edges.right - taper.edges.left);
-  const topDepth = Math.max(0, taper.edges.back - taper.edges.front);
-  const scaleX = topWidth / width;
-  const scaleZ = topDepth / depth;
-  const shiftX = (taper.edges.left + taper.edges.right) / 2;
-  const shiftZ = (taper.edges.front + taper.edges.back) / 2;
-
-  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-  const standingShare = (x: number, z: number) => {
-    const u = clamp01((x - region.minX) / width);
-    const v = clamp01((z - region.minZ) / depth);
-    const alongWidth = taper.heights.left + (taper.heights.right - taper.heights.left) * u;
-    const alongDepth = taper.heights.front + (taper.heights.back - taper.heights.front) * v;
-    return Math.max(0, alongWidth + alongDepth - 1);
-  };
-
-  const out = positions.slice() as number[];
-  for (let index = 0; index + 2 < out.length; index += 3) {
-    const x = out[index];
-    const y = out[index + 1];
-    const z = out[index + 2];
-    const t = clamp01((y - region.minY) / height);
-    const scale = 1 + (scaleX - 1) * t;
-    const scaleDepthAt = 1 + (scaleZ - 1) * t;
-    out[index] = centreX + (x - centreX) * scale + shiftX * t;
-    out[index + 2] = centreZ + (z - centreZ) * scaleDepthAt + shiftZ * t;
-    // Die Hoehe richtet sich nach dem Grundriss, also nach dem Punkt vor der
-    // Verjuengung - sonst wanderte der Keil, waehrend die Seiten sich neigen.
-    const share = standingShare(x, z);
-    out[index + 1] = y <= region.minY
-      ? y
-      : y >= region.maxY
-        ? y - height * (1 - share)
-        : region.minY + (y - region.minY) * share;
-  }
-  return out;
+export function taperRegionPositions(positions: readonly number[], region: ResizeRegion, taper: RegionTaper): number[] {
+  return taperPositionsInRegion(positions.slice() as number[], region, taper.edges, taper.heights);
 }
 
 export type RegionTaperResult = {
@@ -112,7 +64,7 @@ export function regionTaperedShape(shape: WorkplaneShape, region: ResizeRegion, 
   if (!mesh || displayPositions.length < 9) return null;
   if (regionTaperIsUntouched(region, taper)) return null;
 
-  const positions = taperPositionsInSlice(displayPositions, region, taper);
+  const positions = taperRegionPositions(displayPositions, region, taper);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let minZ = Number.POSITIVE_INFINITY;

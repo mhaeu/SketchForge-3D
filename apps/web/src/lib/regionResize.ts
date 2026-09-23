@@ -439,6 +439,47 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
     return (mask & (1 << (c * 2)) ? shiftLo[c] : 0) + (mask & (1 << (c * 2 + 1)) ? shiftHi[c] : 0);
   };
 
+  return assembleDeformedMesh(
+    cut,
+    inside,
+    seams,
+    riding,
+    anyRiding,
+    lo,
+    hi,
+    [...lo, ...hi, ...lo2, ...hi2],
+    insideMap,
+    outsideShift,
+  );
+}
+
+/**
+ * Aus dem geschnittenen Netz das verformte machen: innen die uebergebene
+ * Abbildung, aussen das mitgenommene Material, und dazwischen die Baender,
+ * die die entstandene Luecke schliessen.
+ *
+ * Die Abbildung kommt von aussen, weil zweierlei damit gemacht wird: das
+ * Aendern des Kastens verschiebt und streckt achsenweise, das Verjuengen
+ * neigt die Seiten ueber die Hoehe. Schneiden, Nahtsuche und Baender sind in
+ * beiden Faellen dieselbe Arbeit - und die heikelste im ganzen Programm,
+ * also gibt es sie nur einmal.
+ *
+ * `insideMap` bekommt die Achse, den Wert und den Punktindex im
+ * geschnittenen Netz; ueber den Index kommt sie an alle drei
+ * Ausgangskoordinaten heran, wenn ihre Abbildung sie braucht.
+ */
+function assembleDeformedMesh(
+  cut: number[],
+  inside: Uint8Array,
+  seams: number[],
+  riding: Uint8Array,
+  anyRiding: boolean,
+  lo: number[],
+  hi: number[],
+  planeValues: number[],
+  insideMap: (axis: number, value: number, index: number) => number,
+  outsideShift: (triangle: number, axis: number) => number,
+): number[] {
   const aIn = [0, 0, 0];
   const bIn = [0, 0, 0];
   const cIn = [0, 0, 0];
@@ -537,13 +578,71 @@ export function deformPositionsInRegion(positions: number[], from: ResizeRegion,
       else out.push(...aOut, ...bIn, ...aIn);
     }
   }
-  const planes = [...lo, ...hi, ...lo2, ...hi2].map((value, index) => ({ axis: index % 3, at: value }));
+  const planes = planeValues.map((value, index) => ({ axis: index % 3, at: value }));
   // The stitch only ever repairs what a seam sliding along its own line
   // leaves behind. Run more widely it would split band edges at vertices of
   // neighbouring bands that merely happen to lie on them - where a rigid
   // in-plane shift folds the bands at the points the old and new outline
   // cross - and tear open what was closed.
   return stitchPlaneSeams(weldNearPlanes(out, planes).positions, planes, slid);
+}
+
+export type RegionSideValues = { left: number; right: number; front: number; back: number };
+
+/**
+ * Die Verjuengung auf den Kasten legen - und nur auf ihn.
+ *
+ * `edges` sind die vier Kanten der Deckflaeche des Kastens, in mm von dessen
+ * Mitte aus; `heights` ist der Anteil der Kastenhoehe, den er an jeder Seite
+ * noch stehen laesst. Innerhalb des Kastens waechst die Neigung von null an
+ * seiner Unterkante auf ihr volles Mass an seiner Oberkante; ausserhalb
+ * bleibt alles, wo es ist, und die Luecke dazwischen schliessen dieselben
+ * Baender wie beim Aendern des Kastens.
+ *
+ * Es zaehlt also der ganze Kasten und nicht nur seine Hoehe: Wer nur ein
+ * Stueck der Laenge verjuengt, bekommt an dessen Ende eine senkrechte Wand -
+ * und genau die soll dort ja stehen.
+ */
+export function taperPositionsInRegion(
+  positions: number[],
+  region: ResizeRegion,
+  edges: RegionSideValues,
+  heights: RegionSideValues,
+): number[] {
+  // Dem Schnitt wird gesagt, dass alle sechs Flaechen betroffen sind, damit
+  // ueberall getrennt wird; bewegt wird dabei keine - Kasten hin, Kasten her.
+  const maps = axisMaps(region, region);
+  for (const axis of AXES) {
+    maps[axis].minMoved = true;
+    maps[axis].maxMoved = true;
+  }
+  const { cut, inside, seams, riding, anyRiding } = prepare(positions, region, maps);
+  const lo = [region.minX, region.minY, region.minZ];
+  const hi = [region.maxX, region.maxY, region.maxZ];
+  const centre = [(lo[0] + hi[0]) / 2, 0, (lo[2] + hi[2]) / 2];
+  const span = [
+    Math.max(MIN_REGION_SIZE, hi[0] - lo[0]),
+    Math.max(MIN_REGION_SIZE, hi[1] - lo[1]),
+    Math.max(MIN_REGION_SIZE, hi[2] - lo[2]),
+  ];
+  const topSpan = [Math.max(0, edges.right - edges.left), 0, Math.max(0, edges.back - edges.front)];
+  const topShift = [(edges.left + edges.right) / 2, 0, (edges.front + edges.back) / 2];
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+  const insideMap = (axis: number, value: number, index: number) => {
+    const t = clamp01((cut[index + 1] - lo[1]) / span[1]);
+    if (axis === 1) {
+      const u = clamp01((cut[index] - lo[0]) / span[0]);
+      const v = clamp01((cut[index + 2] - lo[2]) / span[2]);
+      const alongWidth = heights.left + (heights.right - heights.left) * u;
+      const alongDepth = heights.front + (heights.back - heights.front) * v;
+      return lo[1] + (value - lo[1]) * Math.max(0, alongWidth + alongDepth - 1);
+    }
+    const scale = 1 + (topSpan[axis] / span[axis] - 1) * t;
+    return centre[axis] + (value - centre[axis]) * scale + topShift[axis] * t;
+  };
+
+  return assembleDeformedMesh(cut, inside, seams, riding, anyRiding, lo, hi, [...lo, ...hi, ...lo, ...hi], insideMap, () => 0);
 }
 
 /**

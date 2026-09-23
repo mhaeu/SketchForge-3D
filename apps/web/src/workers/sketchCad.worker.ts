@@ -114,13 +114,16 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
       const placement = sweepProfilePlacement(spine, centre);
       if (!placement) throw new Error("The path has no length at its start - draw it running away from the shape");
       /*
-       * Zwei Anlaeufe, weil zwei Arten von Weg vorkommen. Ein glatter Weg
-       * laeuft mit `pipe` sauber durch. Ein Weg mit Ecken dagegen hat dort
-       * keinen stetigen Verlauf, und `pipe` legt ueber die Ecke eine Flaeche,
-       * die sich selbst durchdringt - herauskommt ein Koerper, den der Kern
-       * hinterher als ungueltig meldet. Fuer diesen Fall gibt es den Sweep
-       * mit ausdruecklicher Eckbehandlung: Er setzt an jeder Ecke des Weges
-       * eine Gehrung. Er ist der aufwendigere Weg, deshalb steht er hinten.
+       * Gefuehrt wird die Form mit dem Rohr-Sweep und nicht mit dem einfachen
+       * `pipe`. Der Unterschied zeigt sich an den Ecken: `pipe` zieht die
+       * Flaeche ueber die Ecke hinweg, statt die Form dort abzuwinkeln - bei
+       * einem rechteckigen Weg kommt an zwei Seiten nur eine Flaeche heraus,
+       * und der Kern meldet trotzdem einen gueltigen Koerper. Der Rohr-Sweep
+       * setzt an jeder Ecke des Weges eine Gehrung, und `withCorrection`
+       * haelt die Form unterwegs im rechten Winkel zum Weg.
+       *
+       * `pipe` bleibt als zweiter Anlauf: Es ist das einfachere Verfahren und
+       * kommt mit mancher Form durch, an der das aufwendigere scheitert.
        */
       const carried = regions.map((region) => cad!.transform(faceFor(region), placement));
       const attempt = (build: (face: ShapeHandle) => ShapeHandle) => {
@@ -132,12 +135,17 @@ self.onmessage = async (event: MessageEvent<SketchCadBuildRequest>) => {
           return null;
         }
       };
-      solids = attempt((face) => cad!.pipe(face, wire))
+      solids = attempt((face) => cad!.sweepAdvanced(face, wire, {
+        mode: SweepMode.Fixed,
+        transitionMode: TransitionMode.RightCorner,
+        withCorrection: true,
+      }))
         ?? attempt((face) => cad!.sweepAdvanced(face, wire, {
           mode: SweepMode.Fixed,
-          transitionMode: TransitionMode.RightCorner,
+          transitionMode: TransitionMode.RoundCorner,
           withCorrection: true,
         }))
+        ?? attempt((face) => cad!.pipe(face, wire))
         ?? (() => {
           throw new Error(
             "The path cannot carry this shape. Usually the path bends tighter than the shape is wide, so the body folds into itself - widen the bend or make the shape smaller. A path that crosses itself does the same.",
