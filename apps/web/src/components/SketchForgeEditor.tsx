@@ -179,7 +179,7 @@ import {
   type PlacementPoint,
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
-import { boreCutShape, cutReachForShapes, shapeHasBore, workplaneCutBox, type CutSide } from "@/lib/cutTools";
+import { boreCutShape, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -8991,13 +8991,23 @@ export function SketchForgeEditor({
    * anderen Seite. Der schneidende Koerper selbst bleibt unangetastet.
    */
   const trimFlushToBody = useCallback(async (side: CutSide) => {
-    const usable = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
+    /*
+     * Der zuletzt **angeklickte** Koerper gibt die Flaeche - so, wie man beim
+     * Zeigen zuletzt auf das deutet, woran etwas ausgerichtet werden soll.
+     *
+     * Die Reihenfolge muss dafuer aus den Kennungen der Auswahl kommen und
+     * nicht aus der Liste der Koerper: Die steht in der Reihenfolge, in der
+     * die Koerper entstanden sind. Danach schnitt oft der falsche - naemlich
+     * der zuletzt gebaute statt des zuletzt angeklickten.
+     */
+    const usable = shapesInClickOrder(
+      selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole),
+      selectedIds,
+    );
     if (usable.length < 2) {
       setNotice(t("status.selectBodyAndSurface"));
       return;
     }
-    // Der zuletzt Ausgewaehlte gibt die Flaeche - so, wie man beim Zeigen
-    // zuletzt auf das deutet, woran etwas ausgerichtet werden soll.
     const surface = usable[usable.length - 1];
     const targets = usable.slice(0, -1);
     const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
@@ -9025,9 +9035,9 @@ export function SketchForgeEditor({
     commitShapes(
       [...shapesRef.current.filter((shape) => !cut.has(shape.id)), ...trimmed],
       trimmed.map((shape) => shape.id),
-      trimmed.length === 0 ? t("status.trimmedAway") : t("status.trimmedFlush", { count: trimmed.length }),
+      trimmed.length === 0 ? t("status.trimmedAway") : t("status.trimmedFlush", { count: trimmed.length, name: surface.name }),
     );
-  }, [commitShapes, selectedShapes]);
+  }, [commitShapes, selectedIds, selectedShapes]);
 
   /**
    * Ob sich der Hohlraum dieses Koerpers aus seiner Zeichnung gewinnen laesst.
@@ -9087,6 +9097,12 @@ export function SketchForgeEditor({
     const usable = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
     const tools = usable.filter((shape) => shapeHasBore(shape) || hollowSketchTool(shape));
     const targets = usable.filter((shape) => !shapeHasBore(shape) && !hollowSketchTool(shape));
+    if (tools.length === 0) {
+      // Genauer als "waehle einen hohlen Koerper": Der Benutzer *hat* einen
+      // gewaehlt - er traegt nur nicht mehr, was zum Rechnen noetig waere.
+      setNotice(usable.length >= 2 ? t("status.noCavitySource") : t("status.selectHollowAndBody"));
+      return;
+    }
     if (tools.length !== 1 || targets.length === 0) {
       setNotice(t("status.selectHollowAndBody"));
       return;

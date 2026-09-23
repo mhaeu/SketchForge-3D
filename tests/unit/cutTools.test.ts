@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { boreCutShape, cutReachForShapes, flippedWorkplane, shapeHasBore, workplaneCutBox } from "@/lib/cutTools";
+import { boreCutShape, cutReachForShapes, flippedWorkplane, shapeHasBore, shapesInClickOrder, workplaneCutBox } from "@/lib/cutTools";
 import type { PlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
@@ -187,5 +187,26 @@ describe("Der Innenraum eines Rohrs", () => {
     // Ein eingelesenes Netz hat keine Wandstaerke, die man lesen koennte.
     expect(shapeHasBore({ ...tube, kind: "mesh", importedMesh: { positions: [], triangleCount: 0 } } as unknown as WorkplaneShape)).toBe(false);
     expect(boreCutShape({ ...tube, kind: "cylinder" } as WorkplaneShape, createId)).toBeNull();
+  });
+});
+
+describe("Die Reihenfolge der Auswahl", () => {
+  const shapes = [{ id: "alt" }, { id: "neu" }, { id: "neuer" }];
+
+  it("folgt dem Anklicken und nicht der Reihenfolge der Koerper", () => {
+    /*
+     * Die Liste der Koerper steht in der Reihenfolge, in der sie entstanden
+     * sind. "Der zuletzt Ausgewaehlte" waere daraus gelesen der zuletzt
+     * gebaute - und dann schnitt beim buendigen Abschneiden oft der falsche.
+     */
+    const chosen = shapes.filter((shape) => shape.id !== "neu");
+    expect(shapesInClickOrder(chosen, ["neuer", "alt"]).map((shape) => shape.id)).toEqual(["neuer", "alt"]);
+    expect(shapesInClickOrder(chosen, ["alt", "neuer"]).map((shape) => shape.id)).toEqual(["alt", "neuer"]);
+  });
+
+  it("laesst die Reihenfolge, wo das Anklicken nichts sagt", () => {
+    // Ein aufgezogener Rahmen nennt keine Reihenfolge; dann bleibt es bei der
+    // vorhandenen, statt zu wuerfeln.
+    expect(shapesInClickOrder(shapes, []).map((shape) => shape.id)).toEqual(["alt", "neu", "neuer"]);
   });
 });

@@ -180,3 +180,17 @@ export function boreCutShape(shape: WorkplaneShape, createId: (prefix: string) =
     segments: 1,
   } as WorkplaneShape;
 }
+
+/**
+ * Die Auswahl in der Reihenfolge, in der angeklickt wurde.
+ *
+ * Die Liste der Koerper steht in der Reihenfolge, in der sie entstanden
+ * sind - "der zuletzt Ausgewaehlte" waere daraus gelesen der zuletzt
+ * gebaute. Wo es darauf ankommt, welchen der Benutzer zuletzt gemeint hat,
+ * muss die Reihenfolge aus den Kennungen der Auswahl kommen; nur die werden
+ * beim Anklicken hinten angehaengt.
+ */
+export function shapesInClickOrder<T extends { id: string }>(shapes: readonly T[], selectedIds: readonly string[]): T[] {
+  const clicked = new Map(selectedIds.map((id, index) => [id, index]));
+  return [...shapes].sort((a, b) => (clicked.get(a.id) ?? -1) - (clicked.get(b.id) ?? -1));
+}
