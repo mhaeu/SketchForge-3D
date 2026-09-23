@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasMarkedSweepPath,
+  markSweepPath,
   splitSweepDrawing,
   sweepPathPoint,
   sweepProfilePlacement,
@@ -209,5 +211,78 @@ describe("wie die Form am Weg haengt", () => {
   it("meldet nichts, wo der Weg an seinem Anfang keine Laenge hat", () => {
     const steps = [{ segment: { id: "s", startId: "a", endId: "b", kind: "line" as const }, from: { id: "a", x: 2, z: 2 }, to: { id: "b", x: 2, z: 2 } }];
     expect(sweepProfilePlacement({ id: "s", points: [], steps, closed: false }, { x: 0, z: 0 })).toBeNull();
+  });
+});
+
+/**
+ * Die Regel - offener Zug, sonst der weiteste Ring - trifft es meistens,
+ * aber nicht immer. Wer den Weg festlegt, hat recht.
+ */
+describe("den Weg festlegen", () => {
+  /** Eine kleine Form mitten in einem grossen Ring. */
+  const nested = path(
+    [["p1", -20, -20], ["p2", 20, -20], ["p3", 20, 20], ["p4", -20, 20],
+      ["s1", -2, -2], ["s2", 2, -2], ["s3", 2, 2], ["s4", -2, 2]],
+    [["p12", "p1", "p2"], ["p23", "p2", "p3"], ["p34", "p3", "p4"], ["p41", "p4", "p1"],
+      ["s12", "s1", "s2"], ["s23", "s2", "s3"], ["s34", "s3", "s4"], ["s41", "s4", "s1"]],
+  );
+
+  it("nimmt den ausgezeichneten Zug, auch gegen die Regel", () => {
+    // Ohne Auszeichnung gaelte der weiteste Ring als Weg. Hier wird der enge
+    // festgelegt - und dann ist er es.
+    const marked = markSweepPath(nested, "s12")!;
+    expect(sweepSpinePath(marked)!.points.map((point) => point.id).sort()).toEqual(["s1", "s2", "s3", "s4"]);
+    // Und die Form ist der Rest.
+    expect(splitSweepDrawing(marked)!.shape.segments.map((segment) => segment.id).sort())
+      .toEqual(["p12", "p23", "p34", "p41"]);
+  });
+
+  it("zeichnet den ganzen Zug aus, nicht die eine Kante", () => {
+    const marked = markSweepPath(nested, "s12")!;
+    expect(marked.segments.filter((segment) => segment.role === "path").map((segment) => segment.id).sort())
+      .toEqual(["s12", "s23", "s34", "s41"]);
+  });
+
+  it("laesst nur einen Weg zu", () => {
+    // Ein zweiter Weg waere eine zweite Bewegung, und die Form kann nur eine
+    // ausfuehren.
+    const first = markSweepPath(nested, "s12")!;
+    const second = markSweepPath(first, "p12")!;
+    expect(second.segments.filter((segment) => segment.role === "path").map((segment) => segment.id).sort())
+      .toEqual(["p12", "p23", "p34", "p41"]);
+    expect(hasMarkedSweepPath(second)).toBe(true);
+  });
+
+  it("nimmt die Auszeichnung beim zweiten Mal wieder weg", () => {
+    const marked = markSweepPath(nested, "s12")!;
+    const cleared = markSweepPath(marked, "s34")!;
+    expect(hasMarkedSweepPath(cleared)).toBe(false);
+    // Danach gilt wieder die Regel: der weiteste Ring.
+    expect(sweepSpinePath(cleared)!.points.map((point) => point.id).sort()).toEqual(["p1", "p2", "p3", "p4"]);
+  });
+
+  it("bleibt der Weg, wenn er verlaengert wird", () => {
+    // Eine neu angesetzte Kante traegt die Auszeichnung nicht - eine
+    // ausgezeichnete im selben Zug genuegt aber. Daneben steht hier ein
+    // laengerer offener Zug, der nach der Regel gewaenne.
+    const marked = markSweepPath(path(
+      [["a", 0, 0], ["b", 0, -10],
+        ["l1", 40, 0], ["l2", 44, 0], ["l3", 48, 0], ["l4", 52, 0], ["l5", 56, 0]],
+      [["ab", "a", "b"],
+        ["l12", "l1", "l2"], ["l23", "l2", "l3"], ["l34", "l3", "l4"], ["l45", "l4", "l5"]],
+    ), "ab")!;
+    const extended = {
+      ...marked,
+      points: [...marked.points, { id: "c", x: 6, z: -14 }],
+      segments: [...marked.segments, { id: "bc", startId: "b", endId: "c", kind: "line" as const }],
+    };
+    const spine = sweepSpinePath(extended)!;
+    expect(spine.steps).toHaveLength(2);
+    expect(spine.points.map((point) => point.id)).toContain("c");
+  });
+
+  it("meldet nichts fuer eine Kante, die es nicht gibt", () => {
+    expect(markSweepPath(nested, "gibtsnicht")).toBeNull();
+    expect(hasMarkedSweepPath(nested)).toBe(false);
   });
 });

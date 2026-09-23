@@ -142,6 +142,7 @@ import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
+import { hasMarkedSweepPath, markSweepPath } from "@/lib/sketchSweep";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
 import { attachProjectAsset, dedupeProjectAssets, projectAssetFromBytes, sourceFormatForFileName } from "@/lib/projectAssets";
@@ -7349,6 +7350,19 @@ export function SketchForgeEditor({
    * sitzt ein echter Kreisbogen - eine Rundung mit einem Halbmesser, den man
    * nennen kann, statt einer Kurve, die von Griffen abhaengt.
    */
+  /**
+   * Festlegen, welcher Zug der Weg ist. Ohne das entscheidet die Zeichnung
+   * selbst - ein offener Zug ist der Weg, sonst der weiteste Ring -, und das
+   * trifft es meistens. Eine Form mitten im Weg laese sich aber nur als Loch
+   * darin lesen; dort muss man es sagen koennen.
+   */
+  const markSketchSweepPath = useCallback((segmentId: string) => {
+    const next = markSweepPath(sketchProfile, segmentId);
+    if (!next) return;
+    const marked = hasMarkedSweepPath(next);
+    commitSketchProfile(next, marked ? t("sketch.pathMarked") : t("sketch.pathReleased"));
+  }, [commitSketchProfile, sketchProfile]);
+
   const roundSketchPoint = useCallback((id: string) => {
     const rounded = roundSketchCorner(sketchProfile, id, createLocalId);
     if (!rounded) {
@@ -10354,6 +10368,7 @@ export function SketchForgeEditor({
             onInsertPoint={insertSketchPoint}
             onSetPointMode={setSketchPointMode}
             onRoundPoint={roundSketchPoint}
+            onMarkPath={markSketchSweepPath}
             onBendSegment={bendSketchSegment}
             onClearMeasurement={clearSketchMeasurement}
           />

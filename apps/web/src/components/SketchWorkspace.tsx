@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Split, Trash2, Waves } from "lucide-react";
+import { ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Split, Trash2, Waves, Waypoints } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { SnapGridControl } from "@/components/workplane/ShapeInspector";
 import { SketchRevolvePreview } from "@/components/SketchRevolvePreview";
@@ -16,7 +16,7 @@ import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngl
 import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_ARC_BULGE, segmentArcGeometry, stepsEncloseArea } from "@/lib/sketchArcs";
 import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
-import { sweepSpinePath } from "@/lib/sketchSweep";
+import { hasMarkedSweepPath, sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
@@ -70,6 +70,8 @@ type SketchWorkspaceProps = {
   onSetPointMode: (id: string, mode: "corner" | "smooth" | "split") => void;
   /** Aus der Ecke einen echten Kreisbogen machen. */
   onRoundPoint: (id: string) => void;
+  /** Den Zug, zu dem diese Kante gehoert, als Weg festlegen - oder wieder freigeben. */
+  onMarkPath: (segmentId: string) => void;
   /** Die Woelbung eines Bogens setzen - null macht wieder eine Strecke daraus. */
   onBendSegment: (id: string, bulge: number | null, message: string) => void;
   onClearMeasurement: () => void;
@@ -537,6 +539,7 @@ export function SketchWorkspace({
   onInsertPoint,
   onSetPointMode,
   onRoundPoint,
+  onMarkPath,
   onBendSegment,
   onClearMeasurement,
 }: SketchWorkspaceProps) {
@@ -1757,6 +1760,28 @@ export function SketchWorkspace({
           <button type="button" title={t("sketch.roundCorner")} onClick={() => onRoundPoint(selectedPoint.id)}><Circle /><span>{t("sketch.round")}</span></button>
         </div>
       ) : null}
+      {operation === "sweep" && selected?.kind === "segment" && tool === "select" ? (() => {
+        /*
+         * Hier steht die Entscheidung, welcher Zug der Weg ist - an der
+         * ausgewaehlten Linie, nicht in einer Liste am Rand. Ohne sie
+         * entscheidet die Zeichnung selbst, und das trifft es meistens; aber
+         * eine Form mitten im Weg laese sich sonst nur als Loch darin lesen.
+         */
+        const isPath = hasMarkedSweepPath(displayProfile) && sweepSpineSegmentIds.has(selected.id);
+        return (
+          <div className="sketch-point-actions" aria-label={t("sketch.pathActions")}>
+            <button
+              type="button"
+              className={isPath ? "active" : undefined}
+              title={isPath ? t("sketch.markAsShape") : t("sketch.markAsPath")}
+              onClick={() => onMarkPath(selected.id)}
+            >
+              <Waypoints />
+              <span>{isPath ? t("sketch.asShape") : t("sketch.asPath")}</span>
+            </button>
+          </div>
+        );
+      })() : null}
       <div className="grid-settings">
         <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
       </div>

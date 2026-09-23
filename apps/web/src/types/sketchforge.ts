@@ -151,6 +151,15 @@ export type SketchSegment = {
    * Woelbung laesst sich aendern.
    */
   bulge?: number;
+  /**
+   * Beim Folgen: Diese Kante gehoert zum Weg und nicht zur Form.
+   *
+   * Ohne Auszeichnung entscheidet die Zeichnung selbst - ein offener Zug ist
+   * der Weg, und wo alles geschlossen ist, der weiteste Ring. Das trifft es
+   * meistens, aber nicht immer: Eine Form, die *innerhalb* des Weges liegt,
+   * laese sich sonst nur als Loch im Weg lesen. Wer es festlegt, hat recht.
+   */
+  role?: "path";
 };
 
 export type SketchCircle = {

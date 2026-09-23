@@ -891,6 +891,11 @@ function validateSketchProfile(value: unknown, label: string) {
     if (!pointIds.has(startId) || !pointIds.has(endId)) throw new Error(`${label} contains a segment with a missing point reference`);
     // Beim Bogen haengt die ganze Kruemmung an dieser einen Zahl - eine
     // ungueltige macht aus dem Bogen nichts, das sich noch zeichnen liesse.
+    // Welcher Zug der Weg ist, steht an seinen Kanten - eine unbekannte
+    // Rolle waere ein Zug, der weder Form noch Weg ist.
+    if (segment.role !== undefined && segment.role !== "path") {
+      throw new Error(`${label}.segments[${index}].role has unknown value '${String(segment.role)}'`);
+    }
     if (segment.bulge !== undefined) {
       const bulge = finiteNumber(segment.bulge, `${label}.segments[${index}].bulge`);
       if (Math.abs(bulge) > 1e9) throw new Error(`${label}.segments[${index}].bulge is outside the supported range`);

@@ -3837,10 +3837,11 @@ svg.sketch-reference-icon {
    Aufmerksamkeit streiten. */
 /* Der Pfad im Folgen-Modus: er liegt in der Zeichnung flach neben der Form,
    gemeint ist er aber senkrecht dazu - deshalb hebt er sich ab und traegt
-   seinen Namen. */
+   seinen Namen. Rot, weil er die eine Linie ist, die etwas anderes bedeutet
+   als alle uebrigen; Blau gehoert der Auswahl, Orange den Hilfslinien. */
 .sketch-sweep-path > path {
   fill: none;
-  stroke: #8a4fd6;
+  stroke: #d42a20;
   stroke-width: 3;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
@@ -3848,7 +3849,7 @@ svg.sketch-reference-icon {
 }
 
 .sketch-sweep-path > line {
-  stroke: #8a4fd6;
+  stroke: #d42a20;
   stroke-width: 3;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
@@ -3856,7 +3857,7 @@ svg.sketch-reference-icon {
 }
 
 .sketch-sweep-path > text {
-  fill: #8a4fd6;
+  fill: #d42a20;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-anchor: middle;
@@ -4093,6 +4094,12 @@ svg.sketch-reference-icon {
   color: #126b8e;
   background: #e6f5fb;
   border-color: #b9dce9;
+}
+
+.sketch-point-actions button.active {
+  color: #d42a20;
+  background: #fdeceb;
+  border-color: #f2bdb8;
 }
 
 .sketch-point-actions svg {

@@ -36,6 +36,11 @@ export function sweepPathPoint(point: { x: number; z: number }): SweepPoint3D {
  */
 export function sweepSpinePath(profile: SketchProfile): OrderedCadSketchPath | null {
   const paths = orderedCadSketchPaths(profile);
+  // Wer den Weg festgelegt hat, hat recht - die Regel unten ist nur da, wo
+  // nichts gesagt wurde. Es genuegt eine ausgezeichnete Kante: Wird der Weg
+  // spaeter verlaengert, bleibt er der Weg, ohne dass man ihn neu erklaert.
+  const marked = paths.find((candidate) => candidate.steps.some((step) => step.segment.role === "path"));
+  if (marked) return marked;
   let longestOpen: OrderedCadSketchPath | null = null;
   const closed: Array<{ path: OrderedCadSketchPath; extent: number }> = [];
   for (const candidate of paths) {
@@ -56,6 +61,37 @@ function pathExtent(path: OrderedCadSketchPath) {
   const xs = path.points.map((point) => point.x);
   const zs = path.points.map((point) => point.z);
   return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs));
+}
+
+/**
+ * Einen Zug als Weg festlegen - oder die Auszeichnung wieder wegnehmen.
+ *
+ * Ausgezeichnet wird der ganze zusammenhaengende Zug, zu dem die Kante
+ * gehoert, nicht die eine Kante: Wer auf eine Linie des Weges zeigt, meint
+ * den Weg. Und es gibt nur einen - ein zweiter Weg waere eine zweite
+ * Bewegung, und die Form kann nur eine ausfuehren -, deshalb verlieren alle
+ * uebrigen Kanten ihre Auszeichnung.
+ */
+export function markSweepPath(profile: SketchProfile, segmentId: string): SketchProfile | null {
+  const owner = orderedCadSketchPaths(profile).find((path) => path.steps.some((step) => step.segment.id === segmentId));
+  if (!owner) return null;
+  const inPath = new Set(owner.steps.map((step) => step.segment.id));
+  const alreadyMarked = owner.steps.some((step) => step.segment.role === "path");
+  return {
+    ...profile,
+    segments: profile.segments.map((segment) => {
+      const wanted = !alreadyMarked && inPath.has(segment.id);
+      if (wanted === (segment.role === "path")) return segment;
+      if (wanted) return { ...segment, role: "path" as const };
+      const { role: _role, ...rest } = segment;
+      return rest;
+    }),
+  };
+}
+
+/** Ob in dieser Zeichnung ein Weg festgelegt wurde. */
+export function hasMarkedSweepPath(profile: SketchProfile) {
+  return profile.segments.some((segment) => segment.role === "path");
 }
 
 export type SweepDrawing = { spine: OrderedCadSketchPath; shape: SketchProfile };
