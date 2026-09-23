@@ -180,6 +180,7 @@ import {
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
 import { boreCutShape, cutReachForShapes, shapeHasBore, workplaneCutBox, type CutSide } from "@/lib/cutTools";
+import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
 import { placeSketchExtrusion } from "@/lib/sketchPlacement";
 import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
@@ -8997,24 +8998,76 @@ export function SketchForgeEditor({
   }, [commitShapes, selectedShapes]);
 
   /**
-   * Den Innenraum eines Rohrs oder Rings aus allem anderen Ausgewaehlten
-   * herausnehmen - das Rohr selbst bleibt stehen. Jeder Koerper wird fuer
-   * sich geschnitten, damit aus mehreren nicht ungefragt einer wird.
+   * Ob sich der Hohlraum dieses Koerpers aus seiner Zeichnung gewinnen laesst.
+   *
+   * Eine Rotationsskizze bleibt aussen vor: Dort bedeutet ein zweiter
+   * geschlossener Zug etwas anderes als ein Loch im Querschnitt.
+   */
+  const hollowSketchTool = useCallback((shape: WorkplaneShape) => Boolean(
+    shape.sketchProfile
+    && shape.sketchOperation !== "revolve"
+    && !shape.groupedShapes?.length
+    && sketchHasHoles(shape.sketchProfile),
+  ), []);
+
+  /**
+   * Der Hohlraum eines Koerpers als Aussparung.
+   *
+   * Beim Rohr steht die Wandstaerke am Koerper und der Innenraum laesst sich
+   * ausrechnen. Ein selbst gezeichneter hohler Koerper hat keine Wandstaerke;
+   * sein Hohlraum steckt als innerer Zug in der Zeichnung. Dann wird dieselbe
+   * Zeichnung ohne ihre Loecher noch einmal hochgezogen - was der volle
+   * Koerper mehr hat als der hohle, ist genau der Hohlraum.
+   */
+  const cavityHoleForShape = useCallback(async (tool: WorkplaneShape): Promise<WorkplaneShape | null> => {
+    const bore = boreCutShape(tool, createLocalId);
+    if (bore) return bore;
+    const profile = tool.sketchProfile;
+    if (!profile || !hollowSketchTool(tool)) return null;
+    const filledProfile = filledSketchProfile(profile);
+    if (!filledProfile) return null;
+
+    const built = tool.sketchOperation === "sweep"
+      ? sweptShapeFromSketchProfile(filledProfile, tool)
+      : await cadShapeFromSketchProfile(filledProfile, tool.height, tool);
+    const filled = placeSketchExtrusion(built, placementWorkplaneRef.current, tool);
+
+    /*
+     * Die Probe: Der hohle Koerper muss ganz im vollen stecken. Faellt sie
+     * aus, passen die beiden nicht aufeinander - das kommt vor, wenn der
+     * Koerper nach dem Zeichnen gedreht und dabei in ein Netz gebacken wurde,
+     * denn die Drehung steht danach nicht mehr am Koerper. Lieber absagen als
+     * einen Hohlraum ausrechnen, der ein Stueck daneben sitzt.
+     */
+    if (!cutFullyConsumesSolids([tool, { ...filled, id: createLocalId("fill-probe"), hole: true }])) return null;
+
+    const cavity = await buildGroupedShapeFromSelection([filled, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
+    if (!cavity.group) return null;
+    return { ...cutResultShape(cavity.group), id: createLocalId("cavity-tool"), hole: true };
+  }, [hollowSketchTool]);
+
+  /**
+   * Den Hohlraum eines Koerpers aus allem anderen Ausgewaehlten herausnehmen -
+   * der hohle Koerper selbst bleibt stehen. Jeder Koerper wird fuer sich
+   * geschnitten, damit aus mehreren nicht ungefragt einer wird.
    */
   const subtractBoreFromSelection = useCallback(async () => {
     const usable = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
-    const tubes = usable.filter(shapeHasBore);
-    const targets = usable.filter((shape) => !shapeHasBore(shape));
-    if (tubes.length !== 1 || targets.length === 0) {
-      setNotice(t("status.selectTubeAndBody"));
+    const tools = usable.filter((shape) => shapeHasBore(shape) || hollowSketchTool(shape));
+    const targets = usable.filter((shape) => !shapeHasBore(shape) && !hollowSketchTool(shape));
+    if (tools.length !== 1 || targets.length === 0) {
+      setNotice(t("status.selectHollowAndBody"));
       return;
     }
     const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    const cavity = await cavityHoleForShape(tools[0]);
+    if (!cavity) {
+      setNotice(t("status.cavityUnavailable"));
+      return;
+    }
     const cut: WorkplaneShape[] = [];
     for (const target of targets) {
-      const bore = boreCutShape(tubes[0], createLocalId);
-      if (!bore) continue;
-      const result = await buildGroupedShapeFromSelection([target, bore]);
+      const result = await buildGroupedShapeFromSelection([target, { ...cavity, id: createLocalId("cavity-tool") }]);
       if (result.group) cut.push(cutResultShape(result.group));
     }
     if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
@@ -9027,7 +9080,7 @@ export function SketchForgeEditor({
       cut.map((shape) => shape.id),
       t("status.boreSubtracted", { count: cut.length }),
     );
-  }, [commitShapes, selectedShapes]);
+  }, [cavityHoleForShape, commitShapes, hollowSketchTool, selectedShapes]);
 
   const intersectSelected = useCallback(async () => {
     const groupable = selectedShapes.filter((shape) => !shape.locked);
