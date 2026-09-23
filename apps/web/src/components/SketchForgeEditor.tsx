@@ -158,7 +158,7 @@ import { importedShapeFromObj } from "@/lib/objImport";
 import { attachProjectAsset, dedupeProjectAssets, projectAssetFromBytes, sourceFormatForFileName } from "@/lib/projectAssets";
 import { findSketchOutlineIntersection } from "@/lib/sketchProfileValidation";
 import { addLineIntersectionPoints, splitSketchSegment } from "@/lib/sketchPointRefinement";
-import { buildSketchRevolveMesh, DEFAULT_SKETCH_REVOLVE_SETTINGS, normalizeSketchRevolveSettings, type SketchRevolveMesh } from "@/lib/sketchRevolve";
+import { buildFilledSketchRevolveMesh, buildSketchRevolveMesh, DEFAULT_SKETCH_REVOLVE_SETTINGS, normalizeSketchRevolveSettings, type SketchRevolveMesh } from "@/lib/sketchRevolve";
 import { exportSkfProject, SKF_MEDIA_TYPE } from "@/lib/skfProject";
 import { makeShapeFromAsset, sceneShape, shapeAssetLabel, toolbarShapeAssets, type ToolbarShapeAsset } from "@/lib/shapeCatalog";
 import { ensureReferencePoint, isReferencePoint, referencePointPosition, REFERENCE_POINT_ID } from "@/lib/referencePoint";
@@ -797,10 +797,14 @@ async function shapeFromRevolvedSketchProfile(
   profile: SketchProfile,
   settings: Partial<SketchRevolveSettings>,
   existing?: WorkplaneShape | null,
+  /** Voll statt hohl - zwischen Achse und aeusserer Kontur fehlt dann nichts. */
+  filled = false,
 ) {
   const runtime = await getManifoldRuntime();
   const normalizedSettings = normalizeSketchRevolveSettings(settings);
-  const mesh = buildSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings);
+  const mesh = filled
+    ? buildFilledSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings)
+    : buildSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings);
   return canonicalizeShape({
     id: existing?.id ?? createLocalId("sketch-revolve"),
     name: existing?.name ?? t("shape.sketchRevolve"),
@@ -9045,12 +9049,18 @@ export function SketchForgeEditor({
    * Eine Rotationsskizze bleibt aussen vor: Dort bedeutet ein zweiter
    * geschlossener Zug etwas anderes als ein Loch im Querschnitt.
    */
-  const hollowSketchTool = useCallback((shape: WorkplaneShape) => Boolean(
-    shape.sketchProfile
-    && shape.sketchOperation !== "revolve"
-    && !shape.groupedShapes?.length
-    && sketchHasHoles(shape.sketchProfile),
-  ), []);
+  const hollowSketchTool = useCallback((shape: WorkplaneShape) => {
+    if (!shape.sketchProfile || shape.groupedShapes?.length) return false;
+    /*
+     * Beim Rotationskoerper genuegt die Zeichnung: Ob er hohl ist, sagt erst
+     * der volle Koerper, den man aus ihr bauen kann - eine Vase hat gar kein
+     * Loch im Querschnitt, ihr Hohlraum entsteht daraus, dass der Umriss die
+     * Achse nicht erreicht. Ist er in Wahrheit voll, faellt der Unterschied
+     * beim Verschneiden von selbst weg.
+     */
+    if (shape.sketchOperation === "revolve") return true;
+    return sketchHasHoles(shape.sketchProfile);
+  }, []);
 
   /**
    * Der Hohlraum eines Koerpers als Aussparung.
@@ -9066,6 +9076,18 @@ export function SketchForgeEditor({
     if (bore) return bore;
     const profile = tool.sketchProfile;
     if (!profile || !hollowSketchTool(tool)) return null;
+
+    // Der Rotationskoerper geht seinen eigenen Weg zum vollen Koerper: nicht
+    // ueber weggelassene Loecher, sondern ueber den Schatten des
+    // Querschnitts zur Achse hin.
+    if (tool.sketchOperation === "revolve") {
+      const solid = await shapeFromRevolvedSketchProfile(profile, tool.sketchRevolve ?? {}, tool, true);
+      if (!cutFullyConsumesSolids([tool, { ...solid, id: createLocalId("fill-probe"), hole: true }])) return null;
+      const hollow = await buildGroupedShapeFromSelection([solid, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
+      if (!hollow.group) return null;
+      return { ...cutResultShape(hollow.group), id: createLocalId("cavity-tool"), hole: true };
+    }
+
     const filledProfile = filledSketchProfile(profile);
     if (!filledProfile) return null;
 

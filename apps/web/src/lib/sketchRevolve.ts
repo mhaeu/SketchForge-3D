@@ -1,4 +1,5 @@
 import { arcBulgeAlong, arcSamples, isArcSegment, stepsEncloseArea } from "@/lib/sketchArcs";
+import { filledRevolveSection } from "@/lib/revolveFill";
 import type { ManifoldToplevel } from "manifold-3d";
 import type { SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment } from "@/types/sketchforge";
 import { MAX_HIGH_RESOLUTION_SIDES } from "@/lib/workplaneSettings";
@@ -198,10 +199,29 @@ function dispose(value: unknown) {
   (value as { delete?: () => void } | null)?.delete?.();
 }
 
+/**
+ * Derselbe Koerper, aber voll: zwischen Achse und aeusserer Kontur fehlt
+ * nichts. Was er mehr hat als der gezeichnete, ist dessen Hohlraum.
+ */
+export function buildFilledSketchRevolveMesh(
+  runtime: ManifoldToplevel,
+  profile: SketchProfile,
+  requestedSettings?: Partial<SketchRevolveSettings>,
+): SketchRevolveMesh {
+  const settings = normalizeSketchRevolveSettings(requestedSettings);
+  const filled = filledRevolveSection(sketchProfileToRevolvePolygons(profile, settings));
+  if (filled.length === 0) throw new Error("status.cavityUnavailable");
+  return revolveSectionToMesh(runtime, filled, settings);
+}
+
 export function buildSketchRevolveMesh(runtime: ManifoldToplevel, profile: SketchProfile, requestedSettings?: Partial<SketchRevolveSettings>): SketchRevolveMesh {
   const settings = normalizeSketchRevolveSettings(requestedSettings);
   const polygons = sketchProfileToRevolvePolygons(profile, settings);
   if (polygons.length === 0) throw new Error("Draw at least one closed profile on the left side of the revolve axis");
+  return revolveSectionToMesh(runtime, polygons, settings);
+}
+
+function revolveSectionToMesh(runtime: ManifoldToplevel, polygons: Point2[][], settings: SketchRevolveSettings): SketchRevolveMesh {
   const disposable: unknown[] = [];
   try {
     const section = new runtime.CrossSection(polygons, "EvenOdd");
