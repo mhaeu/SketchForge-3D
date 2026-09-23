@@ -10573,8 +10573,10 @@ export function SketchForgeEditor({
         onSubtractBore={subtractBoreFromSelection}
         onTrimFlush={trimFlushToBody}
         canTrimFlush={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 2}
-        canSubtractBore={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).some(shapeHasBore)
-          && selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape) && !shapeHasBore(shape)).length > 0}
+        // Der Knopf bleibt anklickbar, sobald zwei Koerper dastehen: Ein
+        // grauer Knopf sagt nicht, was ihm fehlt - die Meldung beim Druecken
+        // sagt es.
+        canSubtractBore={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 2}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
         onVariableFillet={() => edgeModifier?.kind === "variableFillet" ? cancelEdgeModifier() : startEdgeModifier("variableFillet")}
         onMirror={toggleMirrorMode}

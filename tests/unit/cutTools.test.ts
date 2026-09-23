@@ -133,12 +133,59 @@ describe("Der Innenraum eines Rohrs", () => {
     expect(bore.width).toBeCloseTo(0.2, 9);
   });
 
+  it("erkennt ein gedrehtes Rohr an seinem parametrischen Ursprung", () => {
+    /*
+     * Ein Rohr, das durch etwas hindurchgesteckt wird, ist fast immer
+     * gedreht - und beim Drehen wird es in ein Netz gebacken: Seine Art
+     * heisst danach "mesh", seine Masse sind die des Kastens um die gedrehte
+     * Form, und seine Drehung steht auf null. Ohne den Ursprung blieb der
+     * Knopf dann grau, obwohl beide Koerper markiert waren.
+     */
+    const baked = {
+      ...tube,
+      kind: "mesh",
+      rotation: 0,
+      rotationX: 0,
+      rotationZ: 0,
+      // Um neunzig Grad gekippt liegt das Rohr flach: vierzig breit, zwanzig hoch.
+      width: 20,
+      depth: 40,
+      height: 20,
+      elevation: 5,
+      importedMesh: { positions: [], triangleCount: 0 },
+      parametricSource: { kind: "tube", width: 20, depth: 20, height: 40, size: 20, rotation: 0, rotationX: 90, rotationZ: 0 },
+    } as unknown as WorkplaneShape;
+    expect(shapeHasBore(baked)).toBe(true);
+    const bore = boreCutShape(baked, createId)!;
+    // Masse und Drehung kommen aus dem Ursprung, nicht aus dem Kasten.
+    expect(bore.width).toBeCloseTo(14, 9);
+    expect(bore.depth).toBeCloseTo(14, 9);
+    expect(bore.height).toBeCloseTo(40, 9);
+    expect(bore.rotationX).toBe(90);
+    // Und er sitzt mit seiner Mitte genau dort, wo das Rohr seine hat.
+    expect(bore.x).toBe(baked.x);
+    expect(bore.z).toBe(baked.z);
+    expect((bore.elevation ?? 0) + bore.height / 2).toBeCloseTo((baked.elevation ?? 0) + baked.height / 2, 9);
+  });
+
+  it("nimmt kein Ergebnis einer Verschneidung fuer ein Rohr", () => {
+    // Was schon verrechnet wurde, traegt zwar noch seinen Ursprung, ist aber
+    // nicht mehr das Rohr, das er beschreibt.
+    const combined = {
+      ...tube,
+      kind: "mesh",
+      groupedShapes: [{ id: "x" }],
+      parametricSource: { kind: "tube", width: 20, depth: 20, height: 40, size: 20, rotation: 0, rotationX: 0, rotationZ: 0 },
+    } as unknown as WorkplaneShape;
+    expect(shapeHasBore(combined)).toBe(false);
+  });
+
   it("gilt nur fuer Arten, deren Innenraum sich ausrechnen laesst", () => {
     expect(shapeHasBore(tube)).toBe(true);
     expect(shapeHasBore({ ...tube, kind: "ring" } as WorkplaneShape)).toBe(true);
     expect(shapeHasBore({ ...tube, kind: "cylinder" } as WorkplaneShape)).toBe(false);
     // Ein eingelesenes Netz hat keine Wandstaerke, die man lesen koennte.
-    expect(shapeHasBore({ ...tube, importedMesh: { positions: [], triangleCount: 0 } } as unknown as WorkplaneShape)).toBe(false);
+    expect(shapeHasBore({ ...tube, kind: "mesh", importedMesh: { positions: [], triangleCount: 0 } } as unknown as WorkplaneShape)).toBe(false);
     expect(boreCutShape({ ...tube, kind: "cylinder" } as WorkplaneShape, createId)).toBeNull();
   });
 });
