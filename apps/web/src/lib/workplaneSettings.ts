@@ -49,7 +49,7 @@ const snapGridOptions: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 
 // hier, wirft das Normalisieren ihre gespeicherten Vorgaben beim naechsten
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
 const customizableShapeKinds: ShapeKind[] = [
-  "box", "roundedBox", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
+  "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
   "mesh", "loft",
 ];
@@ -114,6 +114,11 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
     };
     if (kind === "sphere" || kind === "halfSphere") {
       entry.steps = optionalShapeNumber(source.steps, fallbackEntry?.steps, 6, MAX_HIGH_RESOLUTION_STEPS, true);
+    }
+    if (kind === "honeycomb") {
+      entry.honeycombCellSize = optionalShapeNumber(source.honeycombCellSize, fallbackEntry?.honeycombCellSize, 2, 100);
+      entry.honeycombWallThickness = optionalShapeNumber(source.honeycombWallThickness, fallbackEntry?.honeycombWallThickness, 0.4, 50);
+      entry.honeycombFrameWidth = optionalShapeNumber(source.honeycombFrameWidth, fallbackEntry?.honeycombFrameWidth, 0, 100);
     }
     if (kind === "roundedBox") {
       entry.cornerFillet = optionalShapeNumber(source.cornerFillet, fallbackEntry?.cornerFillet, 0, MAX_CUSTOM_SHAPE_DIMENSION / 2);

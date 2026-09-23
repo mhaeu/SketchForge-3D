@@ -1,4 +1,13 @@
 import {
+  DEFAULT_HONEYCOMB_CELL_SIZE,
+  DEFAULT_HONEYCOMB_HEIGHT,
+  DEFAULT_HONEYCOMB_FRAME_WIDTH,
+  DEFAULT_HONEYCOMB_WALL_THICKNESS,
+  normalizeHoneycombCellSize,
+  normalizeHoneycombFrameWidth,
+  normalizeHoneycombWallThickness,
+} from "@/lib/honeycombGeometry";
+import {
   DEFAULT_ROUNDED_BOX_CORNER_FILLET,
   DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET,
   DEFAULT_ROUNDED_BOX_QUALITY,
@@ -69,6 +78,7 @@ import { DEFAULT_LOFT_BOTTOM_SHAPE, DEFAULT_LOFT_LAYERS, DEFAULT_LOFT_SEGMENTS, 
 const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   box: "shape.box",
   roundedBox: "shape.roundedBox",
+  honeycomb: "shape.honeycomb",
   cylinder: "shape.cylinder",
   ellipse: "shape.ellipse",
   polygon: "shape.polygon",
@@ -99,7 +109,8 @@ export type ToolbarShapeAsset = ShapeAsset & { menuIcon: string };
 
 export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "box", name: "Box", src: "assets/sketchforge/shape-icons-gray/box.png", menuIcon: "assets/sketchforge/shape-icons-gray/box.png", kind: "box", color: "#d41721" },
-  { id: "roundedBox", name: "Rounded Box", src: "assets/sketchforge/shape-icons-gray/box.png", menuIcon: "assets/sketchforge/shape-icons-gray/box.png", kind: "roundedBox", color: "#d41721" },
+  { id: "honeycomb", name: "Honeycomb", src: "assets/sketchforge/shape-icons-gray/honeycomb.png", menuIcon: "assets/sketchforge/shape-icons-gray/honeycomb.png", kind: "honeycomb", color: "#e0a32e" },
+  { id: "roundedBox", name: "Rounded Box", src: "assets/sketchforge/shape-icons-gray/rounded-box.png", menuIcon: "assets/sketchforge/shape-icons-gray/rounded-box.png", kind: "roundedBox", color: "#d41721" },
   { id: "cylinder", name: "Cylinder", src: "assets/sketchforge/shape-icons-gray/cylinder.png", menuIcon: "assets/sketchforge/shape-icons-gray/cylinder.png", kind: "cylinder", color: "#d97813" },
   { id: "ellipse", name: "Ellipse", src: "assets/sketchforge/shape-icons-gray/ellipse.png", menuIcon: "assets/sketchforge/shape-icons-gray/ellipse.png", kind: "ellipse", color: "#e0a324" },
   { id: "polygon", name: "Polygon", src: "assets/sketchforge/shape-icons-gray/polygon.png", menuIcon: "assets/sketchforge/shape-icons-gray/polygon.png", kind: "polygon", color: "#5b5ce2" },
@@ -157,11 +168,18 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
   return {
     width: kind === "text" ? 86 : size,
     depth: kind === "text" ? 28 : size,
-    height: kind === "gear" ? 6 : kind === "loft" ? 28 : kind === "text" ? 10 : kind === "roundRoof" ? 10 : kind === "halfSphere" ? 11 : flatProfile ? 5 : 20,
+    height: kind === "honeycomb" ? DEFAULT_HONEYCOMB_HEIGHT : kind === "gear" ? 6 : kind === "loft" ? 28 : kind === "text" ? 10 : kind === "roundRoof" ? 10 : kind === "halfSphere" ? 11 : flatProfile ? 5 : 20,
   };
 }
 
 export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAssetDefaultDimensions(kind)): ShapeCustomization {
+  if (kind === "honeycomb") {
+    return {
+      honeycombCellSize: DEFAULT_HONEYCOMB_CELL_SIZE,
+      honeycombWallThickness: DEFAULT_HONEYCOMB_WALL_THICKNESS,
+      honeycombFrameWidth: DEFAULT_HONEYCOMB_FRAME_WIDTH,
+    };
+  }
   if (kind === "roundedBox") {
     return {
       cornerFillet: DEFAULT_ROUNDED_BOX_CORNER_FILLET,
@@ -243,6 +261,9 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     cornerFillet: shape.cornerFillet,
     topBottomFillet: shape.topBottomFillet,
     roundedBoxQuality: shape.roundedBoxQuality,
+    honeycombCellSize: shape.honeycombCellSize,
+    honeycombWallThickness: shape.honeycombWallThickness,
+    honeycombFrameWidth: shape.honeycombFrameWidth,
     topWidth: shape.topWidth,
     topDepth: shape.topDepth,
     baseRadius: shape.baseRadius,
@@ -391,6 +412,9 @@ export function makeShapeFromAsset(
     cornerFillet: asset.kind === "roundedBox" ? normalizeCornerFillet(customization.cornerFillet ?? DEFAULT_ROUNDED_BOX_CORNER_FILLET, Math.min(width, depth) / 2) : undefined,
     topBottomFillet: asset.kind === "roundedBox" ? normalizeTopBottomFillet(customization.topBottomFillet ?? DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET, height / 2) : undefined,
     roundedBoxQuality: asset.kind === "roundedBox" ? normalizeRoundedBoxQuality(customization.roundedBoxQuality ?? DEFAULT_ROUNDED_BOX_QUALITY) : undefined,
+    honeycombCellSize: asset.kind === "honeycomb" ? normalizeHoneycombCellSize(customization.honeycombCellSize ?? DEFAULT_HONEYCOMB_CELL_SIZE) : undefined,
+    honeycombWallThickness: asset.kind === "honeycomb" ? normalizeHoneycombWallThickness(customization.honeycombWallThickness ?? DEFAULT_HONEYCOMB_WALL_THICKNESS) : undefined,
+    honeycombFrameWidth: asset.kind === "honeycomb" ? normalizeHoneycombFrameWidth(customization.honeycombFrameWidth ?? DEFAULT_HONEYCOMB_FRAME_WIDTH) : undefined,
     teeth: gearTeeth,
     toothSize: gearToothSize,
     toothWidth: asset.kind === "gear" && customization.toothWidth !== undefined

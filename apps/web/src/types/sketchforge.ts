@@ -1,6 +1,7 @@
 export type ShapeKind =
   | "box"
   | "roundedBox"
+  | "honeycomb"
   | "cylinder"
   | "ellipse"
   | "sphere"
@@ -67,6 +68,9 @@ export type ShapeCustomization = {
   cornerFillet?: number;
   topBottomFillet?: number;
   roundedBoxQuality?: number;
+  honeycombCellSize?: number;
+  honeycombWallThickness?: number;
+  honeycombFrameWidth?: number;
   depth?: number;
   height?: number;
   maxDimension?: number;
@@ -292,6 +296,10 @@ export type ParametricSource = {
   topBottomFillet?: number;
   /** Abgerundeter Quader: wie fein die Rundungen unterteilt werden. */
   roundedBoxQuality?: number;
+  /** Wabengitter: Schluesselweite einer Wabe, Breite der Stege, Breite des Rahmens - in mm. */
+  honeycombCellSize?: number;
+  honeycombWallThickness?: number;
+  honeycombFrameWidth?: number;
   taperHeightLeft?: number;
   taperHeightRight?: number;
   taperHeightFront?: number;
@@ -376,6 +384,10 @@ export type WorkplaneShape = {
   topBottomFillet?: number;
   /** Abgerundeter Quader: wie fein die Rundungen unterteilt werden. */
   roundedBoxQuality?: number;
+  /** Wabengitter: Schluesselweite einer Wabe, Breite der Stege, Breite des Rahmens - in mm. */
+  honeycombCellSize?: number;
+  honeycombWallThickness?: number;
+  honeycombFrameWidth?: number;
   /**
    * Die Hoehe an den vier Seiten, als Anteil der Hoehe des Koerpers (0 bis 1).
    * Damit wird aus dem Koerper ein Keil oder eine schiefe Ebene. Fehlt ein

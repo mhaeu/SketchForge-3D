@@ -123,7 +123,7 @@ export function shapeTaperDimensions(shape: WorkplaneShape) {
  * und Tiefe der Grundflaeche.
  */
 export function shapeSupportsTaper(kind: WorkplaneShape["kind"]) {
-  return kind !== "gear" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox";
+  return kind !== "gear" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
 }
 
 /**
@@ -664,6 +664,9 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.segments === b.segments &&
     a.topRadius === b.topRadius &&
     a.baseRadius === b.baseRadius &&
+    a.honeycombCellSize === b.honeycombCellSize &&
+    a.honeycombWallThickness === b.honeycombWallThickness &&
+    a.honeycombFrameWidth === b.honeycombFrameWidth &&
     a.cornerFillet === b.cornerFillet &&
     a.topBottomFillet === b.topBottomFillet &&
     a.roundedBoxQuality === b.roundedBoxQuality &&

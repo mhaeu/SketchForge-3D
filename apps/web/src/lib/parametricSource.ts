@@ -15,6 +15,7 @@ export const BODY_PARAMETER_KEYS = [
   "taperTopWidth", "taperTopDepth", "taperBottomWidth", "taperBottomDepth",
   "taperHeightLeft", "taperHeightRight", "taperHeightFront", "taperHeightBack",
   "cornerFillet", "topBottomFillet", "roundedBoxQuality",
+  "honeycombCellSize", "honeycombWallThickness", "honeycombFrameWidth",
   "teeth", "toothSize", "toothWidth", "centerHoleSize", "gearType", "helixAngle", "helixQuality",
   "threadRole", "threadHead", "threadDrive", "threadHand", "threadProfile", "threadDiameter",
   "threadPitch", "threadClearance", "threadQuality", "threadHeadHeight", "threadChamfer",

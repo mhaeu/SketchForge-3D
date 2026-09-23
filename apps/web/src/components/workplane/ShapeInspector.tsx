@@ -36,6 +36,14 @@ import {
   normalizeRoundedBoxQuality,
   normalizeTopBottomFillet,
 } from "@/lib/roundedBoxGeometry";
+import {
+  DEFAULT_HONEYCOMB_CELL_SIZE,
+  DEFAULT_HONEYCOMB_FRAME_WIDTH,
+  DEFAULT_HONEYCOMB_WALL_THICKNESS,
+  normalizeHoneycombCellSize,
+  normalizeHoneycombFrameWidth,
+  normalizeHoneycombWallThickness,
+} from "@/lib/honeycombGeometry";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS } from "@/lib/workplaneSettings";
@@ -245,6 +253,7 @@ function propertyUsesLengthUnit(id: string) {
   // Die vier Deckkanten und die vier Seitenhoehen sind ebenfalls Laengen.
   if (/^(side|height)(Left|Right|Front|Back)$/.test(id)) return true;
   if (id === "cornerFillet" || id === "topBottomFillet") return true;
+  if (id === "honeycombCellSize" || id === "honeycombWallThickness" || id === "honeycombFrameWidth") return true;
   return ["radius", "length", "width", "height", "bevel", "topRadius", "baseRadius", "thickness", "toothSize", "toothWidth", "centerHole", "topLength", "topWidth", "bottomLength", "bottomWidth", "diameter", "pitch", "threadLength", "clearance", "headHeight", "chamfer", "headChamfer", "rimChamfer", "wire", "x", "y", "z", "crossSize", "markerSize"].includes(id);
 }
 
@@ -981,6 +990,46 @@ function getShapePropertiesWithAppLimits(
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
     );
     return properties;
+  }
+
+  if (shape.kind === "honeycomb") {
+    /*
+     * Ein Lueftungsgitter aus Sechsecken: Wabengroesse, Stegbreite und die
+     * Breite des geschlossenen Rahmens aussen herum. Alles drei in
+     * Millimetern - so, wie man es beim Drucken auch misst.
+     */
+    return [
+      {
+        id: "honeycombCellSize",
+        label: t("prop.honeycombCellSize"),
+        value: shape.honeycombCellSize ?? DEFAULT_HONEYCOMB_CELL_SIZE,
+        min: 3,
+        max: 25,
+        step: 0.5,
+        onChange: (value) => onUpdate({ honeycombCellSize: normalizeHoneycombCellSize(value) }),
+      },
+      {
+        id: "honeycombWallThickness",
+        label: t("prop.honeycombWallThickness"),
+        value: shape.honeycombWallThickness ?? DEFAULT_HONEYCOMB_WALL_THICKNESS,
+        min: 0.8,
+        max: 5,
+        step: 0.1,
+        onChange: (value) => onUpdate({ honeycombWallThickness: normalizeHoneycombWallThickness(value) }),
+      },
+      {
+        id: "honeycombFrameWidth",
+        label: t("prop.honeycombFrameWidth"),
+        value: shape.honeycombFrameWidth ?? DEFAULT_HONEYCOMB_FRAME_WIDTH,
+        min: 0,
+        max: 15,
+        step: 0.5,
+        onChange: (value) => onUpdate({ honeycombFrameWidth: normalizeHoneycombFrameWidth(value) }),
+      },
+      { id: "length", label: t("prop.length"), value: depth, min: MIN_SHAPE_SIZE, max: 200, onChange: setDepth },
+      { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 200, onChange: setWidth },
+      { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
   }
 
   if (shape.kind === "roundedBox") {

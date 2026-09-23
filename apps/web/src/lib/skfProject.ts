@@ -30,7 +30,7 @@ export const SKF_LIMITS = {
 } as const;
 
 const SHAPE_KINDS = new Set([
-  "box", "roundedBox", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
+  "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
 ]);
 
@@ -984,6 +984,13 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
     const side = finiteNumber(definition[field], `${label}.${field}`);
     if (side < 0 || side > 1) throw new Error(`${label}.${field} is outside the supported range`);
   });
+  if (kind === "honeycomb") {
+    (["honeycombCellSize", "honeycombWallThickness", "honeycombFrameWidth"] as const).forEach((field) => {
+      if (definition[field] === undefined) return;
+      const value = finiteNumber(definition[field], `${label}.${field}`);
+      if (value < 0 || value > 1e6) throw new Error(`${label}.${field} is outside the supported range`);
+    });
+  }
   if (kind === "roundedBox") {
     // Die beiden Rundungen stehen in Millimetern, die Feinheit in Stufen.
     (["cornerFillet", "topBottomFillet"] as const).forEach((field) => {
