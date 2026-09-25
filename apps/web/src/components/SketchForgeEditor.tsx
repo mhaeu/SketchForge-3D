@@ -181,7 +181,7 @@ import {
   type PlacementPoint,
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
-import { boreCutShape, boreIsExact, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
+import { boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -9142,21 +9142,34 @@ export function SketchForgeEditor({
    * geschnitten, damit aus mehreren nicht ungefragt einer wird.
    */
   const subtractBoreFromSelection = useCallback(async () => {
-    const usable = selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole);
-    const tools = usable.filter((shape) => shapeHasBore(shape) || hollowSketchTool(shape));
-    const targets = usable.filter((shape) => !shapeHasBore(shape) && !hollowSketchTool(shape));
-    if (tools.length === 0) {
+    /*
+     * Der **zuerst** angeklickte Koerper gibt den Hohlraum - so, wie man beim
+     * Zeigen zuerst auf das deutet, wovon die Rede ist. Frueher wurde nach
+     * "hohl" und "nicht hohl" sortiert; sobald beide hohl waren - ein Rohr
+     * durch ein Rohr -, waren es zwei Werkzeuge und kein Ziel, und der Knopf
+     * meldete nur, man solle einen hohlen Koerper und einen Koerper waehlen.
+     */
+    const cuttable = (shape: WorkplaneShape) => !shape.locked && isSolidShape(shape) && !shape.hole;
+    const usable = shapesInClickOrder(selectedShapes.filter(cuttable), selectedIds);
+    const plan = cavityPlanForSelection(
+      usable,
+      shapesRef.current,
+      (shape) => shapeHasBore(shape) || hollowSketchTool(shape),
+      cuttable,
+    );
+    if (!plan) {
       // Genauer als "waehle einen hohlen Koerper": Der Benutzer *hat* einen
       // gewaehlt - er traegt nur nicht mehr, was zum Rechnen noetig waere.
       setNotice(usable.length >= 2 ? t("status.noCavitySource") : t("status.selectHollowAndBody"));
       return;
     }
-    if (tools.length !== 1 || targets.length === 0) {
-      setNotice(t("status.selectHollowAndBody"));
+    const { tool, targets } = plan;
+    if (targets.length === 0) {
+      setNotice(t(usable.length > 1 ? "status.selectHollowAndBody" : "status.boreNothingToClear"));
       return;
     }
     const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
-    const cavity = await cavityHoleForShape(tools[0]);
+    const cavity = await cavityHoleForShape(tool);
     if (!cavity) {
       setNotice(t("status.cavityUnavailable"));
       return;
@@ -9177,9 +9190,9 @@ export function SketchForgeEditor({
       // Steht das Rohr schraeg und wurde ungleich gestreckt, ist sein
       // Innenraum kein rundes Rohr mehr - dann ist der Schnitt eine Naeherung,
       // und das gehoert dazugesagt.
-      t(boreIsExact(tools[0]) ? "status.boreSubtracted" : "status.boreSubtractedApproximate", { count: cut.length }),
+      t(boreIsExact(tool) ? "status.boreSubtracted" : "status.boreSubtractedApproximate", { count: cut.length }),
     );
-  }, [cavityHoleForShape, commitShapes, hollowSketchTool, selectedShapes]);
+  }, [cavityHoleForShape, commitShapes, hollowSketchTool, selectedIds, selectedShapes]);
 
   const intersectSelected = useCallback(async () => {
     const groupable = selectedShapes.filter((shape) => !shape.locked);
@@ -10745,10 +10758,11 @@ export function SketchForgeEditor({
         onSubtractBore={subtractBoreFromSelection}
         onTrimFlush={trimFlushToBody}
         canTrimFlush={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 2}
-        // Der Knopf bleibt anklickbar, sobald zwei Koerper dastehen: Ein
-        // grauer Knopf sagt nicht, was ihm fehlt - die Meldung beim Druecken
-        // sagt es.
-        canSubtractBore={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 2}
+        // Schon ein einzelner Koerper genuegt: Ist er hohl, wird sein
+        // Innenraum aus allem herausgenommen, was ihm im Weg steht. Und der
+        // Knopf bleibt auch sonst anklickbar - ein grauer Knopf sagt nicht,
+        // was ihm fehlt, die Meldung beim Druecken sagt es.
+        canSubtractBore={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 1}
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
         onVariableFillet={() => edgeModifier?.kind === "variableFillet" ? cancelEdgeModifier() : startEdgeModifier("variableFillet")}
         onMirror={toggleMirrorMode}

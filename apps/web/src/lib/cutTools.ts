@@ -271,6 +271,84 @@ export function boreIsExact(shape: WorkplaneShape) {
 }
 
 /**
+ * Der achsenparallele Kasten, in dem ein Koerper steht.
+ *
+ * Bei einem gedrehten Koerper reichen Breite, Tiefe und Hoehe nicht: Sie
+ * gelten in seinem eigenen Rahmen. Also werden die acht Ecken um die Mitte
+ * gedreht und daraus der Kasten in den Achsen der Welt genommen. Ein
+ * gebackener Koerper steht ohnehin ungedreht da, fuer ihn faellt das
+ * zusammen.
+ */
+export function shapeWorldBounds(shape: WorkplaneShape) {
+  const half = new THREE.Vector3(shapeWidth(shape) / 2, shape.height / 2, shapeDepth(shape) / 2);
+  const centre = new THREE.Vector3(shape.x, (shape.elevation ?? 0) + shape.height / 2, shape.z);
+  const quaternion = shapeRotationQuaternion(shape);
+  const box = new THREE.Box3().makeEmpty();
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        box.expandByPoint(
+          new THREE.Vector3(half.x * sx, half.y * sy, half.z * sz).applyQuaternion(quaternion).add(centre),
+        );
+      }
+    }
+  }
+  return box;
+}
+
+/**
+ * Ob zwei Koerper einander ueberhaupt erreichen koennen.
+ *
+ * Nur eine grobe Vorpruefung ueber die Kaesten - sie sagt zuverlaessig, dass
+ * zwei Koerper sich **nicht** treffen, und das genuegt: Wer davon
+ * durchgelassen wird, geht danach durch das richtige Verschneiden. Ohne diese
+ * Vorpruefung wuerde beim Aushoehlen ohne zweite Auswahl jeder Koerper der
+ * Szene verrechnet - auch die weit entfernten, die dabei nichts verlieren,
+ * aber ihre Bauwerte gegen ein Netz eintauschen wuerden.
+ */
+export function shapesCouldMeet(a: WorkplaneShape, b: WorkplaneShape) {
+  return shapeWorldBounds(a).intersectsBox(shapeWorldBounds(b));
+}
+
+/** Wer den Hohlraum gibt und aus wem er herausgenommen wird. */
+export type CavityPlan<T> = {
+  /** Der hohle Koerper, dessen Innenraum genommen wird. */
+  tool: T;
+  /** Die Koerper, aus denen er herausgenommen wird. */
+  targets: T[];
+};
+
+/**
+ * Wer beim Aushoehlen was ist.
+ *
+ * Der **zuerst angeklickte hohle** Koerper gibt den Hohlraum; alles andere
+ * Ausgewaehlte ist Ziel, ob es selbst hohl ist oder nicht.
+ *
+ * Frueher wurde nach "hohl" und "nicht hohl" sortiert. Sobald beide hohl
+ * waren - ein Rohr durch ein Rohr -, waren es zwei Werkzeuge und kein Ziel,
+ * und der Knopf meldete nur, man solle einen hohlen Koerper und einen Koerper
+ * waehlen. Die Reihenfolge trennt die beiden jetzt, statt ihre Art es zu
+ * lassen.
+ *
+ * Ein Koerper allein heisst: Nimm seinen Hohlraum aus allem heraus, was ihm
+ * im Weg steht. Was er gar nicht erreicht, bleibt aussen vor - es wuerde
+ * nichts verlieren, aber seine Bauwerte gegen ein Netz eintauschen.
+ */
+export function cavityPlanForSelection<T extends WorkplaneShape>(
+  selection: readonly T[],
+  scene: readonly T[],
+  isHollow: (shape: T) => boolean,
+  usable: (shape: T) => boolean,
+): CavityPlan<T> | null {
+  const tool = selection.find(isHollow);
+  if (!tool) return null;
+  const targets = selection.length > 1
+    ? selection.filter((shape) => shape.id !== tool.id)
+    : scene.filter((shape) => shape.id !== tool.id && usable(shape) && shapesCouldMeet(tool, shape));
+  return { tool, targets };
+}
+
+/**
  * Die Auswahl in der Reihenfolge, in der angeklickt wurde.
  *
  * Die Liste der Koerper steht in der Reihenfolge, in der sie entstanden

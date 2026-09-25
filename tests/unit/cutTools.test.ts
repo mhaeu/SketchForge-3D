@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { boreCutShape, boreIsExact, cutReachForShapes, flippedWorkplane, shapeHasBore, shapesInClickOrder, workplaneCutBox } from "@/lib/cutTools";
+import {
+  boreCutShape,
+  boreIsExact,
+  cavityPlanForSelection,
+  cutReachForShapes,
+  flippedWorkplane,
+  shapeHasBore,
+  shapeWorldBounds,
+  shapesCouldMeet,
+  shapesInClickOrder,
+  workplaneCutBox,
+} from "@/lib/cutTools";
 import type { PlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
@@ -286,5 +297,128 @@ describe("Die Reihenfolge der Auswahl", () => {
     // Ein aufgezogener Rahmen nennt keine Reihenfolge; dann bleibt es bei der
     // vorhandenen, statt zu wuerfeln.
     expect(shapesInClickOrder(shapes, []).map((shape) => shape.id)).toEqual(["alt", "neu", "neuer"]);
+  });
+});
+
+/**
+ * Gemeldet an einer Datei mit zwei sich kreuzenden Rohren: Sie liessen sich
+ * nicht ineinander aushoehlen. Sortiert wurde nach "hohl" und "nicht hohl" -
+ * sobald beide hohl waren, waren es zwei Werkzeuge und kein Ziel, und der
+ * Knopf meldete nur, man solle einen hohlen Koerper und einen Koerper
+ * waehlen.
+ */
+describe("Wer beim Aushoehlen was ist", () => {
+  const body = (id: string, over: Partial<WorkplaneShape> = {}) => ({
+    id, name: id, kind: "box", color: "#fff",
+    x: 0, z: 0, elevation: 0, size: 20, width: 20, depth: 20, height: 20,
+    rotation: 0, rotationX: 0, rotationZ: 0,
+    ...over,
+  } as WorkplaneShape);
+
+  const hollowIds = new Set(["rohr", "rohr2"]);
+  const isHollow = (shape: WorkplaneShape) => hollowIds.has(shape.id);
+  const cuttable = () => true;
+  const plan = (selection: WorkplaneShape[], scene: WorkplaneShape[] = selection) =>
+    cavityPlanForSelection(selection, scene, isHollow, cuttable);
+
+  it("nimmt den zuerst angeklickten hohlen Koerper als Werkzeug", () => {
+    const first = plan([body("rohr"), body("rohr2")])!;
+    expect(first.tool.id).toBe("rohr");
+    expect(first.targets.map((shape) => shape.id)).toEqual(["rohr2"]);
+
+    // Andersherum angeklickt kehrt sich auch die Rolle um.
+    const other = plan([body("rohr2"), body("rohr")])!;
+    expect(other.tool.id).toBe("rohr2");
+    expect(other.targets.map((shape) => shape.id)).toEqual(["rohr"]);
+  });
+
+  it("uebergeht volle Koerper, die vorne stehen", () => {
+    // Gesucht ist der zuerst angeklickte *hohle* Koerper - ein voller kann
+    // den Hohlraum ohnehin nicht geben.
+    const found = plan([body("quader"), body("rohr")])!;
+    expect(found.tool.id).toBe("rohr");
+    expect(found.targets.map((shape) => shape.id)).toEqual(["quader"]);
+  });
+
+  it("nimmt auch bei zwei hohlen den zuerst angeklickten von ihnen", () => {
+    const found = plan([body("quader"), body("rohr"), body("rohr2")])!;
+    expect(found.tool.id).toBe("rohr");
+    // Und der zweite hohle ist Ziel wie jeder andere auch.
+    expect(found.targets.map((shape) => shape.id)).toEqual(["quader", "rohr2"]);
+  });
+
+  it("gibt auf, wenn gar kein hohler Koerper dabei ist", () => {
+    expect(plan([body("quader"), body("quader2")])).toBeNull();
+  });
+
+  it("nimmt alle uebrigen Ausgewaehlten als Ziel", () => {
+    const found = plan([body("rohr"), body("a"), body("b")])!;
+    expect(found.targets.map((shape) => shape.id)).toEqual(["a", "b"]);
+  });
+
+  describe("ein hohler Koerper allein", () => {
+    // Ein Rohr, das flach durch die Szene laeuft.
+    const tube = body("rohr", { x: 0, z: 0, elevation: 20, width: 100, depth: 16, height: 16 });
+
+    it("raeumt seinen Hohlraum aus allem, was ihm im Weg steht", () => {
+      const across = body("quer", { x: 30, z: 0, elevation: 0, width: 20, depth: 20, height: 40 });
+      const found = plan([tube], [tube, across])!;
+      expect(found.tool.id).toBe("rohr");
+      expect(found.targets.map((shape) => shape.id)).toEqual(["quer"]);
+    });
+
+    it("laesst weit entfernte Koerper in Ruhe", () => {
+      // Sie wuerden nichts verlieren, aber ihre Bauwerte gegen ein Netz
+      // eintauschen - und das waere ein stiller Schaden.
+      const far = body("fern", { x: 400, z: 400, elevation: 0 });
+      const found = plan([tube], [tube, far])!;
+      expect(found.targets).toEqual([]);
+    });
+
+    it("fragt nicht danach, ob das Ziel selbst hohl ist", () => {
+      const other = body("rohr2", { x: 20, z: 0, elevation: 0, width: 16, depth: 16, height: 60 });
+      const found = plan([tube], [tube, other])!;
+      expect(found.targets.map((shape) => shape.id)).toEqual(["rohr2"]);
+    });
+
+    it("laesst aus, was gar nicht geschnitten werden darf", () => {
+      const locked = body("fest", { x: 0, z: 0, elevation: 20 });
+      const found = cavityPlanForSelection([tube], [tube, locked], isHollow, (shape) => shape.id !== "fest")!;
+      expect(found.targets).toEqual([]);
+    });
+  });
+});
+
+describe("Der Kasten, in dem ein Koerper steht", () => {
+  const upright = {
+    id: "a", name: "a", kind: "box", color: "#fff",
+    x: 10, z: -4, elevation: 2, size: 20, width: 20, depth: 6, height: 40,
+    rotation: 0, rotationX: 0, rotationZ: 0,
+  } as WorkplaneShape;
+
+  it("steht an der Stelle des Koerpers und hat seine Masse", () => {
+    const box = shapeWorldBounds(upright);
+    expect([box.min.x, box.max.x]).toEqual([0, 20]);
+    expect([box.min.y, box.max.y]).toEqual([2, 42]);
+    expect([box.min.z, box.max.z]).toEqual([-7, -1]);
+  });
+
+  it("waechst mit, wenn der Koerper gedreht dasteht", () => {
+    // Um neunzig Grad um X gekippt tauschen Hoehe und Tiefe die Rolle.
+    const tipped = shapeWorldBounds({ ...upright, rotationX: 90 } as WorkplaneShape);
+    expect(tipped.max.y - tipped.min.y).toBeCloseTo(6, 6);
+    expect(tipped.max.z - tipped.min.z).toBeCloseTo(40, 6);
+    // Und die Mitte bleibt, wo sie war - gedreht wird um sie herum.
+    expect((tipped.max.y + tipped.min.y) / 2).toBeCloseTo(22, 6);
+  });
+
+  it("erkennt, ob zwei Koerper einander erreichen koennen", () => {
+    // Der Koerper steht von x = 0 bis 20.
+    const touching = { ...upright, x: 25 } as WorkplaneShape;
+    const apart = { ...upright, x: 35 } as WorkplaneShape;
+    expect(shapesCouldMeet(upright, touching)).toBe(true);
+    expect(shapesCouldMeet(upright, apart)).toBe(false);
+    // Nur die Kaesten zaehlen: Ein gedrehter Koerper reicht weiter.
+    expect(shapesCouldMeet(upright, { ...apart, rotationZ: 90 } as WorkplaneShape)).toBe(true);
   });
 });

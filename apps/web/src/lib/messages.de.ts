@@ -236,6 +236,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.noCavitySource": "Keiner der gewählten Körper trägt, was zum Ausrechnen eines Hohlraums nötig ist: ein Rohr, ein Ring, oder ein Körper, an dem seine Zeichnung noch hängt. Ein getrennter Teil, ein eingelesenes Netz oder ein schon verschnittener Körper trägt das nicht mehr.",
   "status.cavityUnavailable": "Der Hohlraum dieses Körpers lässt sich nicht ausrechnen. Ein Körper, der nach dem Zeichnen gedreht oder schon mit etwas anderem verschnitten wurde, trägt das Nötige nicht mehr.",
   "status.selectTubeAndBody": "Wähle genau ein Rohr oder einen Ring und mindestens einen Körper, durch den es steckt",
+  "status.boreNothingToClear": "Dem Innenraum dieses Körpers steht nichts im Weg — steck ihn durch einen anderen Körper, oder wähle den Körper, aus dem ausgespart werden soll",
   "status.boreSubtracted": "Innenraum aus {count} Körper(n) ausgespart",
   "status.boreSubtractedApproximate": "Innenraum aus {count} Körper(n) ausgespart — das Rohr steht schräg und wurde ungleich gestreckt, sein Innenraum ist damit kein rundes Rohr mehr und der Schnitt eine nahe Näherung",
   "editor.tool.intersect": "Schnittmenge",

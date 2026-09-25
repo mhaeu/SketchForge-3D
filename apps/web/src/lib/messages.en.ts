@@ -237,6 +237,7 @@ export const MESSAGES_EN = {
   "status.noCavitySource": "None of the selected bodies carries what it takes to work out a cavity: a tube, a ring, or a body whose sketch is still attached to it. A separated part, an imported mesh or a body already combined with another no longer carries it.",
   "status.cavityUnavailable": "The cavity of this body cannot be worked out. A body that was rotated after drawing, or already combined with another, no longer carries what it takes.",
   "status.selectTubeAndBody": "Select exactly one tube or ring and at least one body it runs through",
+  "status.boreNothingToClear": "Nothing stands in the way of this body's cavity — put it through another body, or select the body it should be cleared out of",
   "status.boreSubtracted": "Bore cleared out of {count} body/bodies",
   "status.boreSubtractedApproximate": "Bore cleared out of {count} body/bodies — the tube stands at an angle and was stretched unevenly, so its inside is no longer a round pipe and the cut is a close approximation",
   "editor.tool.intersect": "Boolean Intersection",
