@@ -44,6 +44,28 @@ export function fullShapeRegion(shape: Pick<WorkplaneShape, "width" | "depth" | 
   return { minX: -width / 2, maxX: width / 2, minY: 0, maxY: shape.height, minZ: -depth / 2, maxZ: depth / 2 };
 }
 
+/**
+ * Die Grenzen, zwischen denen die Regler des Teilbereichs laufen - dieselben
+ * wie der volle Bereich, damit Regler und Kasten nie auseinanderlaufen
+ * koennen.
+ *
+ * Gerechnet wird gegen den Koerper, **in dessen Netz der Kasten lebt**. Die
+ * Eigenschaftsleiste bekommt den Koerper sonst mit seiner Urform darin - fuer
+ * die Bauwerte richtig, fuer den Kasten falsch: Ein liegendes Rohr ist als
+ * Netz 94 mm breit und 14 mm hoch, seine Urform aber 14 mm breit und 94 mm
+ * hoch. Der Breitenregler lief dann bis 7, waehrend der Kasten bei 47 stand -
+ * das Zahlenfeld zeigte die 47, und der erste Griff an den Schieber warf sie
+ * weg.
+ */
+export function regionSliderBounds(shape: Pick<WorkplaneShape, "width" | "depth" | "size" | "height">) {
+  const full = fullShapeRegion(shape);
+  return [
+    { axis: "length" as const, lo: "minZ" as const, hi: "maxZ" as const, min: full.minZ, max: full.maxZ },
+    { axis: "width" as const, lo: "minX" as const, hi: "maxX" as const, min: full.minX, max: full.maxX },
+    { axis: "height" as const, lo: "minY" as const, hi: "maxY" as const, min: full.minY, max: full.maxY },
+  ];
+}
+
 /** Orders each pair, keeps a minimum thickness, and stays inside the shape. */
 export function clampRegionToShape(region: ResizeRegion, shape: Pick<WorkplaneShape, "width" | "depth" | "size" | "height">): ResizeRegion {
   const bounds = fullShapeRegion(shape);

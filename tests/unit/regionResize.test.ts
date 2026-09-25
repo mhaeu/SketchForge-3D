@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { clampRegionToShape, deformPositionsInRegion, fullShapeRegion, regionResizedShape, tightenRegionToShape, type ResizeRegion } from "@/lib/regionResize";
+import { clampRegionToShape, deformPositionsInRegion, fullShapeRegion, regionResizedShape, regionSliderBounds, tightenRegionToShape, type ResizeRegion } from "@/lib/regionResize";
+import { shapeWithParametricSource } from "@/lib/workplaneShapes";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 // A closed box as a triangle soup, the way importedMesh stores geometry.
@@ -371,5 +372,56 @@ describe("region resize on a shape", () => {
     expect(clamped.maxY).toBe(20);
     expect(clamped.maxZ - clamped.minZ).toBeGreaterThan(0);
     expect(fullShapeRegion(shape)).toEqual({ minX: -10, maxX: 10, minY: 0, maxY: 20, minZ: -10, maxZ: 10 });
+  });
+});
+
+/**
+ * Gemeldet an einem liegenden Rohr: Der Breitenregler des Teilbereichs stand
+ * auf 47, sprang beim ersten Anfassen aber auf hoechstens 7 - und warf die 47
+ * damit weg.
+ *
+ * Der Kasten lebt im Netz des Koerpers. Die Eigenschaftsleiste bekommt den
+ * Koerper aber mit seiner **Urform** darin, damit sich ein gedrehter Zylinder
+ * noch ueber seine Bauwerte aendern laesst. Nach einer Drehung beschreiben die
+ * beiden ganz verschiedene Rahmen, und die Regler liefen gegen den falschen.
+ */
+describe("Die Grenzen der Regler am Teilbereich", () => {
+  /** Ein liegendes Rohr: als Netz 94 breit und 14 hoch, als Urform umgekehrt. */
+  const laidDown = {
+    id: "rohr", name: "Rohr", kind: "mesh", color: "#fff",
+    x: 0, z: 0, elevation: 0,
+    width: 94, depth: 8, height: 14, size: 94,
+    rotation: 0, rotationX: 0, rotationZ: 0,
+    parametricSource: { kind: "tube", width: 14, depth: 8, height: 94, size: 14, rotation: 0, rotationX: 0, rotationZ: 0 },
+  } as unknown as WorkplaneShape;
+
+  const boundsFor = (shape: WorkplaneShape) =>
+    Object.fromEntries(regionSliderBounds(shape).map((row) => [row.axis, [row.min, row.max]]));
+
+  it("laufen ueber den Koerper, in dessen Netz der Kasten lebt", () => {
+    expect(boundsFor(laidDown)).toEqual({
+      length: [-4, 4],
+      width: [-47, 47],
+      height: [0, 14],
+    });
+  });
+
+  it("stimmen genau mit dem vollen Bereich ueberein", () => {
+    // Regler und Kasten duerfen nie auseinanderlaufen - sonst zeigt das
+    // Zahlenfeld einen Wert, den der Schieber beim ersten Griff wegwirft.
+    const full = fullShapeRegion(laidDown);
+    regionSliderBounds(laidDown).forEach((row) => {
+      expect(row.min).toBeCloseTo(full[row.lo], 9);
+      expect(row.max).toBeCloseTo(full[row.hi], 9);
+    });
+  });
+
+  it("wuerden gegen die Urform gerechnet den Kasten wegwerfen", () => {
+    // Genau der gemeldete Fall: Der Kasten steht bei 47, der Regler liesse
+    // hoechstens 7 zu.
+    const withSource = boundsFor(shapeWithParametricSource(laidDown));
+    expect(withSource.width).toEqual([-7, 7]);
+    expect(withSource.height).toEqual([0, 94]);
+    expect(fullShapeRegion(laidDown).maxX).toBe(47);
   });
 });

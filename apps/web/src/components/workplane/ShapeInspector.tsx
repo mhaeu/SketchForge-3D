@@ -24,7 +24,7 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
-import { MIN_REGION_SIZE, type ResizeRegion } from "@/lib/regionResize";
+import { MIN_REGION_SIZE, regionSliderBounds, type ResizeRegion } from "@/lib/regionResize";
 import { regionTaperIsUntouched, untouchedRegionTaper, type RegionTaper } from "@/lib/regionTaper";
 import {
   DEFAULT_ROUNDED_BOX_CORNER_FILLET,
@@ -1176,6 +1176,7 @@ export function ShapeInspector({
   onInteractionActiveChange,
   linkedAxes = NO_LINKED_RESIZE_AXES,
   onLinkedAxesChange,
+  regionShape = null,
   resizeRegion = null,
   onResizeRegionChange,
   onRegionTaper,
@@ -1190,6 +1191,12 @@ export function ShapeInspector({
   onLinkedAxesChange?: (next: LinkedResizeAxes) => void;
   // While set, the viewport handles resize this box inside the shape rather
   // than the shape; the inspector is where the box itself is placed.
+  /**
+   * Der Koerper, in dessen Netz der Kasten des Teilbereichs lebt. `shape`
+   * traegt die Urform darin und beschreibt nach einer Drehung einen ganz
+   * anderen Rahmen; fuer den Kasten zaehlt nur dieser hier.
+   */
+  regionShape?: WorkplaneShape | null;
   resizeRegion?: ResizeRegion | null;
   onResizeRegionChange?: (region: ResizeRegion) => void;
   /** Die Verjuengung auf den Teilbereich legen - sie wird sofort ins Netz gerechnet. */
@@ -1600,7 +1607,7 @@ export function ShapeInspector({
           <p className="region-card-hint">{t("inspector.regionHint")}</p>
           <div className="property-list">
             <ShapePropertyRows
-              properties={regionBoundProperties(shape, resizeRegion, onResizeRegionChange)}
+              properties={regionBoundProperties(regionShape ?? shape, resizeRegion, onResizeRegionChange)}
               workspace={workspace}
               disabled={locked}
               onInteractionActiveChange={onInteractionActiveChange}
@@ -1830,14 +1837,17 @@ export function ShapeInspector({
  * bound is kept on its own side of the opposite one so the box never
  * collapses or flips.
  */
+/**
+ * `shape` muss hier der Koerper sein, **in dessen Netz der Kasten lebt** - nicht
+ * der mit seiner Urform darin, den die Eigenschaftsleiste sonst bekommt. Die
+ * Begruendung steht bei `regionSliderBounds`.
+ */
 function regionBoundProperties(shape: WorkplaneShape, region: ResizeRegion, onChange: (region: ResizeRegion) => void): ShapePropertyConfig[] {
-  const width = shapeWidth(shape);
-  const depth = shapeDepth(shape);
-  const rows: Array<{ id: string; label: string; lo: keyof ResizeRegion; hi: keyof ResizeRegion; min: number; max: number }> = [
-    { id: "length", label: t("prop.length"), lo: "minZ", hi: "maxZ", min: -depth / 2, max: depth / 2 },
-    { id: "width", label: t("prop.width"), lo: "minX", hi: "maxX", min: -width / 2, max: width / 2 },
-    { id: "height", label: t("prop.height"), lo: "minY", hi: "maxY", min: 0, max: shape.height },
-  ];
+  const rows = regionSliderBounds(shape).map((row) => ({
+    ...row,
+    id: row.axis,
+    label: t(`prop.${row.axis}` as MessageKey),
+  }));
   return rows.flatMap(({ id, label, lo, hi, min, max }) => [
     {
       id: `${id}From`,

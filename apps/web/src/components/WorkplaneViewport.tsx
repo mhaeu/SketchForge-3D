@@ -6757,6 +6757,10 @@ export function WorkplaneViewport({
       {selectedShape && !modifierActive && !rulerMode && !rulerDeleteMode && !rulerMoveMode ? (
         <ShapeInspector
           shape={shapeWithParametricSource(selectedShape)}
+          // Der Kasten des Teilbereichs lebt im Netz des Koerpers, nicht in
+          // seiner Urform - die beschreibt nach einer Drehung einen anderen
+          // Rahmen.
+          regionShape={selectedShape}
           referencePoint={referencePointPosition(shapes)}
           snap={snap}
           snapOpen={snapOpen}
