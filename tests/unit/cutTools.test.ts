@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
+import { shapeRotationQuaternion } from "@/lib/geometryRotation";
 import {
   boreCutShape,
   boreIsExact,
@@ -420,5 +421,61 @@ describe("Der Kasten, in dem ein Koerper steht", () => {
     expect(shapesCouldMeet(upright, apart)).toBe(false);
     // Nur die Kaesten zaehlen: Ein gedrehter Koerper reicht weiter.
     expect(shapesCouldMeet(upright, { ...apart, rotationZ: 90 } as WorkplaneShape)).toBe(true);
+  });
+});
+
+/**
+ * Gemeldet: Das ausgehoehlte Loch lag nicht im Rohr, sondern ein Stueck
+ * daneben.
+ *
+ * Ueber einem gebackenen Rohr liegen zwei Drehungen: die, die beim Backen ins
+ * Netz gewandert ist, und eine lebende am Koerper. Die zweite gab es frueher
+ * kaum - Drehen backt ja -, seit der Teilbereich den Rahmen in die
+ * Arbeitsebene dreht, aber schon. Das Werkzeug bekam nur die erste und lag
+ * damit schief im Rohr.
+ */
+describe("Ein Rohr mit zwei Drehungen uebereinander", () => {
+  /** Die Achse, unter der dieser Koerper in der Szene steht. */
+  const axisOf = (turn: { rotation?: number; rotationX?: number; rotationZ?: number }) =>
+    new THREE.Vector3(0, 1, 0).applyQuaternion(shapeRotationQuaternion({
+      rotation: turn.rotation ?? 0, rotationX: turn.rotationX ?? 0, rotationZ: turn.rotationZ ?? 0,
+    } as WorkplaneShape));
+
+  const source = { kind: "tube", width: 20, depth: 20, height: 70, size: 20, rotation: 0, rotationX: 0, rotationZ: 73 };
+  const baked = {
+    id: "rohr", name: "Rohr", kind: "mesh", color: "#fff",
+    x: 5, z: -3, elevation: 2, bevel: 4,
+    size: 70, width: 70, depth: 20, height: 25,
+    // Die lebende Drehung obendrauf.
+    rotation: 0, rotationX: 0, rotationZ: 17,
+    parametricSource: source,
+    importedMesh: { positions: [], triangleCount: 0, baseWidth: 70, baseDepth: 20, baseHeight: 25 },
+  } as unknown as WorkplaneShape;
+
+  it("stellt das Werkzeug unter die Drehung, unter der das Rohr wirklich steht", () => {
+    const bore = boreCutShape(baked, createId)!;
+    // 73 Grad im Netz und 17 Grad am Koerper ergeben zusammen 90.
+    const wanted = axisOf({ rotationZ: 73 + 17 });
+    expect(axisOf(bore).angleTo(wanted)).toBeLessThan(1e-6);
+  });
+
+  it("nimmt nicht nur die Drehung aus dem Netz", () => {
+    // Genau der gemeldete Fehler: Das Werkzeug lag um die lebende Drehung
+    // verdreht im Rohr, und das Loch damit ein Stueck daneben.
+    const bore = boreCutShape(baked, createId)!;
+    const onlyBaked = axisOf({ rotationZ: 73 });
+    expect(THREE.MathUtils.radToDeg(axisOf(bore).angleTo(onlyBaked))).toBeCloseTo(17, 4);
+  });
+
+  it("dreht ein ungebackenes Rohr nicht doppelt", () => {
+    // Es traegt seine Drehung selbst; es gibt kein Netz, in dem noch eine
+    // zweite steckte.
+    const live = {
+      id: "r", name: "Rohr", kind: "tube", color: "#fff",
+      x: 0, z: 0, elevation: 0, size: 20, width: 20, depth: 20, height: 70, bevel: 4,
+      rotation: 0, rotationX: 0, rotationZ: 40,
+    } as unknown as WorkplaneShape;
+    const bore = boreCutShape(live, createId)!;
+    expect(axisOf(bore).angleTo(axisOf({ rotationZ: 40 }))).toBeLessThan(1e-6);
   });
 });

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { placementWorkplaneQuaternion, type PlacementWorkplane } from "@/lib/placementWorkplane";
-import { rotationPatchFromQuaternion, shapeRotationQuaternion } from "@/lib/geometryRotation";
+import { composedShapeRotation, rotationPatchFromQuaternion, shapeRotationQuaternion } from "@/lib/geometryRotation";
 import { shapeDepth, shapeWidth } from "@/lib/workplaneShapes";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
@@ -92,9 +92,18 @@ type BoreSource = {
   width: number;
   depth: number;
   height: number;
+  /**
+   * Die Drehung, die im Netz steckt. In ihrem Rahmen wirkt die Streckung des
+   * gebackenen Netzes, deshalb wird sie zum Umrechnen der Faktoren gebraucht.
+   */
   rotation: number;
   rotationX: number;
   rotationZ: number;
+  /**
+   * Die Drehung, unter der das Rohr wirklich in der Szene steht: die lebende
+   * Drehung des Koerpers ueber der, die im Netz steckt.
+   */
+  placement: { rotation: number; rotationX: number; rotationZ: number };
 };
 
 /**
@@ -178,17 +187,24 @@ export function boreScaleIsExact(source: BoreSource, scale: { x: number; y: numb
 function boreSourceFor(shape: WorkplaneShape): BoreSource | null {
   if (shape.groupedShapes?.length) return null;
   if ((shape.kind === "tube" || shape.kind === "ring") && !shape.importedMesh) {
-    return {
-      width: shapeWidth(shape),
-      depth: shapeDepth(shape),
-      height: shape.height,
+    // Ein ungebackenes Rohr traegt seine Drehung selbst; es gibt kein Netz,
+    // in dem noch eine zweite steckte.
+    const turn = {
       rotation: shape.rotation ?? 0,
       rotationX: shape.rotationX ?? 0,
       rotationZ: shape.rotationZ ?? 0,
     };
+    return { width: shapeWidth(shape), depth: shapeDepth(shape), height: shape.height, ...turn, placement: turn };
   }
   const source = shape.parametricSource;
   if (!source || (source.kind !== "tube" && source.kind !== "ring")) return null;
+  /*
+   * Zwei Drehungen liegen uebereinander: die, die beim Backen ins Netz
+   * gewandert ist, und eine lebende am Koerper. Die zweite gab es frueher
+   * kaum - Drehen backt ja -, seit der Teilbereich den Rahmen in die
+   * Arbeitsebene dreht, aber schon. Ein Werkzeug nur nach der Urform lag dann
+   * schief im Rohr und das Loch ein Stueck daneben.
+   */
   return {
     width: source.width,
     depth: source.depth,
@@ -196,6 +212,7 @@ function boreSourceFor(shape: WorkplaneShape): BoreSource | null {
     rotation: source.rotation,
     rotationX: source.rotationX,
     rotationZ: source.rotationZ,
+    placement: composedShapeRotation(shape, source),
   };
 }
 
@@ -251,9 +268,9 @@ export function boreCutShape(shape: WorkplaneShape, createId: (prefix: string) =
     width: boreWidth,
     depth: boreDepth,
     height: boreHeight,
-    rotation: source.rotation,
-    rotationX: source.rotationX,
-    rotationZ: source.rotationZ,
+    rotation: source.placement.rotation,
+    rotationX: source.placement.rotationX,
+    rotationZ: source.placement.rotationZ,
     sides: 96,
     bevel: 0,
     segments: 1,
