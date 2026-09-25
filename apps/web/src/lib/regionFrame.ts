@@ -168,6 +168,32 @@ export function workplaneFramePatch(shape: WorkplaneShape, workplane: PlacementW
   };
 }
 
+/** Die Hauptarbeitsebene: die Achsen der Welt. */
+const WORLD_FRAME: PlacementWorkplane = {
+  origin: { x: 0, y: 0, z: 0 },
+  normal: { x: 0, y: 1, z: 0 },
+  xAxis: { x: 1, y: 0, z: 0 },
+  zAxis: { x: 0, y: 0, z: 1 },
+};
+
+/**
+ * Den Rahmen wieder auf die Achsen der Welt stellen.
+ *
+ * Die Drehung in die Arbeitsebene ist ein Mittel zum Zweck: Solange der
+ * Teilbereich laeuft, soll in deren Achsen gerechnet werden. Bleibt sie danach
+ * am Koerper stehen, stehen auch seine Masse fuer immer in einem fremden
+ * Rahmen - ein aufrecht stehendes Rohr von 94 mm zeigte dann 94 mm **Breite**
+ * und 14 mm Hoehe an, und beim naechsten Teilbereich lag seine Laenge auf dem
+ * Breitenregler.
+ *
+ * Es ist derselbe Weg wie das Ausrichten, nur zurueck: Das Netz wird gerade
+ * gedreht, neu vermessen und die Drehung faellt weg. Sichtbar aendert sich
+ * wieder nichts. Steht der Koerper schon gerade, gibt es nichts zu tun.
+ */
+export function worldFramePatch(shape: WorkplaneShape) {
+  return workplaneFramePatch(shape, WORLD_FRAME);
+}
+
 /**
  * Ob der Kasten des Teilbereichs an diesem Koerper noch gilt.
  *

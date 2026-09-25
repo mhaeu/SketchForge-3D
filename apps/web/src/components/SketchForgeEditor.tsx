@@ -152,7 +152,7 @@ import { cadSketchRegions, sampleCadSketchPath } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
 import { regionTaperedShape, type RegionTaper } from "@/lib/regionTaper";
-import { regionFrameStillHolds, workplaneFramePatch } from "@/lib/regionFrame";
+import { regionFrameStillHolds, workplaneFramePatch, worldFramePatch } from "@/lib/regionFrame";
 import { hasMarkedSweepPath, markSweepPath } from "@/lib/sketchSweep";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
@@ -9240,6 +9240,29 @@ export function SketchForgeEditor({
     commitShapes([...shapes.filter((shape) => !groupIds.has(shape.id)), ...restored], restored.map((shape) => shape.id), groups.length === 1 ? t("status.ungroupedOne") : t("status.ungroupedMany", { count: groups.length }));
   }, [commitShapes, selectedShapes, shapes]);
 
+  /*
+   * Beim Ausschalten wieder in die Achsen der Welt drehen.
+   *
+   * Die Drehung in die Arbeitsebene ist ein Mittel zum Zweck: Solange der
+   * Teilbereich laeuft, soll in deren Achsen gerechnet werden. Bleibt sie
+   * danach stehen, stehen auch die Masse des Koerpers fuer immer in einem
+   * fremden Rahmen - ein aufrecht stehendes Rohr von 94 mm zeigte 94 mm
+   * *Breite* und 14 mm Hoehe, und beim naechsten Teilbereich lag seine Laenge
+   * auf dem Breitenregler.
+   */
+  const restoreWorldFrame = useCallback((shapeId: string) => {
+    const shape = shapesRef.current.find((entry) => entry.id === shapeId);
+    if (!shape || shape.locked) return;
+    const flat = worldFramePatch(shape);
+    if (!flat) return;
+    const next = canonicalizeShape({ ...shape, ...flat.patch });
+    commitShapes(
+      shapesRef.current.map((entry) => (entry.id === shapeId ? next : entry)),
+      selectedIdsRef.current,
+      t("status.regionFrameRestored"),
+    );
+  }, [commitShapes]);
+
   // The region only makes sense for the one shape it was set up on. Once
   // the selection moves on, or the shape is gone, it is dropped.
   useEffect(() => {
@@ -9248,8 +9271,13 @@ export function SketchForgeEditor({
     const usable = selectedIds.length === 1
       && selectedIds[0] === regionResize.shapeId
       && regionFrameStillHolds(shape);
-    if (!usable) setRegionResize(null);
-  }, [regionResize, selectedIds, shapes]);
+    if (usable) return;
+    setRegionResize(null);
+    // Auch hier zurueck in die Achsen der Welt - der Teilbereich faellt
+    // genauso oft dadurch weg, dass die Auswahl weiterwandert, wie durch den
+    // Knopf.
+    if (shape) restoreWorldFrame(shape.id);
+  }, [regionResize, restoreWorldFrame, selectedIds, shapes]);
 
   // The box follows the history: each history entry remembers the box that
   // went with it, so an undo shows the box the way it was before the drag
@@ -9286,7 +9314,9 @@ export function SketchForgeEditor({
 
   const toggleRegionResize = useCallback(() => {
     if (regionResize) {
+      const was = regionResize.shapeId;
       setRegionResizeRemembered(null);
+      restoreWorldFrame(was);
       return;
     }
     if (selectedShapes.length !== 1 || !selectedShape) {
@@ -9331,7 +9361,7 @@ export function SketchForgeEditor({
     }
     const full = fullShapeRegion(target);
     setRegionResizeRemembered({ shapeId: target.id, limits: full, region: full });
-  }, [commitShapes, regionResize, selectedShape, selectedShapes.length, setRegionResizeRemembered, shapes]);
+  }, [commitShapes, regionResize, restoreWorldFrame, selectedShape, selectedShapes.length, setRegionResizeRemembered, shapes]);
 
   // The viewport reports the box after a drag. A face the drag moved becomes
   // the new limit on that side; the other limits stay as the user set them.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { regionBoxPlacement, regionFrameStillHolds, regionFromBoxPlacement, workplaneFramePatch } from "@/lib/regionFrame";
+import { regionBoxPlacement, regionFrameStillHolds, regionFromBoxPlacement, workplaneFramePatch, worldFramePatch } from "@/lib/regionFrame";
 import type { ResizeRegion } from "@/lib/regionResize";
 import type { PlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
@@ -241,5 +241,52 @@ describe("Ob der Kasten an diesem Koerper noch gilt", () => {
     expect(regionFrameStillHolds(shape({ mirrorX: true }))).toBe(false);
     expect(regionFrameStillHolds(shape({ mirrorY: true }))).toBe(false);
     expect(regionFrameStillHolds(shape({ mirrorZ: true }))).toBe(false);
+  });
+});
+
+/**
+ * Gemeldet an einem aufrecht stehenden Rohr von 94 mm, das 94 mm **Breite**
+ * und 14 mm Hoehe anzeigte: Die Drehung in die Arbeitsebene blieb nach der
+ * Sitzung am Koerper stehen. Seine Masse standen damit fuer immer in einem
+ * fremden Rahmen, und beim naechsten Teilbereich lag seine Laenge auf dem
+ * Breitenregler.
+ */
+describe("Der Weg zurueck in die Achsen der Welt", () => {
+  it("stellt einen ausgerichteten Koerper wieder gerade", () => {
+    const body = shape();
+    const aligned = workplaneFramePatch(body, tilted)!;
+    const turned = { ...body, ...aligned.patch } as WorkplaneShape;
+    // So weit die Ausrichtung: Der Koerper traegt jetzt eine Drehung, und
+    // seine Masse stehen in den Achsen der Arbeitsebene.
+    const turnedBy = Math.abs(turned.rotation ?? 0) + Math.abs(turned.rotationX ?? 0) + Math.abs(turned.rotationZ ?? 0);
+    expect(turnedBy).toBeGreaterThan(1);
+
+    const back = worldFramePatch(turned)!;
+    const flat = { ...turned, ...back.patch } as WorkplaneShape;
+    expect(flat.rotation).toBeCloseTo(0, 9);
+    expect(flat.rotationX).toBeCloseTo(0, 9);
+    expect(flat.rotationZ).toBeCloseTo(0, 9);
+    // Und die Masse sind wieder die des Koerpers selbst.
+    expect(flat.width).toBeCloseTo(body.width!, 6);
+    expect(flat.depth).toBeCloseTo(body.depth!, 6);
+    expect(flat.height).toBeCloseTo(body.height, 6);
+  });
+
+  it("laesst den Koerper dabei Punkt fuer Punkt stehen, wo er stand", () => {
+    const body = shape();
+    const turned = { ...body, ...workplaneFramePatch(body, tilted)!.patch } as WorkplaneShape;
+    const flat = { ...turned, ...worldFramePatch(turned)!.patch } as WorkplaneShape;
+
+    const before = worldPoints(body);
+    const after = worldPoints(flat);
+    expect(after).toHaveLength(before.length);
+    // Punkt fuer Punkt: Die beiden Netze haben dieselbe Reihenfolge.
+    before.forEach((point, index) => {
+      expect(after[index].distanceTo(point)).toBeLessThan(1e-6);
+    });
+  });
+
+  it("laesst einen Koerper in Ruhe, der schon gerade steht", () => {
+    expect(worldFramePatch(shape())).toBeNull();
   });
 });
