@@ -165,6 +165,7 @@ import { makeShapeFromAsset, sceneShape, shapeAssetLabel, toolbarShapeAssets, ty
 import { ensureReferencePoint, isReferencePoint, referencePointPosition, REFERENCE_POINT_ID } from "@/lib/referencePoint";
 import { importExtensionSupported } from "@/lib/importExtensions";
 import { importedShapeFromStl } from "@/lib/stlImport";
+import { importedShapeFrom3mf } from "@/lib/threemfImport";
 import { exportMeshesToStl } from "@/lib/stlExport";
 import { importedShapeFromSvg, invalidSvgMeshReason } from "@/lib/svgImport";
 import { toSvgProjection, type SvgProjectionLayer } from "@/lib/svgExport";
@@ -10274,6 +10275,7 @@ export function SketchForgeEditor({
       const isStep = sourceFormat === "step";
       const isObj = sourceFormat === "obj";
       const isSvg = sourceFormat === "svg";
+      const is3mf = sourceFormat === "3mf";
       if (!sourceFormat || (!isStep && !isSvg && !importExtensionSupported(file.name))) {
         failures.push({ fileName: file.name, reason: "Unsupported file type" });
         continue;
@@ -10291,6 +10293,8 @@ export function SketchForgeEditor({
           nextShape = importedShapeFromObj(file.name, new TextDecoder().decode(bytes));
         } else if (isSvg) {
           nextShape = importedShapeFromSvg(file.name, new TextDecoder().decode(bytes));
+        } else if (is3mf) {
+          nextShape = importedShapeFrom3mf(file.name, buffer);
         } else {
           nextShape = importedShapeFromStl(file.name, buffer);
         }
@@ -10988,7 +10992,7 @@ export function SketchForgeEditor({
         className="hidden-file-input"
         type="file"
         multiple
-        accept=".stl,.obj,.step,.stp,.svg,image/svg+xml"
+        accept=".stl,.obj,.3mf,.step,.stp,.svg,image/svg+xml"
         onChange={(event) => {
           if (event.currentTarget.files) {
             selectFiles(event.currentTarget.files);

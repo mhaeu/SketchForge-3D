@@ -113,6 +113,7 @@ export function sourceFormatForFileName(fileName: string): ProjectAssetSourceFor
   const extension = fileName.split(".").pop()?.toLowerCase();
   if (extension === "stl" || extension === "obj" || extension === "svg") return extension;
   if (extension === "step" || extension === "stp") return "step";
+  if (extension === "3mf") return "3mf";
   return null;
 }
 
@@ -120,6 +121,7 @@ export function defaultMediaTypeForSource(format: ProjectAssetSourceFormat) {
   if (format === "svg") return "image/svg+xml";
   if (format === "step") return "application/step";
   if (format === "obj") return "model/obj";
+  if (format === "3mf") return "model/3mf";
   return "model/stl";
 }
 

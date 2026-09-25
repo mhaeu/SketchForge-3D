@@ -47,7 +47,7 @@ export type ShapeAsset = {
   hole?: boolean;
 };
 
-export type ProjectAssetSourceFormat = "stl" | "obj" | "svg" | "step";
+export type ProjectAssetSourceFormat = "stl" | "obj" | "svg" | "step" | "3mf";
 
 export type ProjectAsset = {
   id: string;
@@ -446,7 +446,7 @@ export type WorkplaneShape = {
     baseDepth: number;
     baseHeight: number;
     triangleCount: number;
-    sourceFormat: "stl" | "obj" | "svg" | "json" | "step";
+    sourceFormat: "stl" | "obj" | "svg" | "json" | "step" | "3mf";
     // IndexedDB persistence uses this only in compact stored shape records.
     // Runtime editor shapes are hydrated with the full immutable mesh resource.
     storageResourceId?: string;
