@@ -168,7 +168,12 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
   return {
     width: kind === "text" ? 86 : size,
     depth: kind === "text" ? 28 : size,
-    height: kind === "honeycomb" ? DEFAULT_HONEYCOMB_HEIGHT : kind === "gear" ? 6 : kind === "loft" ? 28 : kind === "text" ? 10 : kind === "roundRoof" ? 10 : kind === "halfSphere" ? 11 : flatProfile ? 5 : 20,
+    // Die Kugel bekommt ihre Hoehe aus derselben Zahl wie Breite und Tiefe.
+    // Sonst kaeme sie als 22 x 22 x 20 in die Szene - ein Ellipsoid, fuer das
+    // OpenCascade keinen Grundkoerper hat. Sie fiele damit vom exakten Weg auf
+    // das Dreiecksnetz zurueck, und jede Verrundung an einer Kugelnaht wuerde
+    // verbeult statt rund (siehe cadModifierPrimitiveForAnalyticShape).
+    height: kind === "sphere" ? size : kind === "honeycomb" ? DEFAULT_HONEYCOMB_HEIGHT : kind === "gear" ? 6 : kind === "loft" ? 28 : kind === "text" ? 10 : kind === "roundRoof" ? 10 : kind === "halfSphere" ? 11 : flatProfile ? 5 : 20,
   };
 }
 

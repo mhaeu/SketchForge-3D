@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ShapeAsset } from "@/types/sketchforge";
 import { makeShapeFromAsset, sceneShape, toolbarShapeAssets } from "@/lib/shapeCatalog";
+import { cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { canonicalizeShape, isSolidShape, solidShapesOnly } from "@/lib/workplaneShapes";
 
 describe("shape catalog", () => {
@@ -188,6 +189,27 @@ describe("shapes from the extended palette", () => {
     expect(shape.springTurns).toBeGreaterThan(0);
     expect(shape.springWire).toBeGreaterThan(0);
     expect(shape.springWire! * shape.springTurns!).toBeLessThan(shape.height);
+  });
+
+  /**
+   * Die Kugel bekam Breite und Tiefe aus dem runden Profil (22), ihre Hoehe
+   * aber aus der allgemeinen Vorgabe (20). Damit war jede frisch eingefuegte
+   * Kugel ein Ellipsoid, und OpenCascade hat dafuer keinen Grundkoerper: Sie
+   * fiel vom exakten Weg auf das Dreiecksnetz zurueck, und Verrundungen an
+   * einer Kugelnaht wurden verbeult statt rund.
+   */
+  it("legt die Kugel so an, dass sie den exakten CAD-Weg auch trifft", () => {
+    const sphere = makeShapeFromAsset(assetFor("sphere"));
+    expect(sphere.width).toBe(sphere.height);
+    expect(sphere.depth).toBe(sphere.height);
+
+    const primitive = cadModifierPrimitiveForRoundShape(sphere);
+    expect(primitive).not.toBeNull();
+    expect(primitive!.kind).toBe("sphere");
+    expect((primitive as { radius: number }).radius).toBeCloseTo(sphere.height / 2, 6);
+
+    // Und eine von Hand gezogene Kugel bleibt richtigerweise draussen.
+    expect(cadModifierPrimitiveForRoundShape({ ...sphere, height: sphere.height - 2 })).toBeNull();
   });
 
   it("keeps the ruler out of every solid operation", () => {

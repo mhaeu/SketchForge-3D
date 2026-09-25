@@ -382,6 +382,12 @@ function sendError(id, code, message) {
 async function handleMessage(message) {
   if (!message || typeof message !== "object") return;
   const { id, method, params } = message;
+  // Ohne id ist das eine Benachrichtigung, und auf die darf nach JSON-RPC
+  // ueberhaupt nicht geantwortet werden. Bisher fingen wir nur
+  // "notifications/initialized" ab; alles andere - etwa
+  // "notifications/cancelled" - lief bis zur Fehlerantwort durch, und die trug
+  // dann eine leere id.
+  if (id === undefined || id === null) return;
   try {
     if (method === "initialize") {
       sendResult(id, {
@@ -389,9 +395,6 @@ async function handleMessage(message) {
         capabilities: { tools: {} },
         serverInfo: { name: "sketchforge-mcp", version: "0.1.0" },
       });
-      return;
-    }
-    if (method === "notifications/initialized") {
       return;
     }
     if (method === "ping") {

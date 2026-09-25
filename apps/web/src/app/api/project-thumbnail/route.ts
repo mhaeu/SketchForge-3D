@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
+import { thumbnailsToDrop } from "@/lib/projectThumbnail";
 
 export const revalidate = false;
 
@@ -20,6 +21,28 @@ function thumbnailPath(projectId: string) {
     return null;
   }
   return path.join(THUMBNAIL_DIR, `${safeId}.png`);
+}
+
+/**
+ * Raeumt die aeltesten Bilder weg, bis der Ordner wieder unter seine Grenze
+ * passt. Welche das sind, entscheidet `thumbnailsToDrop`; hier steht nur der
+ * Gang zur Platte.
+ */
+async function pruneThumbnails(keepPath: string) {
+  const entries = await fs.readdir(THUMBNAIL_DIR);
+  const measured = await Promise.all(
+    entries
+      .filter((name) => name.endsWith(".png"))
+      .map(async (name) => {
+        const filePath = path.join(THUMBNAIL_DIR, name);
+        const stat = await fs.stat(filePath).catch(() => null);
+        return stat?.isFile() ? { path: filePath, bytes: stat.size, writtenAt: stat.mtimeMs } : null;
+      }),
+  );
+  const stored = measured.filter((file): file is NonNullable<typeof file> => file !== null);
+  for (const filePath of thumbnailsToDrop(stored, keepPath)) {
+    await fs.rm(filePath, { force: true });
+  }
 }
 
 function isSameOriginRequest(request: Request) {
@@ -113,6 +136,9 @@ export async function POST(request: Request) {
     await fs.mkdir(THUMBNAIL_DIR, { recursive: true });
     await fs.rm(filePath, { force: true });
     await fs.writeFile(filePath, Buffer.from(encodedImage, "base64"));
+    // Ein fehlgeschlagenes Aufraeumen darf den Upload nicht scheitern lassen -
+    // das Bild liegt schon, und die Grenze greift beim naechsten Mal wieder.
+    await pruneThumbnails(filePath).catch(() => undefined);
 
     return NextResponse.json({ version: Date.now() });
   } catch (error) {
