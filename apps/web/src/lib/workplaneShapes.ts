@@ -427,7 +427,21 @@ export function shapeExtrudeDeformPatch(
 export function meshYawDegrees(shape: WorkplaneShape) {
   const isRoundPrimitive = !shape.importedMesh && (shape.kind === "cylinder" || shape.kind === "ellipse" || shape.kind === "cone");
   const isCircular = Math.abs(shapeWidth(shape) - shapeDepth(shape)) < 0.0005;
-  if (!isRoundPrimitive || !isCircular) {
+  /*
+   * Die Gierung darf nur weggekuerzt werden, solange sie wirklich um die
+   * eigene Achse des Kreises dreht - dann und nur dann ist ein getaefelter
+   * Kreis gegen sie gleichgueltig. Die Reihenfolge der Winkel ist X-Y-Z, also
+   * kippt rotationZ den Koerper **vor** der Gierung: Steht er gekippt, dreht
+   * sie um eine ganz andere Achse, und das Wegkuerzen legt ihn schief.
+   *
+   * Genau daran lag es, dass ein Bohrwerkzeug in einem schraeg steckenden
+   * Rohr danebenlag: Aus 352,7 Grad Gierung wurden 0,2 - bei 89,9 Grad
+   * Kippung kippte das die ganze Achse um 7,5 Grad, und die Enden verfehlten
+   * ihr Ziel um 4,6 mm. Die Ansicht rechnet ohnehin mit der rohen Gierung;
+   * beim Kippen liefen Bild und Schnitt also auseinander.
+   */
+  const upright = Math.abs(normalizeDegrees(shape.rotationZ ?? 0)) < 1e-6;
+  if (!isRoundPrimitive || !isCircular || !upright) {
     return shape.rotation;
   }
 

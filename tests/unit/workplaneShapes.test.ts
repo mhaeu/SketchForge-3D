@@ -77,6 +77,38 @@ describe("workplane shape helpers", () => {
     expect(meshYawDegrees({ ...triangularPrism, sides: 96, rotation: 90 })).toBe(0);
   });
 
+  /**
+   * Gemeldet an einem schraeg steckenden Rohr: Das ausgehoehlte Loch lag
+   * neben seinem Innenraum.
+   *
+   * Ein getaefelter Kreis ist gegen eine Gierung um ganze Seitenschritte
+   * gleichgueltig - **aber nur**, solange die Gierung wirklich um seine eigene
+   * Achse dreht. Die Winkel stehen in der Reihenfolge X-Y-Z, also kippt
+   * rotationZ den Koerper vor der Gierung. Steht er gekippt, dreht sie um eine
+   * ganz andere Achse.
+   */
+  it("kuerzt die Gierung nur an einem Koerper, der gerade steht", () => {
+    const disc = shape({ kind: "ellipse", width: 12, depth: 12, sides: 96 });
+
+    // Gerade stehend wird sie wie bisher auf den Rest eines Seitenschritts
+    // zusammengezogen.
+    expect(meshYawDegrees({ ...disc, rotation: 352.7 })).toBeCloseTo(0.2, 6);
+
+    // Gekippt bleibt sie unangetastet. Frueher wurden aus 352,7 Grad hier
+    // ebenfalls 0,2 - bei 89,9 Grad Kippung legte das die Achse um 7,5 Grad
+    // schief, und die Enden eines 70 mm langen Werkzeugs verfehlten ihr Ziel
+    // um 4,6 mm.
+    expect(meshYawDegrees({ ...disc, rotation: 352.7, rotationZ: 89.9 })).toBe(352.7);
+    expect(meshYawDegrees({ ...disc, rotation: 352.7, rotationZ: 0.1 })).toBe(352.7);
+
+    // Eine Kippung um die X-Achse stoert nicht: Sie kommt nach der Gierung,
+    // und die dreht dann immer noch um die eigene Achse des Kreises.
+    expect(meshYawDegrees({ ...disc, rotation: 352.7, rotationX: 40 })).toBeCloseTo(0.2, 6);
+
+    // Und eine Drehung von genau null Grad zaehlt als gerade.
+    expect(meshYawDegrees({ ...disc, rotation: 352.7, rotationZ: 360 })).toBeCloseTo(0.2, 6);
+  });
+
   it("cleans near-zero values and derives dimensions", () => {
     const base = shape({ size: 30, width: 18, depth: 24 });
     expect(cleanNearZero(0.004)).toBe(0);
