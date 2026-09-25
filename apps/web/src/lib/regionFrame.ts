@@ -167,3 +167,26 @@ export function workplaneFramePatch(shape: WorkplaneShape, workplane: PlacementW
     },
   };
 }
+
+/**
+ * Ob der Kasten des Teilbereichs an diesem Koerper noch gilt.
+ *
+ * Er wird im eigenen Rahmen des Netzes gemessen, also muss der Koerper das
+ * schlichte Netz bleiben, in das er dafuer verwandelt wurde. Faellt das weg -
+ * durch ein Rueckgaengig ueber die Verwandlung hinaus, weil der Koerper
+ * verschwindet oder gesperrt wird -, ist der Kasten sinnlos.
+ *
+ * Eine **Drehung** ist dagegen kein Grund mehr, ihn fallen zu lassen: Seit
+ * der Teilbereich der Arbeitsebene folgt, ist sie genau der Weg dorthin - der
+ * Koerper traegt die Drehung der Arbeitsebene, und der Kasten dreht sich mit
+ * ihm. Solange das hier eine Drehung mit ausschloss, verschwand der Kasten an
+ * einer gekippten Arbeitsebene sofort wieder, und es liess sich ueberhaupt
+ * kein Teilbereich waehlen.
+ *
+ * Eine **Spiegelung** bleibt draussen: Sie kehrt den Rahmen um, in dem
+ * gemessen wird, und laesst sich nicht als Drehung mittragen.
+ */
+export function regionFrameStillHolds(shape: WorkplaneShape | undefined | null) {
+  if (!shape || shape.kind !== "mesh" || !shape.importedMesh || shape.locked) return false;
+  return !(shape.mirrorX || shape.mirrorY || shape.mirrorZ);
+}

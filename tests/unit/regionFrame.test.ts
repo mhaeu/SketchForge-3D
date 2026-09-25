@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { regionBoxPlacement, regionFromBoxPlacement, workplaneFramePatch } from "@/lib/regionFrame";
+import { regionBoxPlacement, regionFrameStillHolds, regionFromBoxPlacement, workplaneFramePatch } from "@/lib/regionFrame";
 import type { ResizeRegion } from "@/lib/regionResize";
 import type { PlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
@@ -172,5 +172,74 @@ describe("Das Netz in den Rahmen der Arbeitsebene drehen", () => {
     };
     expect(workplaneFramePatch(shape(), base)).toBeNull();
     expect(workplaneFramePatch({ ...shape(), importedMesh: undefined } as WorkplaneShape, tilted)).toBeNull();
+  });
+});
+
+/**
+ * Gemeldet an einem gedrehten Koerper auf einer anderen Arbeitsebene: Es liess
+ * sich ueberhaupt kein Teilbereich waehlen.
+ *
+ * Der Kasten wird eingeschaltet, der Koerper dabei in die Arbeitsebene
+ * gedreht - und traegt danach deren Drehung. Die Wache, die den Kasten
+ * begleitet, warf ihn genau dafuer sofort wieder weg: Sie liess nur ein
+ * ungedrehtes Netz gelten. Auf der Hauptarbeitsebene faellt das Drehen weg,
+ * dort ging es; auf jeder anderen war der Kasten weg, ehe man ihn anfassen
+ * konnte.
+ */
+describe("Ob der Kasten an diesem Koerper noch gilt", () => {
+  it("haelt an einem Koerper, der in die Arbeitsebene gedreht wurde", () => {
+    const body = shape();
+    const aligned = workplaneFramePatch(body, tilted)!;
+    const turned = { ...body, ...aligned.patch } as WorkplaneShape;
+    // Genau die Drehung, an der es scheiterte.
+    expect(Math.abs(turned.rotation ?? 0) + Math.abs(turned.rotationX ?? 0) + Math.abs(turned.rotationZ ?? 0))
+      .toBeGreaterThan(0);
+    expect(regionFrameStillHolds(turned)).toBe(true);
+  });
+
+  it("traegt den ganzen Weg: ausrichten, Kasten stellen, Bereich zurueck", () => {
+    // Der gemeldete Fall von Anfang bis Ende - der Koerper wird in die
+    // Arbeitsebene gedreht, der Kasten in der Szene gestellt und aus ihm
+    // wieder der Bereich gelesen. Was herauskommt, muss der Bereich sein, mit
+    // dem angefangen wurde.
+    const aligned = workplaneFramePatch(shape(), tilted)!;
+    const turned = { ...shape(), ...aligned.patch } as WorkplaneShape;
+    expect(regionFrameStillHolds(turned)).toBe(true);
+
+    const inside: ResizeRegion = {
+      minX: -4, maxX: 6,
+      minY: 2, maxY: turned.height - 3,
+      minZ: -2, maxZ: 3,
+    };
+    const box = regionBoxPlacement(turned, inside);
+    const back = regionFromBoxPlacement(turned, { ...box, id: "b", name: "b", kind: "box", color: "#fff" } as WorkplaneShape);
+    (Object.keys(inside) as Array<keyof ResizeRegion>).forEach((face) => {
+      expect(back[face]).toBeCloseTo(inside[face], 6);
+    });
+  });
+
+  it("haelt am schlichten, ungedrehten Netz", () => {
+    expect(regionFrameStillHolds(shape())).toBe(true);
+  });
+
+  it("faellt, wo das Netz nicht mehr dasteht", () => {
+    // Ein Rueckgaengig ueber die Verwandlung hinaus macht aus dem Netz wieder
+    // das, was der Koerper vorher war.
+    expect(regionFrameStillHolds(undefined)).toBe(false);
+    expect(regionFrameStillHolds(null)).toBe(false);
+    expect(regionFrameStillHolds(shape({ kind: "box" }))).toBe(false);
+    expect(regionFrameStillHolds(shape({ importedMesh: undefined }))).toBe(false);
+  });
+
+  it("faellt an einem gesperrten Koerper", () => {
+    expect(regionFrameStillHolds(shape({ locked: true }))).toBe(false);
+  });
+
+  it("faellt an einem gespiegelten Koerper", () => {
+    // Eine Spiegelung kehrt den Rahmen um, in dem gemessen wird, und laesst
+    // sich nicht als Drehung mittragen.
+    expect(regionFrameStillHolds(shape({ mirrorX: true }))).toBe(false);
+    expect(regionFrameStillHolds(shape({ mirrorY: true }))).toBe(false);
+    expect(regionFrameStillHolds(shape({ mirrorZ: true }))).toBe(false);
   });
 });

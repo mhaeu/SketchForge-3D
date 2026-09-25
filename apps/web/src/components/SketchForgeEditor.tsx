@@ -152,7 +152,7 @@ import { cadSketchRegions, sampleCadSketchPath } from "@/lib/sketchCadProfile";
 import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
 import { regionTaperedShape, type RegionTaper } from "@/lib/regionTaper";
-import { workplaneFramePatch } from "@/lib/regionFrame";
+import { regionFrameStillHolds, workplaneFramePatch } from "@/lib/regionFrame";
 import { hasMarkedSweepPath, markSweepPath } from "@/lib/sketchSweep";
 import { PROJECT_THUMBNAIL_IDLE_MS, projectThumbnailSceneChanged, type ProjectThumbnailSceneKey } from "@/lib/projectThumbnail";
 import { importedShapeFromObj } from "@/lib/objImport";
@@ -9245,12 +9245,9 @@ export function SketchForgeEditor({
   useEffect(() => {
     if (!regionResize) return;
     const shape = shapes.find((entry) => entry.id === regionResize.shapeId);
-    // The region is measured in the mesh's own frame, so the shape has to stay
-    // the plain, unrotated mesh it was converted to. A rotation (baked into
-    // new vertices) or an undo past the conversion makes the box meaningless.
     const usable = selectedIds.length === 1
       && selectedIds[0] === regionResize.shapeId
-      && Boolean(shape && shape.kind === "mesh" && shape.importedMesh && !shape.locked && !shapeHasTransformToBake(shape));
+      && regionFrameStillHolds(shape);
     if (!usable) setRegionResize(null);
   }, [regionResize, selectedIds, shapes]);
 
