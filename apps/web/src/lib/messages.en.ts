@@ -238,6 +238,7 @@ export const MESSAGES_EN = {
   "status.cavityUnavailable": "The cavity of this body cannot be worked out. A body that was rotated after drawing, or already combined with another, no longer carries what it takes.",
   "status.selectTubeAndBody": "Select exactly one tube or ring and at least one body it runs through",
   "status.boreSubtracted": "Bore cleared out of {count} body/bodies",
+  "status.boreSubtractedApproximate": "Bore cleared out of {count} body/bodies — the tube stands at an angle and was stretched unevenly, so its inside is no longer a round pipe and the cut is a close approximation",
   "editor.tool.intersect": "Boolean Intersection",
   "editor.tool.align": "Align",
   "editor.tool.mirror": "Mirror",

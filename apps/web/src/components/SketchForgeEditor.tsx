@@ -181,7 +181,7 @@ import {
   type PlacementPoint,
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
-import { boreCutShape, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
+import { boreCutShape, boreIsExact, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -9174,7 +9174,10 @@ export function SketchForgeEditor({
     commitShapes(
       [...shapesRef.current.filter((shape) => !replaced.has(shape.id)), ...cut],
       cut.map((shape) => shape.id),
-      t("status.boreSubtracted", { count: cut.length }),
+      // Steht das Rohr schraeg und wurde ungleich gestreckt, ist sein
+      // Innenraum kein rundes Rohr mehr - dann ist der Schnitt eine Naeherung,
+      // und das gehoert dazugesagt.
+      t(boreIsExact(tools[0]) ? "status.boreSubtracted" : "status.boreSubtractedApproximate", { count: cut.length }),
     );
   }, [cavityHoleForShape, commitShapes, hollowSketchTool, selectedShapes]);
 

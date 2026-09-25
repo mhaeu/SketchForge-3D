@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { boreCutShape, cutReachForShapes, flippedWorkplane, shapeHasBore, shapesInClickOrder, workplaneCutBox } from "@/lib/cutTools";
+import { boreCutShape, boreIsExact, cutReachForShapes, flippedWorkplane, shapeHasBore, shapesInClickOrder, workplaneCutBox } from "@/lib/cutTools";
 import type { PlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
@@ -166,6 +166,84 @@ describe("Der Innenraum eines Rohrs", () => {
     expect(bore.x).toBe(baked.x);
     expect(bore.z).toBe(baked.z);
     expect((bore.elevation ?? 0) + bore.height / 2).toBeCloseTo((baked.elevation ?? 0) + baked.height / 2, 9);
+  });
+
+  /*
+   * Ein gebackenes Rohr behaelt sein Netz, wie es beim Backen entstand. Wer es
+   * danach an den Griffen laenger zieht, aendert nur die Masse am Koerper -
+   * das Netz wird beim Zeichnen gestreckt, die Urform bleibt stehen. Der
+   * Innenraum wurde bis hierher aus der Urform gebaut und war damit so gross
+   * wie das Rohr *vor* dem Ziehen: Aus einem auf 120 mm gezogenen Rohr kam ein
+   * 40 mm langes Werkzeug, und der Hohlraum war nur im mittleren Drittel
+   * ausgeschnitten.
+   */
+  describe("an einem Rohr, das nach dem Backen gezogen wurde", () => {
+    /** Genau das Rohr aus der gemeldeten Datei. */
+    const stretched = {
+      id: "t", name: "Rohr", kind: "mesh", color: "#fff",
+      x: 22, z: -27, elevation: 15,
+      size: 120, width: 120, depth: 18, height: 10,
+      rotation: 0, rotationX: 0, rotationZ: 0, bevel: 4,
+      parametricSource: { kind: "tube", width: 10, depth: 11, height: 40, size: 11, rotation: 0, rotationX: 0, rotationZ: 90 },
+      importedMesh: { positions: [], triangleCount: 1152, baseWidth: 40, baseDepth: 11, baseHeight: 10 },
+    } as unknown as WorkplaneShape;
+
+    it("reicht ueber die ganze gezogene Laenge", () => {
+      const bore = boreCutShape(stretched, createId)!;
+      // Das Rohr liegt (rotationZ 90), seine Hoehe zeigt also entlang X - und
+      // die Streckung dort ist 120/40, also dreifach.
+      expect(bore.height).toBeCloseTo(120, 9);
+      // Es steht von x = -38 bis x = 82; genauso weit muss das Werkzeug reichen.
+      expect(bore.x - bore.height / 2).toBeCloseTo(-38, 9);
+      expect(bore.x + bore.height / 2).toBeCloseTo(82, 9);
+    });
+
+    it("waechst auch quer mit, jede Richtung um ihren eigenen Faktor", () => {
+      const bore = boreCutShape(stretched, createId)!;
+      // Die Breite des Rohrs liegt nach der Drehung auf der Y-Achse der Welt,
+      // und dort wurde nicht gezogen: 10 - 2*4 = 2 bleibt 2.
+      expect(bore.width).toBeCloseTo(2, 9);
+      // Seine Tiefe liegt auf der Z-Achse, dort ging es von 11 auf 18:
+      // (11 - 2*4) * 18/11.
+      expect(bore.depth).toBeCloseTo(3 * (18 / 11), 9);
+    });
+
+    it("bleibt mit seiner Mitte auf der Mitte des Rohrs", () => {
+      const bore = boreCutShape(stretched, createId)!;
+      expect(bore.x).toBe(22);
+      expect(bore.z).toBe(-27);
+      expect((bore.elevation ?? 0) + bore.height / 2).toBeCloseTo(15 + 10 / 2, 9);
+    });
+
+    it("nennt den Schnitt genau, solange das Rohr auf den Achsen steht", () => {
+      expect(boreIsExact(stretched)).toBe(true);
+      // Gleichmaessig gestreckt bleibt es ebenfalls genau, auch schraeg.
+      const evenly = {
+        ...stretched,
+        width: 80, depth: 22, height: 20,
+        parametricSource: { ...(stretched.parametricSource as object), rotationZ: 37 },
+      } as unknown as WorkplaneShape;
+      expect(boreIsExact(evenly)).toBe(true);
+    });
+
+    it("sagt es, wenn der Schnitt nur eine Naeherung sein kann", () => {
+      // Schraeg gedreht und ungleich gezogen: Der Innenraum ist dann kein
+      // rundes Rohr mehr, und das laesst sich mit unseren Feldern nicht
+      // ausdruecken.
+      const oblique = {
+        ...stretched,
+        parametricSource: { ...(stretched.parametricSource as object), rotationZ: 37 },
+      } as unknown as WorkplaneShape;
+      expect(boreIsExact(oblique)).toBe(false);
+    });
+
+    it("laesst ein ungezogenes Rohr unveraendert", () => {
+      const untouched = { ...stretched, width: 40, depth: 11, height: 10 } as WorkplaneShape;
+      const bore = boreCutShape(untouched, createId)!;
+      expect(bore.height).toBeCloseTo(40, 9);
+      expect(bore.width).toBeCloseTo(2, 9);
+      expect(bore.depth).toBeCloseTo(3, 9);
+    });
   });
 
   it("nimmt kein Ergebnis einer Verschneidung fuer ein Rohr", () => {
