@@ -62,12 +62,20 @@ export function createReferencePoint(
 }
 
 /**
- * Ensures exactly one reference point exists. Adds one at the origin if the
- * list has none; leaves the list untouched otherwise. Used both when starting
- * a new project and when loading an older project saved before this feature.
+ * Sorgt fuer **genau einen** Bezugspunkt: Ist keiner da, kommt einer an den
+ * Nullpunkt; sind mehrere da, bleibt der erste.
+ *
+ * Dass es mehrere sein koennen, war lange nicht vorgesehen - der Name stand
+ * schon so da, die Rechnung hielt ihn aber nicht. Geriet der Bezugspunkt in
+ * eine Gruppe und wurde sie wieder aufgeloest, kam er mit neuer Kennung
+ * zurueck, und er stand doppelt in der Szene.
  */
 export function ensureReferencePoint(shapes: WorkplaneShape[]): WorkplaneShape[] {
-  return hasReferencePoint(shapes) ? shapes : [createReferencePoint(), ...shapes];
+  const points = shapes.filter(isReferencePoint);
+  if (points.length === 0) return [createReferencePoint(), ...shapes];
+  if (points.length === 1) return shapes;
+  const keep = points[0];
+  return shapes.filter((shape) => !isReferencePoint(shape) || shape === keep);
 }
 
 /** Reads the point coordinates, falling back to the origin. */
@@ -83,8 +91,30 @@ export function referencePointPosition(
 }
 
 /** Removes reference points from a list (used before any export/geometry op). */
-export function withoutReferencePoints<T extends Pick<WorkplaneShape, "kind">>(
+/**
+ * Alle Bezugspunkte heraus - auch die, die in einer Gruppe stecken.
+ *
+ * Er ist ein Helfer der Szene und keine Geometrie; beim Ausfuehren und beim
+ * Ablegen auf dem Server hat er nichts zu suchen. Geprueft wird bis in die
+ * Gruppen hinein, denn dort ist er hingeraten, und eine Datei mit einem
+ * Bezugspunkt als Gruppenkind liess sich nicht mehr ablegen.
+ */
+export function withoutReferencePoints<T extends Pick<WorkplaneShape, "kind"> & { groupedShapes?: T[] }>(
   shapes: ReadonlyArray<T>,
 ): T[] {
-  return shapes.filter((shape) => !isReferencePoint(shape));
+  return shapes
+    .filter((shape) => !isReferencePoint(shape))
+    .map((shape) => {
+      if (!shape.groupedShapes?.length) return shape;
+      const children = withoutReferencePoints(shape.groupedShapes);
+      /*
+       * Nur neu bauen, wenn wirklich etwas wegfiel: Anderswo haengen
+       * Zwischenspeicher an der Gleichheit des Objekts. Verglichen wird Kind
+       * fuer Kind und nicht ihre Zahl - faellt erst eine Ebene tiefer etwas
+       * weg, bleibt die Zahl hier gleich, das Kind ist aber ein neues.
+       */
+      const same = children.length === shape.groupedShapes.length
+        && children.every((child, index) => child === shape.groupedShapes![index]);
+      return same ? shape : { ...shape, groupedShapes: children };
+    });
 }

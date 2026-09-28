@@ -9113,37 +9113,46 @@ export function SketchForgeEditor({
   }, []);
 
   const groupSelected = useCallback(async () => {
-    if (selectedShapes.length < 2) {
+    /*
+     * Der Bezugspunkt ist ein Helfer der Szene und kein Koerper - er darf
+     * nicht mitgruppiert werden. Er ist es aber: Wer alles auswaehlt und
+     * gruppiert, nahm ihn mit hinein, und beim Aufloesen kam er mit neuer
+     * Kennung zurueck. Danach stand er doppelt in der Szene, und die Datei
+     * liess sich nicht mehr auf dem Server ablegen.
+     */
+    const groupable = selectedShapes.filter((shape) => !isReferencePoint(shape));
+    if (groupable.length < 2) {
       setNotice(t("status.selectTwoToGroup"));
       return;
     }
 
-    if (selectedShapes.some((shape) => shape.locked)) {
+    if (groupable.some((shape) => shape.locked)) {
       setNotice(t("status.unlockBeforeGroup"));
       return;
     }
 
     const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
     const sourceProjectId = projectInfoRef.current.projectId;
-    const result = await buildGroupedShapeFromSelection(selectedShapes);
+    const result = await buildGroupedShapeFromSelection(groupable);
     if (projectInfoRef.current.projectId !== sourceProjectId || projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
       setNotice(t("status.groupChanged"));
       return;
     }
     const { group } = result;
+    // Weg kommt nur, was wirklich in die Gruppe ging - der Bezugspunkt bleibt
+    // stehen, obwohl er mit ausgewaehlt war.
+    const consumedIds = new Set(groupable.map((shape) => shape.id));
     if (!group) {
       if (result.consumed) {
-        const selected = new Set(selectedIds);
-        commitShapes(shapesRef.current.filter((shape) => !selected.has(shape.id)), null, t("status.groupedHoleConsumed"));
+        commitShapes(shapesRef.current.filter((shape) => !consumedIds.has(shape.id)), null, t("status.groupedHoleConsumed"));
         return;
       }
       setNotice(result.failureNotice);
       return;
     }
-    const selected = new Set(selectedIds);
     const editableGroup = canonicalizeShape({ ...group, groupOperation: "group" });
-    commitShapes([...shapesRef.current.filter((shape) => !selected.has(shape.id)), editableGroup], editableGroup.id, t("status.groupedMany", { count: selectedShapes.length }));
-  }, [commitShapes, selectedIds, selectedShapes]);
+    commitShapes([...shapesRef.current.filter((shape) => !consumedIds.has(shape.id)), editableGroup], editableGroup.id, t("status.groupedMany", { count: groupable.length }));
+  }, [commitShapes, selectedShapes]);
 
   /**
    * An der Arbeitsebene abschneiden.
