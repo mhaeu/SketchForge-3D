@@ -182,6 +182,7 @@ import {
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
 import { boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
+import { cavityFitPatch } from "@/lib/cavityFit";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -9083,11 +9084,21 @@ export function SketchForgeEditor({
    * Wurde der hohle Koerper von Hand gedreht, sitzt die Drehung in den
    * Punkten seines Netzes und `rotation` steht auf null - der neu gebaute
    * kaeme also ungedreht heraus und laege quer zu ihm. Der mitgeschriebene
-   * Winkel holt das nach. Dass beide danach an derselben Stelle sitzen,
-   * stimmt, weil das Fuellen nur nach innen wirkt: Der Kasten um den vollen
-   * Koerper ist derselbe wie der um den hohlen.
+   * Winkel holt das nach.
+   *
+   * Dass beide danach an derselben Stelle sitzen, liegt daran, dass das
+   * Fuellen nur nach innen wirkt: Die aeussere Haut ist bei beiden dieselbe,
+   * also auch ihr Kasten. Dass er es wirklich ist, wird nicht mehr
+   * vorausgesetzt, sondern hergestellt - siehe `cavityFitPatch`.
    */
-  const turnedLikeTool = useCallback((built: WorkplaneShape, tool: WorkplaneShape) => {
+  const turnedLikeTool = useCallback((raw: WorkplaneShape, tool: WorkplaneShape) => {
+    /*
+     * Erst auf die Masse des hohlen Koerpers bringen, dann drehen: Die
+     * Streckung gehoert in seinen eigenen Rahmen. Nach dem Drehen liefe sie
+     * entlang der Weltachsen und verzerrte ihn.
+     */
+    const fit = cavityFitPatch(raw, tool);
+    const built = fit ? canonicalizeShape({ ...raw, ...fit }) : raw;
     const turn = tool.bakedRotation;
     if (!turn || [turn.rotation, turn.rotationX, turn.rotationZ].every((angle) => Math.abs(angle) < 1e-6)) return built;
     const turned = canonicalizeShape(bakeShapeTransformIntoMesh(
