@@ -427,3 +427,36 @@ export function ToolbarPivotIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Innen bzw. aussen abschneiden: ein Stab, der in einen Koerper hineinragt,
+ * und je nach Seite faellt der Teil darin oder der Teil davor weg. Ohne Ebene -
+ * die Rundung des Koerpers ist die Grenze.
+ */
+export function ToolbarTrimBodyIcon({ keep = "outside", ...props }: IconProps & { keep?: "outside" | "inside" }) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <circle cx="30" cy="24" r="13" fill="none" stroke="currentColor" strokeWidth="2.4" />
+      <path
+        d={keep === "outside" ? "M4 21H19V27H4Z" : "M19 21H43V27H19Z"}
+        fill="currentColor"
+        opacity="0.82"
+      />
+      <path
+        d={keep === "outside" ? "M19 21H43V27H19Z" : "M4 21H19V27H4Z"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeDasharray="3 2.5"
+      />
+    </svg>
+  );
+}
+
+export function ToolbarTrimInsideBodyIcon(props: IconProps) {
+  return <ToolbarTrimBodyIcon keep="outside" {...props} />;
+}
+
+export function ToolbarTrimOutsideBodyIcon(props: IconProps) {
+  return <ToolbarTrimBodyIcon keep="inside" {...props} />;
+}

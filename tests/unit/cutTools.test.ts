@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { shapeRotationQuaternion } from "@/lib/geometryRotation";
 import {
+  bodyTrimOutcome,
   boreCutShape,
   boreIsExact,
   cavityPlanForSelection,
@@ -477,5 +478,32 @@ describe("Ein Rohr mit zwei Drehungen uebereinander", () => {
     } as unknown as WorkplaneShape;
     const bore = boreCutShape(live, createId)!;
     expect(axisOf(bore).angleTo(axisOf({ rotationZ: 40 }))).toBeLessThan(1e-6);
+  });
+});
+
+/**
+ * Abschneiden an der Oberflaeche eines anderen Koerpers - ohne Arbeitsebene.
+ * Zwei der drei Ausgaenge liefern dieselbe leere Antwort mit ganz
+ * verschiedener Bedeutung, und wer sie verwechselt, loescht einen Koerper, den
+ * er nur nicht getroffen hat.
+ */
+describe("Was mit einem Ziel geschieht, das an einer Flaeche geschnitten wurde", () => {
+  it("ersetzt es, wenn ein Koerper herauskam", () => {
+    expect(bodyTrimOutcome(true, false)).toBe("replaced");
+    // Auch dann, wenn die Verschneidung zugleich "leer" meldet: Was dasteht,
+    // zaehlt mehr als die Nebenauskunft.
+    expect(bodyTrimOutcome(true, true)).toBe("replaced");
+  });
+
+  it("nimmt es weg, wenn nichts uebrig ist", () => {
+    // Beim Innen-Schnitt: das Ziel steckte ganz in der Flaeche. Beim
+    // Aussen-Schnitt: es steckte gar nicht darin.
+    expect(bodyTrimOutcome(false, true)).toBe("removed");
+  });
+
+  it("laesst es stehen, wenn die Flaeche es nicht erreicht hat", () => {
+    // Das ist der Fall, in dem ein Verwechseln teuer waere: Der Koerper ist
+    // unbeteiligt und darf nicht verschwinden.
+    expect(bodyTrimOutcome(false, false)).toBe("unchanged");
   });
 });

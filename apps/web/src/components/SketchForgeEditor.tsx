@@ -84,6 +84,8 @@ import {
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
   ToolbarPivotIcon,
+  ToolbarTrimInsideBodyIcon,
+  ToolbarTrimOutsideBodyIcon,
 } from "./icons";
 import { WorkplaneViewport } from "./WorkplaneViewport";
 import { SketchWorkspace, type SketchMeasurement, type SketchPrimitive, type SketchSelection, type SketchTool } from "./SketchWorkspace";
@@ -182,7 +184,7 @@ import {
   type PlacementPoint,
   type PlacementWorkplane,
 } from "@/lib/placementWorkplane";
-import { boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
+import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { PatternPanel } from "./workplane/PatternPanel";
@@ -9161,6 +9163,69 @@ export function SketchForgeEditor({
   }, [commitShapes, selectedIds, selectedShapes]);
 
   /**
+   * An der Oberflaeche eines anderen Koerpers abschneiden - **ohne**
+   * Arbeitsebene.
+   *
+   * Das buendige Abschneiden braucht zwei Dinge: eine Flaeche und eine Ebene.
+   * Die Ebene sagt, welche Seite weg soll, der Koerper nur, wo der Schnitt
+   * sitzt. Bei einem abknickenden Objekt verlaesst es die Halbebene, und dann
+   * greift der Schnitt auch dort, wo er nicht greifen soll.
+   *
+   * Hier faellt die Ebene weg. Die Oberflaeche des anderen Koerpers **ist** die
+   * Grenze - wie krumm sie auch ist und wie oft das Ziel abknickt:
+   *
+   * - `"outside"` behaelt, was draussen ist: Ziel ohne Flaeche.
+   * - `"inside"` behaelt, was drinnen steckt: Ziel geschnitten mit Flaeche.
+   *
+   * Der zuletzt **angeklickte** Koerper gibt die Flaeche und bleibt stehen -
+   * dieselbe Regel wie beim buendigen Abschneiden.
+   */
+  const trimAgainstBody = useCallback(async (keep: "outside" | "inside") => {
+    const usable = shapesInClickOrder(
+      selectedShapes.filter((shape) => !shape.locked && isSolidShape(shape) && !shape.hole),
+      selectedIds,
+    );
+    if (usable.length < 2) {
+      setNotice(t("status.selectBodyAndSurface"));
+      return;
+    }
+    const surface = usable[usable.length - 1];
+    const targets = usable.slice(0, -1);
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+
+    const trimmed: WorkplaneShape[] = [];
+    for (const target of targets) {
+      const tool = { ...surface, id: createLocalId("body-trim"), hole: true };
+      if (keep === "outside") {
+        const result = await buildGroupedShapeFromSelection([target, tool]);
+        const outcome = bodyTrimOutcome(Boolean(result.group), result.consumed);
+        if (outcome === "replaced") trimmed.push(cutResultShape(result.group!));
+        else if (outcome === "unchanged") trimmed.push(target);
+        continue;
+      }
+      const result = await buildIntersectionShapeFromSelection([target, tool]);
+      const outcome = bodyTrimOutcome(Boolean(result.group), result.empty);
+      if (outcome === "replaced") {
+        trimmed.push(cutResultShape(canonicalizeShape({ ...result.group!, groupOperation: "intersection" })));
+      } else if (outcome === "unchanged") {
+        trimmed.push(target);
+      }
+    }
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setNotice(t("status.groupChanged"));
+      return;
+    }
+    const replaced = new Set(targets.map((shape) => shape.id));
+    commitShapes(
+      [...shapesRef.current.filter((shape) => !replaced.has(shape.id)), ...trimmed],
+      trimmed.map((shape) => shape.id),
+      trimmed.length === 0
+        ? t("status.trimmedAway")
+        : t(keep === "outside" ? "status.trimmedInsideBody" : "status.trimmedOutsideBody", { count: trimmed.length, name: surface.name }),
+    );
+  }, [commitShapes, selectedIds, selectedShapes]);
+
+  /**
    * Ob sich der Hohlraum dieses Koerpers aus seiner Zeichnung gewinnen laesst.
    *
    * Eine Rotationsskizze bleibt aussen vor: Dort bedeutet ein zweiter
@@ -10928,6 +10993,7 @@ export function SketchForgeEditor({
         onTrim={trimAtWorkplane}
         onSubtractBore={subtractBoreFromSelection}
         onTrimFlush={trimFlushToBody}
+        onTrimBody={trimAgainstBody}
         canTrimFlush={selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)).length >= 2}
         // Schon ein einzelner Koerper genuegt: Ist er hohl, wird sein
         // Innenraum aus allem herausgenommen, was ihm im Weg steht. Und der
@@ -11354,6 +11420,7 @@ function SecondaryToolbar({
   onSubtractBore,
   canSubtractBore,
   onTrimFlush,
+  onTrimBody,
   canTrimFlush,
   onFillet,
   onVariableFillet,
@@ -11446,6 +11513,7 @@ function SecondaryToolbar({
   onSubtractBore: () => void;
   canSubtractBore: boolean;
   onTrimFlush: (side: CutSide) => void;
+  onTrimBody: (keep: "outside" | "inside") => void;
   canTrimFlush: boolean;
   onFillet: () => void;
   onVariableFillet: () => void;
@@ -11686,6 +11754,8 @@ function SecondaryToolbar({
     { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },
     { label: t("editor.tool.trimFlushAbove"), icon: ToolbarTrimFlushIcon, action: () => onTrimFlush("above"), enabled: canTrimFlush },
     { label: t("editor.tool.trimFlushBelow"), icon: ToolbarTrimFlushBelowIcon, action: () => onTrimFlush("below"), enabled: canTrimFlush },
+    { label: t("editor.tool.trimInsideBody"), icon: ToolbarTrimInsideBodyIcon, action: () => onTrimBody("outside"), enabled: canTrimFlush },
+    { label: t("editor.tool.trimOutsideBody"), icon: ToolbarTrimOutsideBodyIcon, action: () => onTrimBody("inside"), enabled: canTrimFlush },
     { label: t("editor.tool.subtractBore"), icon: ToolbarBoreIcon, action: onSubtractBore, enabled: canSubtractBore },
   ];
   const modifyTools = [

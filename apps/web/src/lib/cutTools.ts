@@ -378,3 +378,26 @@ export function shapesInClickOrder<T extends { id: string }>(shapes: readonly T[
   const clicked = new Map(selectedIds.map((id, index) => [id, index]));
   return [...shapes].sort((a, b) => (clicked.get(a.id) ?? -1) - (clicked.get(b.id) ?? -1));
 }
+
+/** Was mit einem Ziel geschieht, das gegen eine Flaeche geschnitten wurde. */
+export type BodyTrimOutcome = "replaced" | "unchanged" | "removed";
+
+/**
+ * Ein Schnitt gegen die Oberflaeche eines anderen Koerpers hat drei Ausgaenge,
+ * und zwei davon liefern **kein** Ergebnis - dieselbe leere Antwort mit ganz
+ * verschiedener Bedeutung:
+ *
+ * - Es kam ein Koerper heraus: Er ersetzt das Ziel.
+ * - Nichts kam heraus, **und** nichts ist uebrig: Das Ziel steckte ganz in der
+ *   Flaeche (beim Innen-Schnitt) oder gar nicht darin (beim Aussen-Schnitt) -
+ *   es verschwindet.
+ * - Nichts kam heraus, aber es waere etwas uebrig: Die Flaeche hat das Ziel
+ *   nicht erreicht. Dann bleibt es stehen, wie es ist.
+ *
+ * Wer die letzten beiden verwechselt, loescht einen Koerper, den er nur nicht
+ * getroffen hat - oder laesst einen stehen, von dem nichts uebrig sein darf.
+ */
+export function bodyTrimOutcome(hasResult: boolean, nothingLeft: boolean): BodyTrimOutcome {
+  if (hasResult) return "replaced";
+  return nothingLeft ? "removed" : "unchanged";
+}
