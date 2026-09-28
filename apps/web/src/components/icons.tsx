@@ -411,3 +411,19 @@ export function ToolbarPatternIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Der Drehpunkt: ein Kreuz mit Kringel darum und ein Pfeil, der herumlaeuft -
+ * die Stelle, um die gedreht wird.
+ */
+export function ToolbarPivotIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+        <path d="M24 9v9M24 30v9M9 24h9M30 24h9" />
+        <circle cx="24" cy="24" r="12" strokeWidth="1.8" strokeDasharray="3 3.4" opacity="0.55" />
+      </g>
+      <circle cx="24" cy="24" r="4" fill="currentColor" />
+    </svg>
+  );
+}

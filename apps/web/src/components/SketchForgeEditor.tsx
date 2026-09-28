@@ -84,6 +84,7 @@ import {
   ToolbarUndoIcon,
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
+  ToolbarPivotIcon,
 } from "./icons";
 import { WorkplaneViewport } from "./WorkplaneViewport";
 import { SketchWorkspace, type SketchMeasurement, type SketchPrimitive, type SketchSelection, type SketchTool } from "./SketchWorkspace";
@@ -6041,6 +6042,8 @@ export function SketchForgeEditor({
   const [alignPreview, setAlignPreview] = useState<{ axis: AlignAxis; target: AlignTarget } | null>(null);
   const [mirrorMode, setMirrorMode] = useState(false);
   const [patternTool, setPatternTool] = useState<PatternSettings | null>(null);
+  const [pivotMode, setPivotMode] = useState(false);
+  const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
   const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
@@ -8073,6 +8076,33 @@ export function SketchForgeEditor({
     );
   }, [commitShapes, patternTool, selectedShapes]);
 
+  /**
+   * Den Drehpunkt setzen oder wieder wegnehmen.
+   *
+   * Steht schon einer, nimmt der Knopf ihn zurueck - so kommt man ohne Umweg
+   * wieder zum Drehen um die eigene Mitte. Sonst wartet das Werkzeug auf einen
+   * Klick auf eine Flaeche.
+   */
+  const togglePivotTool = useCallback(() => {
+    if (rotationPivot || pivotMode) {
+      setRotationPivot(null);
+      setPivotMode(false);
+      setNotice(t("status.pivotCleared"));
+      return;
+    }
+    if (!hasSelection) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    setPivotMode(true);
+    setNotice(t("status.pivotPick"));
+  }, [hasSelection, pivotMode, rotationPivot]);
+
+  const takeRotationPivot = useCallback((picked: { shapeId: string; point: { x: number; y: number; z: number } }) => {
+    setRotationPivot(picked);
+    setNotice(t("status.pivotSet"));
+  }, []);
+
   const togglePatternTool = useCallback(() => {
     if (patternTool) {
       setPatternTool(null);
@@ -9397,6 +9427,20 @@ export function SketchForgeEditor({
     if (entry) regionByHistoryEntryRef.current.set(entry, next);
   }, []);
 
+  /*
+   * Der Drehpunkt gehoert zu der Auswahl, fuer die er gesetzt wurde. Wandert
+   * sie weiter oder verschwindet der Koerper, faellt er weg - sonst drehte man
+   * spaeter um einen Punkt, den man nicht mehr sieht.
+   */
+  useEffect(() => {
+    if (!rotationPivot) return;
+    const stillThere = shapes.some((shape) => shape.id === rotationPivot.shapeId);
+    if (!stillThere || !selectedIds.includes(rotationPivot.shapeId)) {
+      setRotationPivot(null);
+      setPivotMode(false);
+    }
+  }, [rotationPivot, selectedIds, shapes]);
+
   const regionResizeShape = regionResize ? shapes.find((shape) => shape.id === regionResize.shapeId) ?? null : null;
   // Whatever else changed the shape's size (undo, say) - the box stays inside it.
   const activeRegionResize = useMemo(
@@ -10553,7 +10597,16 @@ export function SketchForgeEditor({
     }
 
     const rotationDelta = geometryRotationDelta(placementWorkplane, angleDegrees);
-    const pivot = rotatableShapes.length > 1 ? selectionCenterOnWorkplane(rotatableShapes, placementWorkplane) : null;
+    /*
+     * Ein gesetzter Drehpunkt gilt vor allem anderen: Er wurde ja fuer genau
+     * diese Auswahl gesetzt, damit ein Rohrende dort bleibt, wo es ist. Ohne
+     * ihn dreht eine Auswahl um ihre gemeinsame Mitte und ein einzelner
+     * Koerper um seine eigene.
+     */
+    const setPivot = rotationPivot && selected.has(rotationPivot.shapeId)
+      ? new THREE.Vector3(rotationPivot.point.x, rotationPivot.point.y, rotationPivot.point.z)
+      : null;
+    const pivot = setPivot ?? (rotatableShapes.length > 1 ? selectionCenterOnWorkplane(rotatableShapes, placementWorkplane) : null);
 
     const nextShapes = shapes.map((shape) => {
       if (!selected.has(shape.id) || shape.locked) {
@@ -10570,7 +10623,7 @@ export function SketchForgeEditor({
       selectedIds,
       rotatableShapes.length === 1 ? t("status.rotatedOne", { angle: angleLabel }) : t("status.rotatedMany", { count: rotatableShapes.length, angle: angleLabel }),
     );
-  }, [commitShapes, hasSelection, placementWorkplane, selectedIds, selectedShapes, shapes]);
+  }, [commitShapes, hasSelection, placementWorkplane, rotationPivot, selectedIds, selectedShapes, shapes]);
 
   useEffect(() => {
     const isTypingTarget = (target: EventTarget | null) => {
@@ -10887,6 +10940,8 @@ export function SketchForgeEditor({
         onMirror={toggleMirrorMode}
         onPattern={togglePatternTool}
         patternActive={Boolean(patternTool)}
+        onPivot={togglePivotTool}
+        pivotActive={pivotMode || Boolean(rotationPivot)}
         onPaste={pasteShape}
         onRedo={redo}
         onSnap={snapSelected}
@@ -10972,6 +11027,10 @@ export function SketchForgeEditor({
           resizeRegion={activeRegionResize}
           resizeRegionLimits={activeRegionResize && regionResize ? regionResize.limits : null}
           resizeRegionMode={regionResizeMode}
+          pivotMode={pivotMode}
+          rotationPivot={rotationPivot}
+          onPivotPick={takeRotationPivot}
+          onPivotModeChange={setPivotMode}
           onResizeRegionChange={updateRegionResize}
           onResizeRegionLimitsChange={updateRegionLimits}
           onRegionTaper={taperRegionResize}
@@ -11302,6 +11361,8 @@ function SecondaryToolbar({
   onMirror,
   onPattern,
   patternActive,
+  onPivot,
+  pivotActive,
   onPaste,
   onRedo,
   onSnap,
@@ -11392,6 +11453,8 @@ function SecondaryToolbar({
   onMirror: () => void;
   onPattern: () => void;
   patternActive: boolean;
+  onPivot: () => void;
+  pivotActive: boolean;
   onPaste: () => void;
   onRedo: () => void;
   onSnap: () => void;
@@ -11575,6 +11638,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.align"), icon: ToolbarAlignIcon, action: onAlign, enabled: canAlign, active: alignMode },
     { label: t("editor.tool.mirror"), icon: ToolbarMirrorIcon, action: onMirror, enabled: hasSelection, active: mirrorMode },
     { label: t("editor.tool.pattern"), icon: ToolbarPatternIcon, action: onPattern, enabled: hasSelection, active: patternActive },
+    { label: t("editor.tool.pivot"), icon: ToolbarPivotIcon, action: onPivot, enabled: hasSelection, active: pivotActive },
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.chamfer"), icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
     { id: "fillet", label: t("editor.tool.fillet"), icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },

@@ -56,6 +56,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
+import { planarFaceCentroid } from "@/lib/rotationPivot";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
@@ -235,6 +236,12 @@ type WorkplaneViewportProps = {
   // is the box shrunk onto the geometry within them.
   resizeRegionLimits: ResizeRegion | null;
   resizeRegionMode: RegionResizeMode;
+  /** Der naechste Klick auf eine Flaeche setzt den Drehpunkt. */
+  pivotMode?: boolean;
+  /** Der gesetzte Drehpunkt, in Weltkoordinaten. */
+  rotationPivot?: { shapeId: string; point: { x: number; y: number; z: number } } | null;
+  onPivotPick?: (pivot: { shapeId: string; point: { x: number; y: number; z: number } }) => void;
+  onPivotModeChange?: (active: boolean) => void;
   onResizeRegionChange: (region: ResizeRegion) => void;
   onResizeRegionLimitsChange: (limits: ResizeRegion) => void;
   onRegionTaper: (taper: RegionTaper) => void;
@@ -365,6 +372,7 @@ type ThreeState = {
   shapeLayer: THREE.Group;
   helperLayer: THREE.Group;
   transformGuideLayer: THREE.Group;
+  pivotLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
   modifierLayer: THREE.Group;
@@ -3269,6 +3277,10 @@ export function WorkplaneViewport({
   resizeRegion,
   resizeRegionLimits,
   resizeRegionMode,
+  pivotMode = false,
+  rotationPivot = null,
+  onPivotPick,
+  onPivotModeChange,
   onResizeRegionChange,
   onResizeRegionLimitsChange,
   onRegionTaper,
@@ -3327,6 +3339,10 @@ export function WorkplaneViewport({
   const resizeRegionRef = useRef<ActiveResizeRegion | null>(resizeRegion);
   const resizeRegionModeRef = useRef(resizeRegionMode);
   resizeRegionModeRef.current = resizeRegionMode;
+  const pivotModeRef = useRef(pivotMode);
+  pivotModeRef.current = pivotMode;
+  const rotationPivotRef = useRef(rotationPivot);
+  rotationPivotRef.current = rotationPivot;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4161,6 +4177,7 @@ export function WorkplaneViewport({
       state.shapeRecords.clear();
       disposeChildren(state.helperLayer);
       disposeChildren(state.transformGuideLayer);
+      disposeChildren(state.pivotLayer);
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
       disposeChildren(state.modifierLayer);
@@ -4608,7 +4625,16 @@ export function WorkplaneViewport({
       const localClientX = rect ? event.clientX - rect.left : event.clientX;
       const localClientY = rect ? event.clientY - rect.top : event.clientY;
       const axisVector = rotationAxisVectorForFrame(handleKey, frame);
-      const pivot = frame.center.clone();
+      /*
+       * Ein von Hand gesetzter Drehpunkt gilt auch am Drehrad - sonst drehte
+       * das Ziehen um die Koerpermitte und der eingetippte Winkel um den
+       * gesetzten Punkt, und man bekaeme zwei verschiedene Ergebnisse fuer
+       * dieselbe Drehung.
+       */
+      const chosenPivot = rotationPivotRef.current && ids.includes(rotationPivotRef.current.shapeId)
+        ? new THREE.Vector3(rotationPivotRef.current.point.x, rotationPivotRef.current.point.y, rotationPivotRef.current.point.z)
+        : null;
+      const pivot = chosenPivot ?? frame.center.clone();
       const rotationCenter = kind === "rotate" ? wheel ?? (state ? projectToScreen(pivot, state) : { x: localClientX, y: localClientY }) : undefined;
       const rotationStartPoint = kind === "rotate" && state ? rayPointOnRotationPlane(state, event.clientX, event.clientY, rotationPlaneCenter, axisVector) : null;
       const rotationStartVector = rotationStartPoint ? rotationStartPoint.sub(rotationPlaneCenter) : undefined;
@@ -4688,7 +4714,7 @@ export function WorkplaneViewport({
         liftHandlePoint,
         liftStartValue,
         rotationAxisVector: kind === "rotate" ? axisVector : undefined,
-        rotationPivot: kind === "rotate" ? pivot : undefined,
+        rotationPivot: kind === "rotate" ? chosenPivot ?? undefined : undefined,
         rotationPlaneCenter: kind === "rotate" ? rotationPlaneCenter : undefined,
         rotationPlaneView: kind === "rotate" ? rotationPlane : undefined,
         rotationStartPointerAngle,
@@ -5016,10 +5042,13 @@ export function WorkplaneViewport({
           pointerAngle: wheelRotation?.pointerAngle ?? rawPointerAngle,
         });
       }
+      // Ein gesetzter Drehpunkt bewegt auch einen einzelnen Koerper: Er soll
+      // ja um eine Stelle drehen, die nicht seine Mitte ist.
+      const movesCentre = transform.items.length > 1 || Boolean(transform.rotationPivot);
       transform.items.forEach((item) => {
         const nextQuaternion = rotationDelta.clone().multiply(item.startQuaternion);
         const patch: Partial<WorkplaneShape> = rotationPatchFromQuaternion(nextQuaternion);
-        if (transform.items.length > 1) {
+        if (movesCentre) {
           const nextCenter = pivot.clone().add(item.startCenter.clone().sub(pivot).applyQuaternion(rotationDelta));
           patch.x = snapPositionValue(nextCenter.x, step, -workspaceRef.current.width / 2 + 6, workspaceRef.current.width / 2 - 6);
           patch.z = snapPositionValue(nextCenter.z, step, -workspaceRef.current.depth / 2 + 6, workspaceRef.current.depth / 2 - 6);
@@ -5399,6 +5428,81 @@ export function WorkplaneViewport({
    * Arbeitsebene. Anders als das Lineal sucht sie keine Ecke und keine Kante;
    * eine Notiz will dort stehen, wo hingezeigt wurde.
    */
+  /**
+   * Den Drehpunkt aus einem Klick auf eine Flaeche holen.
+   *
+   * Der Strahl liefert das getroffene Dreieck; `planarFaceCentroid` sucht von
+   * dort die ganze zusammenhaengende ebene Flaeche und gibt deren Mitte. Auf
+   * dem runden Ende eines Rohrs ist das seine Achse.
+   */
+  /*
+   * Die Marke fuer den Drehpunkt: eine kleine Kugel mit einem Kreuz darum,
+   * damit man sie auch vor einer hellen Flaeche sieht. Sie haengt in ihrer
+   * eigenen Gruppe, also raeumt dieser Effekt sie allein auf.
+   */
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    disposeChildren(state.pivotLayer);
+    if (rotationPivot) {
+      const size = 2.4;
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(size * 0.55, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xdc3f36, depthTest: false }),
+      );
+      const arms = new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-size * 2, 0, 0), new THREE.Vector3(size * 2, 0, 0),
+          new THREE.Vector3(0, -size * 2, 0), new THREE.Vector3(0, size * 2, 0),
+          new THREE.Vector3(0, 0, -size * 2), new THREE.Vector3(0, 0, size * 2),
+        ]),
+        new THREE.LineBasicMaterial({ color: 0xdc3f36, depthTest: false, transparent: true, opacity: 0.85 }),
+      );
+      const group = new THREE.Group();
+      group.name = "RotationPivotMarker";
+      group.add(marker, arms);
+      group.position.set(rotationPivot.point.x, rotationPivot.point.y, rotationPivot.point.z);
+      group.renderOrder = 10;
+      setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
+      state.pivotLayer.add(group);
+    }
+    state.needsRender = true;
+  }, [rotationPivot]);
+
+  const resolveRotationPivot = useCallback((clientX: number, clientY: number) => {
+    const state = threeRef.current;
+    if (!state) return null;
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    state.raycaster.setFromCamera(state.pointer, state.camera);
+    state.raycaster.layers.set(RENDER_LAYER_SHAPES);
+    const hit = state.raycaster.intersectObjects(state.shapeLayer.children, true).find((entry) => {
+      const shapeId = entry.object.userData.shapeId;
+      if (typeof shapeId !== "string" || !(entry.object instanceof THREE.Mesh)) return false;
+      const shape = shapesRef.current.find((candidate) => candidate.id === shapeId);
+      return shape ? !shape.hidden : false;
+    });
+    if (!hit || hit.faceIndex == null || !(hit.object instanceof THREE.Mesh)) return null;
+    const geometry = hit.object.geometry as THREE.BufferGeometry;
+    const position = geometry.getAttribute("position");
+    if (!position) return null;
+    hit.object.updateMatrixWorld(true);
+    const index = geometry.getIndex();
+    const corners = index ? index.count : position.count;
+    const point = new THREE.Vector3();
+    const world: number[] = new Array(corners * 3);
+    for (let corner = 0; corner < corners; corner += 1) {
+      const at = index ? index.getX(corner) : corner;
+      point.fromBufferAttribute(position, at).applyMatrix4(hit.object.matrixWorld);
+      world[corner * 3] = point.x;
+      world[corner * 3 + 1] = point.y;
+      world[corner * 3 + 2] = point.z;
+    }
+    const centre = planarFaceCentroid(world, hit.faceIndex);
+    return centre ? { shapeId: hit.object.userData.shapeId as string, point: centre } : null;
+  }, []);
+
   const resolveNoteAnchor = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
     if (!state) return null;
@@ -5671,6 +5775,14 @@ export function WorkplaneViewport({
         return;
       }
 
+      if (pivotModeRef.current) {
+        event.preventDefault();
+        const picked = resolveRotationPivot(event.clientX, event.clientY);
+        if (picked) onPivotPick?.(picked);
+        onPivotModeChange?.(false);
+        return;
+      }
+
       if (workplaneModeRef.current) {
         event.preventDefault();
         syncWorkplaneHoverPreview(state, null, workspaceRef.current, resolvedThemeRef.current);
@@ -5714,7 +5826,11 @@ export function WorkplaneViewport({
         const localClientX = event.clientX - rect.left;
         const localClientY = event.clientY - rect.top;
         const axisVector = rotationAxisVectorForFrame(handle.handleKey, frame);
-        const pivot = frame.center.clone();
+        // Wie oben: ein von Hand gesetzter Drehpunkt gilt auch hier.
+        const chosenPivot = rotationPivotRef.current && selectedIdsRef.current.includes(rotationPivotRef.current.shapeId)
+          ? new THREE.Vector3(rotationPivotRef.current.point.x, rotationPivotRef.current.point.y, rotationPivotRef.current.point.z)
+          : null;
+        const pivot = chosenPivot ?? frame.center.clone();
         const rotationCenter = handle.kind === "rotate" ? wheel ?? projectToScreen(pivot, state) : undefined;
         const rotationStartPoint = handle.kind === "rotate" ? rayPointOnRotationPlane(state, event.clientX, event.clientY, rotationPlaneCenter, axisVector) : null;
         const rotationStartVector = rotationStartPoint ? rotationStartPoint.sub(rotationPlaneCenter) : undefined;
@@ -5781,7 +5897,7 @@ export function WorkplaneViewport({
           liftHandlePoint,
           liftStartValue,
           rotationAxisVector: handle.kind === "rotate" ? axisVector : undefined,
-          rotationPivot: handle.kind === "rotate" ? pivot : undefined,
+          rotationPivot: handle.kind === "rotate" ? chosenPivot ?? undefined : undefined,
         rotationPlaneCenter: handle.kind === "rotate" ? rotationPlaneCenter : undefined,
         rotationPlaneView: handle.kind === "rotate" ? rotationPlane : undefined,
         rotationStartPointerAngle: handle.kind === "rotate"
@@ -6908,6 +7024,11 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const transformGuideLayer = new THREE.Group();
   transformGuideLayer.name = "TransformGuides";
   transformGuideLayer.layers.set(RENDER_LAYER_HELPERS);
+  // Eigene Gruppe fuer den Drehpunkt: Die Auswahlhelfer werden bei jeder
+  // Aenderung im Ganzen neu gebaut, der Punkt soll davon unberuehrt bleiben.
+  const pivotLayer = new THREE.Group();
+  pivotLayer.name = "RotationPivot";
+  pivotLayer.layers.set(RENDER_LAYER_HELPERS);
   const moveDimensionLayer = new THREE.Group();
   moveDimensionLayer.name = "MoveDimensions";
   moveDimensionLayer.layers.set(RENDER_LAYER_HELPERS);
@@ -6917,7 +7038,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -6952,6 +7073,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     workplaneLayer,
     workplanePreviewLayer,
     shapeLayer,
+    pivotLayer,
     helperLayer,
     transformGuideLayer,
     moveDimensionLayer,
