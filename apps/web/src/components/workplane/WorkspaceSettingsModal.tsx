@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { APP_THEME_OPTIONS, type AppThemePreference } from "@/lib/appTheme";
-import { t, type MessageKey } from "@/lib/i18n";
+import { LANGUAGES, LANGUAGE_NAMES, setLanguage, t, type MessageKey } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { gearCenterHoleLimits, gearToothPitch } from "@/lib/gearGeometry";
 import {
@@ -252,7 +252,7 @@ export function WorkspaceSettingsModal({
   onClose: () => void;
 }) {
   // Redraws the window when the language changes.
-  useLanguage();
+  const language = useLanguage();
   const [defaultSaved, setDefaultSaved] = useState(false);
   const [activeSection, setActiveSection] = useState<WorkspaceSettingsSection>("appearance");
   const [selectedShapeKind, setSelectedShapeKind] = useState<ShapeKind>(toolbarShapeAssets[0].kind);
@@ -434,6 +434,17 @@ export function WorkspaceSettingsModal({
                     <strong>{t("workspace.appearance")}</strong>
                     <span>{t("workspace.appearanceHint")}</span>
                   </div>
+                  {/* Die Sprache stand bisher oben rechts in der Leiste. Sie
+                      gehoert zur Darstellung, wird selten geaendert und macht
+                      dort nur die Leiste breiter. */}
+                  <label className="workspace-select">
+                    <span>{t("common.language")}</span>
+                    <select value={language} onChange={(event) => setLanguage(event.currentTarget.value as typeof LANGUAGES[number])}>
+                      {LANGUAGES.map((option) => (
+                        <option key={option} value={option}>{LANGUAGE_NAMES[option]}</option>
+                      ))}
+                    </select>
+                  </label>
                   <label className="workspace-select">
                     <span>{t("workspace.theme")}</span>
                     <select

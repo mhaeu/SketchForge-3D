@@ -2230,6 +2230,16 @@ svg.sketch-reference-icon {
   backdrop-filter: blur(12px);
 }
 
+
+/* Im Klappmenue fuer Verbinden/Schneiden stehen die Werkzeugsymbole der
+   Leiste. Die bringen keine eigene Groesse mit - in der Spalte von 26 Pixeln
+   muessen sie darauf gebracht werden, sonst sprengen sie die Zeile. */
+.combine-dropdown .visibility-dropdown-action > :first-child {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 .visibility-dropdown-action {
   display: grid;
   width: 100%;

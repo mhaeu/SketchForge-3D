@@ -43,7 +43,6 @@ import { meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
 import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
 import { workplaneAlignRotation, workplaneCentringShift } from "@/lib/workplaneArrange";
 import { t, translateIfKey, type MessageKey } from "@/lib/i18n";
-import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { useLanguage } from "@/lib/useLanguage";
 import {
   SketchBoltCircleIcon,
@@ -11476,6 +11475,15 @@ function SecondaryToolbar({
   const [sketchCreateOpen, setSketchCreateOpen] = useState(false);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [visibilityMenuPosition, setVisibilityMenuPosition] = useState({ top: 0, left: 0 });
+  /*
+   * Verbinden und Schneiden sind acht Knoepfe - in einer Leiste, die schon
+   * ueberbreit war, gehoeren sie hinter einen. Aufgeklappt stehen sie mit
+   * Namen da, was den Unterschied zwischen "abschneiden" und "buendig
+   * abschneiden" ohnehin deutlicher macht als zwei aehnliche Bildchen.
+   */
+  const [combineOpen, setCombineOpen] = useState(false);
+  const [combineMenuPosition, setCombineMenuPosition] = useState({ top: 0, left: 0 });
+  const combineMenuRef = useRef<HTMLDivElement | null>(null);
   const shapesMenuRef = useRef<HTMLDivElement>(null);
   const sketchCreateMenuRef = useRef<HTMLDivElement>(null);
   const visibilityMenuRef = useRef<HTMLDivElement>(null);
@@ -11580,6 +11588,52 @@ function SecondaryToolbar({
       window.removeEventListener("scroll", closeOnViewportChange, true);
     };
   }, [visibilityOpen]);
+  useEffect(() => {
+    if (!combineOpen) return;
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!combineMenuRef.current?.contains(event.target as Node)) setCombineOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCombineOpen(false);
+    };
+    const closeOnViewportChange = () => setCombineOpen(false);
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
+    };
+  }, [combineOpen]);
+  const toggleCombineMenu = () => {
+    if (combineOpen) {
+      setCombineOpen(false);
+      return;
+    }
+    const triggerBounds = combineMenuRef.current?.getBoundingClientRect();
+    if (triggerBounds) {
+      const viewportGutter = 12;
+      const menuWidth = Math.min(300, Math.max(0, window.innerWidth - viewportGutter * 2));
+      setCombineMenuPosition({
+        top: triggerBounds.bottom + 8,
+        left: Math.max(
+          viewportGutter,
+          Math.min(
+            triggerBounds.left + triggerBounds.width / 2 - menuWidth / 2,
+            window.innerWidth - menuWidth - viewportGutter,
+          ),
+        ),
+      });
+    }
+    setShapesOpen(false);
+    setSketchCreateOpen(false);
+    setVisibilityOpen(false);
+    onTopPanel(null);
+    setCombineOpen(true);
+  };
   const toggleVisibilityMenu = () => {
     if (visibilityOpen) {
       setVisibilityOpen(false);
@@ -11602,13 +11656,13 @@ function SecondaryToolbar({
     }
     setShapesOpen(false);
     setSketchCreateOpen(false);
+    setCombineOpen(false);
     onTopPanel(null);
     setVisibilityOpen(true);
   };
   const leftTools = [
     { label: t("editor.tool.copy"), icon: ToolbarCopyIcon, action: onCopy, enabled: hasSelection },
     { label: t("editor.tool.paste"), icon: ToolbarPasteIcon, action: onPaste, enabled: hasClipboard },
-    { label: t("common.duplicate"), icon: ToolbarDuplicateIcon, action: onDuplicate, enabled: hasSelection },
     { label: t("common.delete"), icon: ToolbarTrashIcon, action: onDelete, enabled: hasSelection },
     { label: t("editor.tool.undo"), icon: ToolbarUndoIcon, action: onUndo, enabled: canUndo },
     { label: t("editor.tool.redo"), icon: ToolbarRedoIcon, action: onRedo, enabled: canRedo },
@@ -11635,16 +11689,17 @@ function SecondaryToolbar({
     { label: t("editor.tool.subtractBore"), icon: ToolbarBoreIcon, action: onSubtractBore, enabled: canSubtractBore },
   ];
   const modifyTools = [
+    { label: t("common.duplicate"), icon: ToolbarDuplicateIcon, action: onDuplicate, enabled: hasSelection },
     { label: t("editor.tool.align"), icon: ToolbarAlignIcon, action: onAlign, enabled: canAlign, active: alignMode },
     { label: t("editor.tool.mirror"), icon: ToolbarMirrorIcon, action: onMirror, enabled: hasSelection, active: mirrorMode },
     { label: t("editor.tool.pattern"), icon: ToolbarPatternIcon, action: onPattern, enabled: hasSelection, active: patternActive },
     { label: t("editor.tool.pivot"), icon: ToolbarPivotIcon, action: onPivot, enabled: hasSelection, active: pivotActive },
-    { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.chamfer"), icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
     { id: "fillet", label: t("editor.tool.fillet"), icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },
     { label: t("editor.tool.variableFillet"), icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
   ];
   const arrangeTools = [
+    { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.dropToWorkplane"), icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
     { label: t("editor.tool.centerOnWorkplane"), icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
     { label: t("editor.tool.alignToWorkplane"), icon: ToolbarAlignToWorkplaneIcon, action: onAlignToWorkplane, enabled: hasSelection },
@@ -11689,11 +11744,11 @@ function SecondaryToolbar({
       <div className="tool-group left">
         <div className="toolbar-section">
           <div className="toolbar-section-label">{t("editor.group.clipboard")}</div>
-          <div className="toolbar-section-tools">{leftTools.slice(0, 4).map(renderToolButton)}</div>
+          <div className="toolbar-section-tools">{leftTools.slice(0, 3).map(renderToolButton)}</div>
         </div>
         <div className="toolbar-section">
           <div className="toolbar-section-label">{t("editor.group.history")}</div>
-          <div className="toolbar-section-tools">{leftTools.slice(4).map(renderToolButton)}</div>
+          <div className="toolbar-section-tools">{leftTools.slice(3).map(renderToolButton)}</div>
         </div>
         <div className="toolbar-section toolbar-shapes-section" ref={shapesMenuRef}>
           <div className="toolbar-section-label">{t("editor.group.shapes")}</div>
@@ -11870,9 +11925,47 @@ function SecondaryToolbar({
             </div>
           ) : null}
         </div>
-        <div className="toolbar-section">
+        <div className="toolbar-section" ref={combineMenuRef}>
           <div className="toolbar-section-label">{t("editor.group.combine")}</div>
-          <div className="toolbar-section-tools">{combineTools.map(renderToolButton)}</div>
+          <div className="toolbar-section-tools">
+            <button
+              className={`toolbar-icon visibility-menu-trigger ${combineOpen ? "active" : ""}`}
+              type="button"
+              aria-label={t("editor.group.combine")}
+              title={t("editor.combineOptions")}
+              aria-haspopup="menu"
+              aria-expanded={combineOpen}
+              onClick={toggleCombineMenu}
+            >
+              <ToolbarGroupIcon />
+              <ToolbarCaretDownIcon />
+            </button>
+          </div>
+          {combineOpen ? (
+            <div
+              className="visibility-dropdown combine-dropdown"
+              role="menu"
+              aria-label={t("editor.group.combine")}
+              style={combineMenuPosition}
+            >
+              {combineTools.map(({ label, icon: Icon, action, enabled }) => (
+                <button
+                  key={label}
+                  className="visibility-dropdown-action"
+                  type="button"
+                  role="menuitem"
+                  disabled={!enabled}
+                  onClick={() => {
+                    setCombineOpen(false);
+                    action();
+                  }}
+                >
+                  <Icon />
+                  <strong>{label}</strong>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="toolbar-section">
           <div className="toolbar-section-label">{t("editor.group.modify")}</div>
@@ -11966,8 +12059,6 @@ function SecondaryToolbar({
           <button className="action-icon-button" aria-label={t("editor.workspaceSettings")} title={t("editor.workspaceSettings")} onClick={() => window.dispatchEvent(new Event("sketchforge:open-workspace-settings"))}>
             <ToolbarSettingsIcon />
           </button>
-          {/* At the top right of the ribbon, where the language choice belongs. */}
-          <LanguageSwitch />
         </div>
       </div>
           </>
