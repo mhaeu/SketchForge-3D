@@ -83,6 +83,7 @@ import {
   ToolbarUngroupIcon,
   ToolbarUndoIcon,
   ToolbarVectorExportIcon,
+  ToolbarPatternIcon,
 } from "./icons";
 import { WorkplaneViewport } from "./WorkplaneViewport";
 import { SketchWorkspace, type SketchMeasurement, type SketchPrimitive, type SketchSelection, type SketchTool } from "./SketchWorkspace";
@@ -139,7 +140,7 @@ import {
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
 import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
-import { geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
+import { composedShapeRotation, geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
 import { bakedRotationForBake, parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
@@ -184,6 +185,13 @@ import {
 import { boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
+import { PatternPanel } from "./workplane/PatternPanel";
+import {
+  clampPatternCount,
+  defaultPatternSettings,
+  patternPlacement,
+  type PatternSettings,
+} from "@/lib/shapePattern";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -2672,6 +2680,41 @@ function rebuiltParametricShape(
   return plan.turns
     ? baked
     : canonicalizeShape({ ...baked, x: shape.x, z: shape.z, elevation: shape.elevation ?? 0 });
+}
+
+/**
+ * Die Kopien, die ein Muster anlegt: jeder gewaehlte Koerper einmal je
+ * weiterem Stueck, versetzt oder um die Mitte gedreht.
+ *
+ * `bake` trennt Vorschau und Ergebnis: Eine mitgedrehte Kopie bekommt ihren
+ * Winkel erst nur als Feld - das zeichnet die Ansicht richtig und bleibt beim
+ * Schieben der Regler schnell. Beim Anlegen wird die Drehung dann ins Netz
+ * gebacken, wie ueberall sonst, wo bei uns gedreht wird.
+ */
+function patternCopies(selection: WorkplaneShape[], settings: PatternSettings, bake: boolean) {
+  const pieces = clampPatternCount(settings.count);
+  const copies: WorkplaneShape[] = [];
+  for (let index = 1; index < pieces; index += 1) {
+    selection.forEach((shape) => {
+      const clone = cloneWorkplaneShapeTreeWithFreshIds(shape, `pattern-${index}`);
+      const place = patternPlacement({ ...settings, count: pieces }, index, {
+        x: clone.x,
+        z: clone.z,
+        elevation: clone.elevation ?? 0,
+      });
+      const placed = canonicalizeShape({ ...clone, x: place.x, z: place.z, elevation: place.elevation });
+      if (Math.abs(place.turn) < 1e-9) {
+        copies.push(placed);
+        return;
+      }
+      const turned = canonicalizeShape({
+        ...placed,
+        ...composedShapeRotation({ rotation: place.turn, rotationX: 0, rotationZ: 0 }, placed),
+      });
+      copies.push(bake ? canonicalizeShape(bakeShapeTransformIntoMesh(turned, true)) : turned);
+    });
+  }
+  return copies;
 }
 
 function bakeShapeTransformIntoMesh(shape: WorkplaneShape, force = false): WorkplaneShape {
@@ -5997,6 +6040,7 @@ export function SketchForgeEditor({
   const [alignAnchorId, setAlignAnchorId] = useState<string | null>(null);
   const [alignPreview, setAlignPreview] = useState<{ axis: AlignAxis; target: AlignTarget } | null>(null);
   const [mirrorMode, setMirrorMode] = useState(false);
+  const [patternTool, setPatternTool] = useState<PatternSettings | null>(null);
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
   const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
@@ -6522,8 +6566,12 @@ export function SketchForgeEditor({
         ? alignedShapesForSelection(shapes, selectedIds, selectedShapes, effectiveAlignAnchorId, alignPreview.axis, alignPreview.target).nextShapes
         : mirrorMode && mirrorPreviewAxis
           ? mirroredShapesForSelection(shapes, selectedIds, selectedShapes, mirrorPreviewAxis).nextShapes
-          : shapes,
-    [alignMode, alignPreview, edgeModifier?.preview, effectiveAlignAnchorId, mirrorMode, mirrorPreviewAxis, selectedIds, selectedShapes, shapes],
+          : patternTool
+            // Die Kopien werden gezeigt, solange das Feld offen steht, und
+            // erst mit "Erstellen" wirklich angelegt.
+            ? [...shapes, ...patternCopies(selectedShapes.filter((shape) => !isReferencePoint(shape) && !shape.locked), patternTool, false)]
+            : shapes,
+    [alignMode, alignPreview, edgeModifier?.preview, effectiveAlignAnchorId, mirrorMode, mirrorPreviewAxis, patternTool, selectedIds, selectedShapes, shapes],
   );
   const sketchReferenceShapes = useMemo(
     () => sketchOperation === "revolve" || placementWorkplaneIsBase(activeSketchWorkplane)
@@ -8003,6 +8051,45 @@ export function SketchForgeEditor({
     const duplicates = duplicable.map((shape) => cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"));
     commitShapes([...shapes, ...duplicates], duplicates.map((shape) => shape.id), t("status.duplicatedMany", { count: duplicates.length }));
   }, [commitShapes, hasSelection, selectedShapes, shapes]);
+
+  const createPattern = useCallback(() => {
+    const settings = patternTool;
+    if (!settings) return;
+    const usable = selectedShapes.filter((shape) => !isReferencePoint(shape) && !shape.locked);
+    if (usable.length === 0) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    const copies = patternCopies(usable, settings, true);
+    if (copies.length === 0) {
+      setNotice(t("status.patternNothing"));
+      return;
+    }
+    setPatternTool(null);
+    commitShapes(
+      [...shapesRef.current, ...copies],
+      copies.map((shape) => shape.id),
+      t("status.patternCreated", { count: copies.length }),
+    );
+  }, [commitShapes, patternTool, selectedShapes]);
+
+  const togglePatternTool = useCallback(() => {
+    if (patternTool) {
+      setPatternTool(null);
+      return;
+    }
+    if (!hasSelection) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    /*
+     * Die Mitte des Kreises steht zunaechst auf der Mitte der Auswahl - von
+     * dort aus schiebt man sie hin, wo sie hingehoert, statt bei null anfangen
+     * zu muessen.
+     */
+    const anchor = selectedShapes[0];
+    setPatternTool({ ...defaultPatternSettings(), centreX: anchor?.x ?? 0, centreZ: anchor?.z ?? 0 });
+  }, [hasSelection, patternTool, selectedShapes]);
 
   const copySelected = useCallback(() => {
     if (!hasSelection) {
@@ -10798,6 +10885,8 @@ export function SketchForgeEditor({
         onFillet={() => edgeModifier?.kind === "fillet" ? cancelEdgeModifier() : startEdgeModifier("fillet")}
         onVariableFillet={() => edgeModifier?.kind === "variableFillet" ? cancelEdgeModifier() : startEdgeModifier("variableFillet")}
         onMirror={toggleMirrorMode}
+        onPattern={togglePatternTool}
+        patternActive={Boolean(patternTool)}
         onPaste={pasteShape}
         onRedo={redo}
         onSnap={snapSelected}
@@ -10931,6 +11020,16 @@ export function SketchForgeEditor({
           />
         )}
       </div>
+      {patternTool ? (
+        <PatternPanel
+          settings={patternTool}
+          selectedCount={selectedShapes.filter((shape) => !isReferencePoint(shape) && !shape.locked).length}
+          workspace={workspaceSettings}
+          onChange={setPatternTool}
+          onCreate={createPattern}
+          onCancel={() => setPatternTool(null)}
+        />
+      ) : null}
       {edgeModifier ? (
         <EdgeModifierPanel
           kind={edgeModifier.kind}
@@ -11201,6 +11300,8 @@ function SecondaryToolbar({
   onFillet,
   onVariableFillet,
   onMirror,
+  onPattern,
+  patternActive,
   onPaste,
   onRedo,
   onSnap,
@@ -11289,6 +11390,8 @@ function SecondaryToolbar({
   onFillet: () => void;
   onVariableFillet: () => void;
   onMirror: () => void;
+  onPattern: () => void;
+  patternActive: boolean;
   onPaste: () => void;
   onRedo: () => void;
   onSnap: () => void;
@@ -11471,6 +11574,7 @@ function SecondaryToolbar({
   const modifyTools = [
     { label: t("editor.tool.align"), icon: ToolbarAlignIcon, action: onAlign, enabled: canAlign, active: alignMode },
     { label: t("editor.tool.mirror"), icon: ToolbarMirrorIcon, action: onMirror, enabled: hasSelection, active: mirrorMode },
+    { label: t("editor.tool.pattern"), icon: ToolbarPatternIcon, action: onPattern, enabled: hasSelection, active: patternActive },
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.chamfer"), icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
     { id: "fillet", label: t("editor.tool.fillet"), icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },

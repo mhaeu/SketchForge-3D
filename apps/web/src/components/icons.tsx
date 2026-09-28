@@ -387,3 +387,27 @@ export function SketchBoltCircleIcon(props: IconProps) {
     </SketchShapeIcon>
   );
 }
+
+/**
+ * Das Muster: drei Kaesten in einer Reihe darueber, ein Kranz aus Punkten
+ * darunter - die beiden Arten, die das Werkzeug kennt.
+ *
+ * Gezeichnet im 48er Feld wie seine Nachbarn in der Werkzeugleiste, damit die
+ * Strichstaerke dieselbe ist.
+ */
+export function ToolbarPatternIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round">
+        <rect x="5" y="6" width="10" height="10" rx="1.5" fill="currentColor" opacity="0.82" stroke="none" />
+        <rect x="19" y="6" width="10" height="10" rx="1.5" />
+        <rect x="33" y="6" width="10" height="10" rx="1.5" />
+        <circle cx="24" cy="32" r="9" strokeWidth="1.8" strokeDasharray="3 3.4" opacity="0.6" />
+      </g>
+      <circle cx="24" cy="23" r="2.6" fill="currentColor" />
+      <circle cx="33" cy="32" r="2.6" fill="currentColor" />
+      <circle cx="24" cy="41" r="2.6" fill="currentColor" />
+      <circle cx="15" cy="32" r="2.6" fill="currentColor" />
+    </svg>
+  );
+}
