@@ -4880,12 +4880,22 @@ async function manifoldUnionMeshShape(selection: WorkplaneShape[], groupChildren
  * die Oeffnung und fuellt das Innere, und was sie mehr hat als der Koerper, ist
  * genau der umschlossene Raum.
  *
- * Die Grenze des Verfahrens ist dieselbe Rechnung: Ist der Koerper **aussen**
- * nicht konvex, gehoeren auch die Einbuchtungen von aussen dazu. Bei einer
- * Schuessel, einem Rohr, einem Kasten mit Deckel stimmt es; bei einem
- * L-Winkel kaeme der fehlende Quadrant mit heraus. Der Aufrufer sagt das dazu.
+ * `plugs` sind die Koerper, die spaeter geschnitten werden - und sie stopfen
+ * vorher die Loecher, die sie selbst in die Wand geschlagen haben. Ohne sie
+ * legt die Huelle auch ueber so ein Loch einen Deckel, und der Raum reicht
+ * durch die Wand bis nach draussen: An einer Schuessel mit 2 mm Wand wurde ein
+ * durchgestecktes Rohr dann 2 mm zu weit abgeschnitten, naemlich an der
+ * Aussen- statt an der Innenflaeche. Zugestopft endet der Raum an der Wand;
+ * die zweite Huelle fuellt danach die Delle wieder auf, die der Stopfen im
+ * Hohlraum selbst hinterlaesst.
+ *
+ * Die Grenze des Verfahrens sind die beiden Huellen: Ist der Koerper **aussen**
+ * nicht konvex, gehoeren auch die Einbuchtungen von aussen dazu, und ist der
+ * **Hohlraum** nicht konvex, wird er zu voll gerechnet. Bei einer Schuessel,
+ * einem Becher, einem Rohr stimmt es; bei einem L-Winkel kaeme das Falsche
+ * heraus. Der Aufrufer sagt das dazu.
  */
-async function enclosedSpaceShape(body: WorkplaneShape): Promise<WorkplaneShape | null> {
+async function enclosedSpaceShape(body: WorkplaneShape, plugs: readonly WorkplaneShape[] = []): Promise<WorkplaneShape | null> {
   const created: ManifoldSolid[] = [];
   try {
     const runtime = await getManifoldRuntime();
@@ -4895,9 +4905,35 @@ async function enclosedSpaceShape(body: WorkplaneShape): Promise<WorkplaneShape 
     if (!solid || solid.status() !== "NoError" || solid.numTri() < 1) return null;
     const hull = solid.hull();
     created.push(hull);
-    const space = hull.subtract(solid);
-    created.push(space);
-    if (space.status() !== "NoError" || space.numTri() < 1) return null;
+
+    /** Der Raum zwischen Huelle und Material - mit oder ohne Stopfen. */
+    const spaceAround = (filled: ManifoldSolid) => {
+      const space = hull.subtract(filled);
+      created.push(space);
+      return space.status() === "NoError" && space.numTri() > 0 ? space : null;
+    };
+
+    let space = spaceAround(solid);
+    const plugSolids = plugs.length
+      ? shapesToManifoldUnion(runtime, plugs.map((plug) => ({ ...plug, hole: false })), created, false)
+      : null;
+    if (plugSolids) {
+      const stuffed = runtime.Manifold.union([solid, plugSolids]);
+      created.push(stuffed);
+      const withoutHoles = spaceAround(stuffed);
+      /*
+       * Der Stopfen hinterlaesst eine Delle im Hohlraum - dort steckt er ja
+       * selbst. Die zweite Huelle fuellt sie wieder auf. Bleibt nach dem
+       * Stopfen nichts uebrig, weil der Stopfen den ganzen Raum fuellt, gilt
+       * weiter der ungestopfte.
+       */
+      if (withoutHoles) {
+        const closed = withoutHoles.hull();
+        created.push(closed);
+        if (closed.status() === "NoError" && closed.numTri() > 0) space = closed;
+      }
+    }
+    if (!space) return null;
     /*
      * Ein Koerper, der nichts umschliesst, ist selbst schon konvex - dann
      * bleibt fast nichts uebrig, und was bleibt, ist die Taefelung seiner
@@ -9327,7 +9363,7 @@ export function SketchForgeEditor({
     return canonicalizeShape({ ...turned, x: tool.x, z: tool.z, elevation: tool.elevation ?? 0, bakedRotation: undefined });
   }, []);
 
-  const cavityHoleForShape = useCallback(async (tool: WorkplaneShape): Promise<WorkplaneShape | null> => {
+  const cavityHoleForShape = useCallback(async (tool: WorkplaneShape, plugs: readonly WorkplaneShape[] = []): Promise<WorkplaneShape | null> => {
     const bore = boreCutShape(tool, createLocalId);
     if (bore) return bore;
     const profile = tool.sketchProfile;
@@ -9337,7 +9373,7 @@ export function SketchForgeEditor({
      * ihnen ansehen kann. Das traegt auch getrennte Teile, eingelesene Netze
      * und schon verschnittene Koerper - alles, was bis hierher absagen musste.
      */
-    if (!profile || !hollowSketchTool(tool)) return enclosedSpaceShape(tool);
+    if (!profile || !hollowSketchTool(tool)) return enclosedSpaceShape(tool, plugs);
 
     // Der Rotationskoerper geht seinen eigenen Weg zum vollen Koerper: nicht
     // ueber weggelassene Loecher, sondern ueber den Schatten des
@@ -9345,10 +9381,10 @@ export function SketchForgeEditor({
     if (tool.sketchOperation === "revolve") {
       const solid = turnedLikeTool(await shapeFromRevolvedSketchProfile(profile, tool.sketchRevolve ?? {}, tool, true), tool);
       if (!cutFullyConsumesSolids([tool, { ...solid, id: createLocalId("fill-probe"), hole: true }])) {
-        return enclosedSpaceShape(tool);
+        return enclosedSpaceShape(tool, plugs);
       }
       const hollow = await buildGroupedShapeFromSelection([solid, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
-      if (!hollow.group) return enclosedSpaceShape(tool);
+      if (!hollow.group) return enclosedSpaceShape(tool, plugs);
       return { ...cutResultShape(hollow.group), id: createLocalId("cavity-tool"), hole: true };
     }
 
@@ -9368,11 +9404,11 @@ export function SketchForgeEditor({
      * einen Hohlraum ausrechnen, der ein Stueck daneben sitzt.
      */
     if (!cutFullyConsumesSolids([tool, { ...filled, id: createLocalId("fill-probe"), hole: true }])) {
-      return enclosedSpaceShape(tool);
+      return enclosedSpaceShape(tool, plugs);
     }
 
     const cavity = await buildGroupedShapeFromSelection([filled, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
-    if (!cavity.group) return enclosedSpaceShape(tool);
+    if (!cavity.group) return enclosedSpaceShape(tool, plugs);
     return { ...cutResultShape(cavity.group), id: createLocalId("cavity-tool"), hole: true };
   }, [hollowSketchTool, turnedLikeTool]);
 
@@ -9409,7 +9445,7 @@ export function SketchForgeEditor({
       return;
     }
     const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
-    const cavity = await cavityHoleForShape(tool);
+    const cavity = await cavityHoleForShape(tool, targets);
     if (!cavity) {
       setNotice(t("status.cavityUnavailable"));
       return;
