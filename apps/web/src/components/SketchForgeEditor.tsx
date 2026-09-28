@@ -183,6 +183,7 @@ import {
 } from "@/lib/placementWorkplane";
 import { boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
+import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
@@ -3807,16 +3808,6 @@ function cutterTouchedTriangleCount(mesh: MeshData, cutters: WorkplaneShape[]) {
   }, 0);
 }
 
-function isAxisAlignedBoxCutter(shape: WorkplaneShape) {
-  const rotation = Math.abs(normalizeDegrees(shape.rotation));
-  const rotationX = Math.abs(normalizeDegrees(shape.rotationX ?? 0));
-  const rotationZ = Math.abs(normalizeDegrees(shape.rotationZ ?? 0));
-  const straightY = rotation < 0.001 || Math.abs(rotation - 180) < 0.001 || Math.abs(rotation - 360) < 0.001;
-  const straightX = rotationX < 0.001 || Math.abs(rotationX - 180) < 0.001 || Math.abs(rotationX - 360) < 0.001;
-  const straightZ = rotationZ < 0.001 || Math.abs(rotationZ - 180) < 0.001 || Math.abs(rotationZ - 360) < 0.001;
-  return shape.kind === "box" && straightX && straightY && straightZ;
-}
-
 type ClipPlane = { axis: 0 | 1 | 2; value: number; keepGreater: boolean };
 
 function clipDistance(point: Vec3, plane: ClipPlane) {
@@ -4472,6 +4463,9 @@ function transformedPrimitiveManifold(runtime: ManifoldToplevel, primitive: Mani
 }
 
 function primitiveManifoldForShape(runtime: ManifoldToplevel, shape: WorkplaneShape, created: ManifoldSolid[]) {
+  // Verjuengung, Drall, Neigung und ungleiche Seitenhoehen stecken nur im
+  // Netz - ein Grundkoerper kennt sie nicht und wuerde sie wegwerfen.
+  if (shapeHasShapeDeform(shape)) return null;
   const width = shapeWidth(shape);
   const depth = shapeDepth(shape);
   const height = shape.height;
