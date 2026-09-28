@@ -339,7 +339,11 @@ export type CavityPlan<T> = {
  * Wer beim Aushoehlen was ist.
  *
  * Der **zuerst angeklickte hohle** Koerper gibt den Hohlraum; alles andere
- * Ausgewaehlte ist Ziel, ob es selbst hohl ist oder nicht.
+ * Ausgewaehlte ist Ziel, ob es selbst hohl ist oder nicht. Ist keiner als hohl
+ * zu erkennen, wird es beim zuerst angeklickten versucht: Eine Schuessel, ein
+ * Becher, ein Gehaeuse traegt weder Wandstaerke noch Zeichnung, umschliesst
+ * aber einen Raum, den man seiner Form ansehen kann. Ob wirklich etwas
+ * herauskommt, entscheidet erst die Rechnung.
  *
  * Frueher wurde nach "hohl" und "nicht hohl" sortiert. Sobald beide hohl
  * waren - ein Rohr durch ein Rohr -, waren es zwei Werkzeuge und kein Ziel,
@@ -357,7 +361,7 @@ export function cavityPlanForSelection<T extends WorkplaneShape>(
   isHollow: (shape: T) => boolean,
   usable: (shape: T) => boolean,
 ): CavityPlan<T> | null {
-  const tool = selection.find(isHollow);
+  const tool = selection.find(isHollow) ?? selection[0];
   if (!tool) return null;
   const targets = selection.length > 1
     ? selection.filter((shape) => shape.id !== tool.id)

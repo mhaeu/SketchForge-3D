@@ -349,8 +349,20 @@ describe("Wer beim Aushoehlen was ist", () => {
     expect(found.targets.map((shape) => shape.id)).toEqual(["quader", "rohr2"]);
   });
 
-  it("gibt auf, wenn gar kein hohler Koerper dabei ist", () => {
-    expect(plan([body("quader"), body("quader2")])).toBeNull();
+  it("versucht es beim zuerst angeklickten, wenn keiner als hohl gilt", () => {
+    /*
+     * Eine Schuessel, ein Becher, ein Gehaeuse traegt weder Wandstaerke noch
+     * Zeichnung - als "hohl" ist so einer nicht zu erkennen. Umschliessen tut
+     * er trotzdem einen Raum, und den holt die Rechnung aus seiner Form. Also
+     * darf die Auswahl ihn nicht vorher wegwerfen.
+     */
+    const found = plan([body("schuessel"), body("rohr-durch")])!;
+    expect(found.tool.id).toBe("schuessel");
+    expect(found.targets.map((shape) => shape.id)).toEqual(["rohr-durch"]);
+  });
+
+  it("gibt erst auf, wenn gar nichts ausgewaehlt ist", () => {
+    expect(plan([])).toBeNull();
   });
 
   it("nimmt alle uebrigen Ausgewaehlten als Ziel", () => {

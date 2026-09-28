@@ -4871,6 +4871,50 @@ async function manifoldUnionMeshShape(selection: WorkplaneShape[], groupChildren
   }
 }
 
+/**
+ * Der Raum, den ein Koerper umschliesst - aus seiner Geometrie allein.
+ *
+ * Eine Schuessel, ein Becher, ein Gehaeuse: Der Hohlraum steckt in keiner
+ * Zeichnung und in keiner Wandstaerke, sondern nur in der Form. Gewonnen wird
+ * er als **konvexe Huelle minus Koerper**: Die Huelle legt einen Deckel ueber
+ * die Oeffnung und fuellt das Innere, und was sie mehr hat als der Koerper, ist
+ * genau der umschlossene Raum.
+ *
+ * Die Grenze des Verfahrens ist dieselbe Rechnung: Ist der Koerper **aussen**
+ * nicht konvex, gehoeren auch die Einbuchtungen von aussen dazu. Bei einer
+ * Schuessel, einem Rohr, einem Kasten mit Deckel stimmt es; bei einem
+ * L-Winkel kaeme der fehlende Quadrant mit heraus. Der Aufrufer sagt das dazu.
+ */
+async function enclosedSpaceShape(body: WorkplaneShape): Promise<WorkplaneShape | null> {
+  const created: ManifoldSolid[] = [];
+  try {
+    const runtime = await getManifoldRuntime();
+    // Ohne den Schnellweg fuer Kaesten: Der soll die Form gerade nicht
+    // vereinfachen, sie ist hier der ganze Gegenstand.
+    const solid = shapeToManifoldSolid(runtime, { ...body, hole: false }, created, false);
+    if (!solid || solid.status() !== "NoError" || solid.numTri() < 1) return null;
+    const hull = solid.hull();
+    created.push(hull);
+    const space = hull.subtract(solid);
+    created.push(space);
+    if (space.status() !== "NoError" || space.numTri() < 1) return null;
+    /*
+     * Ein Koerper, der nichts umschliesst, ist selbst schon konvex - dann
+     * bleibt fast nichts uebrig, und was bleibt, ist die Taefelung seiner
+     * Rundungen. Ein Tausendstel des Koerpervolumens trennt das eine vom
+     * anderen.
+     */
+    if (space.volume() <= solid.volume() * 0.001) return null;
+    const positions = manifoldMeshToPositions(space.getMesh());
+    const shape = meshPositionsToGroupShape([body], [body], positions, "enclosed-space");
+    return shape ? canonicalizeShape({ ...shape, name: t("shape.enclosedSpace"), hole: true }) : null;
+  } catch {
+    return null;
+  } finally {
+    Array.from(new Set(created)).forEach(disposeManifold);
+  }
+}
+
 function asIntersectionGroup(group: WorkplaneShape): WorkplaneShape {
   return {
     ...group,
@@ -9287,16 +9331,24 @@ export function SketchForgeEditor({
     const bore = boreCutShape(tool, createLocalId);
     if (bore) return bore;
     const profile = tool.sketchProfile;
-    if (!profile || !hollowSketchTool(tool)) return null;
+    /*
+     * Ohne Wandstaerke und ohne Zeichnung bleibt die Form selbst: Eine
+     * Schuessel, ein Becher, ein Gehaeuse umschliessen einen Raum, den man
+     * ihnen ansehen kann. Das traegt auch getrennte Teile, eingelesene Netze
+     * und schon verschnittene Koerper - alles, was bis hierher absagen musste.
+     */
+    if (!profile || !hollowSketchTool(tool)) return enclosedSpaceShape(tool);
 
     // Der Rotationskoerper geht seinen eigenen Weg zum vollen Koerper: nicht
     // ueber weggelassene Loecher, sondern ueber den Schatten des
     // Querschnitts zur Achse hin.
     if (tool.sketchOperation === "revolve") {
       const solid = turnedLikeTool(await shapeFromRevolvedSketchProfile(profile, tool.sketchRevolve ?? {}, tool, true), tool);
-      if (!cutFullyConsumesSolids([tool, { ...solid, id: createLocalId("fill-probe"), hole: true }])) return null;
+      if (!cutFullyConsumesSolids([tool, { ...solid, id: createLocalId("fill-probe"), hole: true }])) {
+        return enclosedSpaceShape(tool);
+      }
       const hollow = await buildGroupedShapeFromSelection([solid, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
-      if (!hollow.group) return null;
+      if (!hollow.group) return enclosedSpaceShape(tool);
       return { ...cutResultShape(hollow.group), id: createLocalId("cavity-tool"), hole: true };
     }
 
@@ -9315,10 +9367,12 @@ export function SketchForgeEditor({
      * denn die Drehung steht danach nicht mehr am Koerper. Lieber absagen als
      * einen Hohlraum ausrechnen, der ein Stueck daneben sitzt.
      */
-    if (!cutFullyConsumesSolids([tool, { ...filled, id: createLocalId("fill-probe"), hole: true }])) return null;
+    if (!cutFullyConsumesSolids([tool, { ...filled, id: createLocalId("fill-probe"), hole: true }])) {
+      return enclosedSpaceShape(tool);
+    }
 
     const cavity = await buildGroupedShapeFromSelection([filled, { ...tool, id: createLocalId("hollow-tool"), hole: true }]);
-    if (!cavity.group) return null;
+    if (!cavity.group) return enclosedSpaceShape(tool);
     return { ...cutResultShape(cavity.group), id: createLocalId("cavity-tool"), hole: true };
   }, [hollowSketchTool, turnedLikeTool]);
 
