@@ -429,6 +429,22 @@ export function ToolbarPivotIcon(props: IconProps) {
 }
 
 /**
+ * Gruppe oeffnen: der Gruppenkasten gestrichelt, die Teile darin einzeln
+ * greifbar - einer schon herausgezogen.
+ */
+export function ToolbarOpenGroupIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <rect x="5" y="9" width="30" height="30" rx="3" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3.6" opacity="0.7" />
+      <rect x="10" y="14" width="13" height="13" rx="2" fill="currentColor" opacity="0.75" />
+      <rect x="27" y="26" width="14" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2.4" />
+      <path d="M26 19h9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M32 15.5 L37 19 L32 22.5 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
  * Auf eine Flaeche legen: ein gekippter Koerper, eine hervorgehobene Flaeche
  * und der Pfeil, der sie nach unten auf die Platte dreht.
  */

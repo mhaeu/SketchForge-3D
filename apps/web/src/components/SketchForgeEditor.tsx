@@ -84,6 +84,7 @@ import {
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
   ToolbarLayFlatIcon,
+  ToolbarOpenGroupIcon,
   ToolbarPivotIcon,
   ToolbarSnapPointsIcon,
   ToolbarSnapPointToWorkplaneIcon,
@@ -194,6 +195,7 @@ import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPi
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
+import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
 import {
   clampPatternCount,
   defaultPatternSettings,
@@ -6149,6 +6151,16 @@ export function SketchForgeEditor({
    */
   const [snapTarget, setSnapTarget] = useState<SnapTarget>("auto");
   const [layFlatMode, setLayFlatMode] = useState(false);
+  /*
+   * Die geoeffnete Gruppe: ihre Kennung, wie sie vorher aussah, und welche
+   * Teile jetzt einzeln in der Szene liegen. Beim Schliessen wird aus genau
+   * diesen Teilen wieder eine Gruppe - mit demselben Namen und derselben
+   * Rechenart, also auch derselbe Schnitt, wenn es einer war.
+   */
+  const [openGroup, setOpenGroup] = useState<{ id: string; shape: WorkplaneShape; childIds: string[] } | null>(null);
+  // Das Neubauen rechnet (Schnitte laufen dabei neu) - der Knopf bleibt so
+  // lange aus, damit nicht zweimal gebaut wird.
+  const [closingGroup, setClosingGroup] = useState(false);
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
   const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
@@ -9715,6 +9727,97 @@ export function SketchForgeEditor({
     commitShapes([...remainingShapes, intersection], intersection.id, t("status.intersectedMany", { count: groupable.length }));
   }, [commitShapes, selectedShapes]);
 
+  /**
+   * Eine Gruppe oeffnen, um ihre Teile zu aendern.
+   *
+   * Die Teile kommen einzeln in die Szene - dieselbe Rechnung wie beim
+   * Aufloesen -, nur dass die Gruppe gemerkt wird. Beim Schliessen wird sie
+   * aus den Teilen neu gebaut, mit ihrem Namen, ihrer Farbe und ihrer
+   * Rechenart. War sie ein Schnitt, laeuft der Schnitt neu: So laesst sich
+   * ein Loch nachtraeglich versetzen, ohne alles neu zu bauen.
+   *
+   * Eine Gruppe mit eigener Kantenbearbeitung bleibt zu. Ihre Verrundung
+   * haengt an Kanten der gebackenen Form; aus den Teilen neu gebaut waere sie
+   * weg, und das erst beim Klick auf "Fertig" - zu spaet, um es zu merken.
+   */
+  const openSelectedGroup = useCallback(() => {
+    const group = selectedShapes.find((shape) => shape.groupedShapes?.length);
+    if (!group) {
+      setNotice(t("status.selectGroupFirst"));
+      return;
+    }
+    if (group.locked) {
+      setNotice(t("status.unlockBeforeGroup"));
+      return;
+    }
+    if (group.edgeTreatments?.length) {
+      setNotice(t("status.openGroupHasEdges"));
+      return;
+    }
+    const parts = restoreGroupedChildren(group);
+    if (parts.length === 0) {
+      setNotice(t("status.selectGroupFirst"));
+      return;
+    }
+    const childIds = parts.map((part) => part.id);
+    commitShapes(
+      [...shapesRef.current.filter((shape) => shape.id !== group.id), ...parts],
+      childIds,
+      t("status.groupOpened", { name: group.name }),
+    );
+    setOpenGroup({ id: group.id, shape: group, childIds });
+  }, [commitShapes, selectedShapes]);
+
+  const closeOpenGroup = useCallback(async () => {
+    const open = openGroup;
+    if (!open) return;
+    const wanted = new Set(open.childIds);
+    const parts = shapesRef.current.filter((shape) => wanted.has(shape.id));
+    if (parts.length === 0) {
+      // Alle Teile sind weg - dann gibt es nichts mehr zu gruppieren.
+      setOpenGroup(null);
+      setNotice(t("status.groupClosedEmpty"));
+      return;
+    }
+    if (parts.length === 1) {
+      // Eine Gruppe aus einem Koerper ist keine; er bleibt allein stehen.
+      setOpenGroup(null);
+      commitShapes(shapesRef.current, [parts[0].id], t("status.groupClosedSingle"));
+      return;
+    }
+    const result = await buildGroupedShapeFromSelection(parts);
+    if (!result.group) {
+      setNotice(result.failureNotice);
+      return;
+    }
+    const rebuilt = canonicalizeShape({
+      ...result.group,
+      id: open.shape.id,
+      name: open.shape.name,
+      color: open.shape.color,
+      hole: open.shape.hole || result.group.hole,
+      locked: open.shape.locked,
+      hidden: open.shape.hidden,
+      edgeResizeMode: open.shape.edgeResizeMode,
+      groupOperation: open.shape.groupOperation,
+    });
+    commitShapes(
+      [...shapesRef.current.filter((shape) => !wanted.has(shape.id)), rebuilt],
+      rebuilt.id,
+      t("status.groupClosed", { name: rebuilt.name }),
+    );
+    setOpenGroup(null);
+  }, [commitShapes, openGroup]);
+
+  /*
+   * Zurueckgenommen: Wurde das Oeffnen rueckgaengig gemacht, liegen die Teile
+   * nicht mehr einzeln in der Szene. Dann ist auch nichts mehr offen.
+   */
+  useEffect(() => {
+    if (!openGroup) return;
+    if (!shapes.some((shape) => openGroup.childIds.includes(shape.id))) setOpenGroup(null);
+  }, [openGroup, shapes]);
+
   const ungroupSelected = useCallback(() => {
     const groups = selectedShapes.filter((shape) => shape.groupedShapes?.length);
     if (groups.length === 0) {
@@ -11250,6 +11353,8 @@ export function SketchForgeEditor({
         canUndo={!projectInteractionActive && (historyIndex > 0 || Boolean(edgeModifier))}
         canRedo={!projectInteractionActive && historyIndex < history.length - 1}
         canGroup={selectedShapes.length > 1 && selectedShapes.every((shape) => !shape.locked)}
+        onOpenGroup={openSelectedGroup}
+        groupOpen={Boolean(openGroup)}
         canIntersect={selectedShapes.some((shape) => !shape.locked && !shape.hole) && selectedShapes.some((shape) => !shape.locked && Boolean(shape.hole))}
         canUngroup={selectedShapes.some((shape) => Boolean(shape.groupedShapes?.length))}
         hasClipboard={clipboard.length > 0 || systemClipboardSupported}
@@ -11481,6 +11586,17 @@ export function SketchForgeEditor({
           />
         )}
       </div>
+      {openGroup ? (
+        <OpenGroupPanel
+          name={openGroup.shape.name}
+          parts={shapes.filter((shape) => openGroup.childIds.includes(shape.id)).length}
+          busy={closingGroup}
+          onDone={() => {
+            setClosingGroup(true);
+            void closeOpenGroup().finally(() => setClosingGroup(false));
+          }}
+        />
+      ) : null}
       {snapMode || pivotMode ? (
         <PointTargetPanel
           target={snapTarget}
@@ -11711,6 +11827,8 @@ function SecondaryToolbar({
   canEdgeModify,
   edgeModifierKind,
   canGroup,
+  onOpenGroup,
+  groupOpen,
   canIntersect,
   canRedo,
   canUngroup,
@@ -11811,6 +11929,8 @@ function SecondaryToolbar({
   canEdgeModify: boolean;
   edgeModifierKind: CadModifierKind | null;
   canGroup: boolean;
+  onOpenGroup: () => void;
+  groupOpen: boolean;
   canIntersect: boolean;
   canRedo: boolean;
   canUngroup: boolean;
@@ -12144,6 +12264,7 @@ function SecondaryToolbar({
   const combineTools = [
     { label: t("editor.tool.group"), icon: ToolbarGroupIcon, action: onGroup, enabled: canGroup },
     { label: t("editor.tool.ungroup"), icon: ToolbarUngroupIcon, action: onUngroup, enabled: canUngroup },
+    { label: t("editor.tool.openGroup"), icon: ToolbarOpenGroupIcon, action: onOpenGroup, enabled: canUngroup, active: groupOpen },
     { label: t("editor.tool.intersect"), icon: ToolbarIntersectionIcon, action: onIntersect, enabled: canIntersect },
     { label: t("editor.tool.trimAbove"), icon: ToolbarTrimIcon, action: () => onTrim("above"), enabled: hasSelection },
     { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },

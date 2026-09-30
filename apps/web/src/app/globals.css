@@ -1679,6 +1679,23 @@ button {
   }
 }
 
+/* Das Feld der geoeffneten Gruppe steht unter den anderen Werkzeugfeldern und
+   soll auffallen: Solange es da ist, ist die Zeichnung in einem Zwischenstand. */
+.open-group-panel {
+  border-color: #e0a63c;
+  box-shadow: 0 14px 38px rgba(30, 55, 74, 0.2), inset 0 0 0 1px rgba(224, 166, 60, 0.35);
+}
+
+.open-group-footer {
+  line-height: 1.35;
+}
+
+.open-group-panel .edge-modifier-footer button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* Die Notseite, wenn beim Zeichnen etwas abbricht. Sie liegt im Layout, also
    gelten die Farben der App. */
 .app-error {
