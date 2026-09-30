@@ -19,8 +19,15 @@
   --workplane-soft: rgba(154, 220, 240, 0.28);
   --shadow: 0 2px 6px rgba(35, 55, 75, 0.12);
   --font-ui: "Avenir Next", Avenir, "Helvetica Neue", Arial, sans-serif;
+  /* Die ganze Leiste. Der Editor misst sie und schreibt diesen Wert um, wenn
+     die Werkzeuge auf eine zweite Zeile umbrechen (SecondaryToolbar) - alles,
+     was unter der Leiste sitzt (Arbeitsfläche, Statuszeile, Menüs), wandert
+     dann mit nach unten. */
   --editor-toolbar-height: 108px;
+  --editor-toolbar-title-height: 32px;
   --editor-toolbar-tools-height: 76px;
+  /* Die Symbolgröße geht in Stufen zurück, bevor die Leiste umbricht. */
+  --toolbar-icon-size: 43px;
 }
 
 * {
@@ -185,9 +192,9 @@ button {
 }
 
 .editor-loading-tool {
-  width: 43px;
-  height: 43px;
-  flex: 0 0 43px;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
+  flex: 0 0 var(--toolbar-icon-size);
   border-radius: 8px;
 }
 
@@ -1172,8 +1179,8 @@ button {
 }
 
 .editor-home-control svg {
-  width: 43px;
-  height: 43px;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
 }
 
 .dashboard-settings-panel {
@@ -1625,6 +1632,118 @@ button {
   line-height: 1.35;
 }
 
+/* Die Leiste traegt zwoelf Abschnitte und braucht in voller Groesse etwa
+   1880px - mehr, als ein Schirm hat. Bevor sie umbricht, gehen die Symbole in
+   zwei Stufen zurueck (etwa 1740px und 1520px), denn eine Zeile ist leichter
+   zu lesen als zwei. Reicht auch die kleinste Stufe nicht, brechen die
+   Gruppen um (siehe `flex-wrap` an `.toolbar-mode-content`), und unter 1240px
+   darf auch eine Gruppe in sich umbrechen. Die Breiten sind gerechnet und
+   nicht im Browser gemessen; wenn eine Stufe zu spaet greift, bricht die
+   Leiste um statt etwas zu verstecken. */
+@media (max-width: 1919px) {
+  :root {
+    --toolbar-icon-size: 39px;
+  }
+}
+
+@media (max-width: 1599px) {
+  :root {
+    --toolbar-icon-size: 35px;
+  }
+
+  .toolbar-section {
+    min-width: auto;
+  }
+
+  .toolbar-section.compact,
+  .toolbar-visibility-section {
+    min-width: auto;
+  }
+
+  .toolbar-section-label {
+    padding-inline: 7px;
+    font-size: 10px;
+  }
+
+  .toolbar-project-name {
+    min-width: 160px;
+    padding: 0 12px;
+  }
+}
+
+@media (max-width: 1240px) {
+  /* `display: contents` loest den Gruppenkasten auf, damit die Abschnitte
+     einzeln umbrechen koennen statt als ganze Gruppe. */
+  .toolbar-mode-content .tool-group {
+    display: contents;
+  }
+}
+
+/* Die Notseite, wenn beim Zeichnen etwas abbricht. Sie liegt im Layout, also
+   gelten die Farben der App. */
+.app-error {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 64px 20px;
+  color: #274158;
+  font: 400 15px/1.5 var(--font-ui);
+}
+
+.app-error h1 {
+  margin: 0 0 12px;
+  font-size: 22px;
+}
+
+.app-error-message {
+  margin: 16px 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font: 400 13px/1.45 var(--font-mono, monospace);
+  white-space: pre-wrap;
+  background: rgba(233, 240, 246, 0.9);
+  border: 1px solid #c8d6e1;
+  border-radius: 10px;
+}
+
+.app-error-digest {
+  color: #5b7893;
+  font-size: 13px;
+}
+
+.app-error-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.app-error-actions button,
+.app-error-actions a {
+  padding: 9px 16px;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #c8d6e1;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+html[data-theme="dark"] .app-error {
+  color: #d8e4ef;
+}
+
+html[data-theme="dark"] .app-error-message {
+  background: rgba(24, 33, 42, 0.9);
+  border-color: #3a4a5a;
+}
+
+html[data-theme="dark"] .app-error-actions button,
+html[data-theme="dark"] .app-error-actions a {
+  background: rgba(32, 43, 54, 0.9);
+  border-color: #3a4a5a;
+}
+
 .edge-modifier-panel {
   position: fixed;
   top: calc(var(--editor-toolbar-height) + 14px);
@@ -1905,13 +2024,17 @@ button {
 
 .toolbar-mode-content {
   position: absolute;
-  top: calc(var(--editor-toolbar-height) - var(--editor-toolbar-tools-height));
+  top: var(--editor-toolbar-title-height);
   right: 0;
-  bottom: 0;
   left: 0;
   display: flex;
+  /* Umbrechen statt abschneiden: Passen die Gruppen nicht in eine Zeile,
+     gehen sie in die naechste. Vorher lief die letzte Gruppe unsichtbar
+     ueber den rechten Rand hinaus, und es blieb nur, den Browser kleiner zu
+     zoomen. */
+  flex-wrap: wrap;
   width: 100%;
-  height: var(--editor-toolbar-tools-height);
+  min-height: var(--editor-toolbar-tools-height);
   align-items: stretch;
   background: #f4f7f9;
   border-top: 1px solid #d2dce5;
@@ -1919,8 +2042,9 @@ button {
 
 .sketch-toolbar-ribbon {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
-  height: 100%;
+  min-height: var(--editor-toolbar-tools-height);
   align-items: stretch;
   background: #f4f7f9;
 }
@@ -2165,7 +2289,7 @@ svg.sketch-reference-icon {
   z-index: 2;
   display: flex;
   width: max-content;
-  height: calc(var(--editor-toolbar-height) - var(--editor-toolbar-tools-height));
+  height: var(--editor-toolbar-title-height);
   align-items: stretch;
 }
 
@@ -2201,6 +2325,7 @@ svg.sketch-reference-icon {
 }
 
 .tool-group.right {
+  margin-left: auto;
   border-left: 1px solid #d7e0e8;
 }
 
@@ -2378,8 +2503,8 @@ svg.sketch-reference-icon {
 
 .toolbar-icon {
   display: grid;
-  width: 43px;
-  height: 43px;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
   place-items: center;
   color: #7890a4;
   background: transparent;
@@ -2439,8 +2564,8 @@ svg.sketch-reference-icon {
 .toolbar-icon .toolbar-sprite-icon,
 .toolbar-icon .vector-toolbar-sprite-icon,
 .toolbar-icon .toolbar-command-icon {
-  width: 43px;
-  height: 43px;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
 }
 
 .toolbar-command-icon {
@@ -2494,8 +2619,8 @@ svg.sketch-reference-icon {
 }
 
 .toolbar-icon .toolbar-user-art-icon {
-  width: 43px;
-  height: 43px;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
 }
 
 .toolbar-icon .toolbar-art-toolbar-chamfer,
@@ -2600,8 +2725,8 @@ svg.sketch-reference-icon {
 .shape-menu-trigger {
   position: relative;
   display: grid;
-  width: 45px;
-  height: 43px;
+  width: calc(var(--toolbar-icon-size) + 2px);
+  height: var(--toolbar-icon-size);
   place-items: center;
   color: #244057;
   background: transparent;
@@ -2619,8 +2744,8 @@ svg.sketch-reference-icon {
 }
 
 .shape-menu-trigger .vector-toolbar-sprite-icon {
-  width: 43px;
-  height: 43px;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
 }
 
 .shape-menu-dropdown {
@@ -7285,12 +7410,10 @@ html[data-theme="dark"] .region-card-hint {
 }
 
 @media (max-width: 980px) {
-  .toolbar-mode-content.geometry,
-  .toolbar-mode-content.sketch {
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
+  /* Hier rollte die Leiste bisher waagerecht. Damit schnitt sie senkrecht ab -
+     `overflow-x: auto` laesst der anderen Achse keine Wahl -, versteckte die
+     hinteren Werkzeuge und kappte jedes Menue, das unter ihr haengt. Jetzt
+     bricht sie um. */
   .toolbar-section {
     min-width: auto;
   }

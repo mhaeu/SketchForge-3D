@@ -3,7 +3,7 @@
 import { BoxSelect, Check, Circle as CircleIcon, Grid2x2, Spline, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { ADDITION, Brush, Evaluator, HOLLOW_INTERSECTION, HOLLOW_SUBTRACTION, INTERSECTION, SUBTRACTION, type CSGOperation } from "three-bvh-csg";
 import * as THREE from "three";
 import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
@@ -11821,6 +11821,37 @@ function SecondaryToolbar({
 }) {
   // Redraws the ribbon when the language changes.
   useLanguage();
+  /*
+   * Die wirkliche Hoehe der Werkzeugzeile in `--editor-toolbar-height`.
+   *
+   * Auf einem schmalen Fenster brechen die Gruppen auf weitere Zeilen um. Die
+   * Leiste muss dann hoeher werden, und alles, was unter ihr sitzt -
+   * Arbeitsflaeche, Statuszeile, die Menues, die an ihr haengen -, muss
+   * mitwandern. Beides haengt an dieser einen Variablen.
+   *
+   * Die Messung dreht sich nicht im Kreis: Die Werkzeugzeile liegt absolut im
+   * Leistenkasten und ist von seiner Hoehe unabhaengig.
+   */
+  const toolbarContentRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const content = toolbarContentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    const apply = () => {
+      const styles = getComputedStyle(root);
+      const title = Number.parseFloat(styles.getPropertyValue("--editor-toolbar-title-height")) || 32;
+      // Eine verborgene Leiste misst null - dann bleibt die Hoehe fuer eine Zeile.
+      const oneRow = Number.parseFloat(styles.getPropertyValue("--editor-toolbar-tools-height")) || 76;
+      root.style.setProperty("--editor-toolbar-height", `${Math.round(title + Math.max(oneRow, content.offsetHeight))}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--editor-toolbar-height");
+    };
+  }, []);
   const [shapesOpen, setShapesOpen] = useState(false);
   const [sketchCreateOpen, setSketchCreateOpen] = useState(false);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
@@ -12082,7 +12113,7 @@ function SecondaryToolbar({
 
   return (
     <div className="secondary-toolbar">
-      <div className={`toolbar-mode-content ${toolbarMode}`}>
+      <div ref={toolbarContentRef} className={`toolbar-mode-content ${toolbarMode}`}>
         {toolbarMode === "geometry" ? (
           <>
       {onHome ? (
