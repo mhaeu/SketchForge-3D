@@ -57,6 +57,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { planarFaceCentroid } from "@/lib/rotationPivot";
+import { snapPointOnMesh, type SnapMode, type SnapPick } from "@/lib/pointSnap";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
@@ -242,6 +243,13 @@ type WorkplaneViewportProps = {
   rotationPivot?: { shapeId: string; point: { x: number; y: number; z: number } } | null;
   onPivotPick?: (pivot: { shapeId: string; point: { x: number; y: number; z: number } }) => void;
   onPivotModeChange?: (active: boolean) => void;
+  /** Laeuft das Ansetzen, zeigt der naechste Klick einen Punkt am Koerper. */
+  snapMode?: SnapMode | null;
+  /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
+  snapAnchor?: SnapPick | null;
+  onSnapPick?: (picked: SnapPick) => void;
+  /** Der Klick traf keinen Koerper. */
+  onSnapMiss?: () => void;
   onResizeRegionChange: (region: ResizeRegion) => void;
   onResizeRegionLimitsChange: (limits: ResizeRegion) => void;
   onRegionTaper: (taper: RegionTaper) => void;
@@ -373,6 +381,7 @@ type ThreeState = {
   helperLayer: THREE.Group;
   transformGuideLayer: THREE.Group;
   pivotLayer: THREE.Group;
+  snapLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
   modifierLayer: THREE.Group;
@@ -1770,6 +1779,35 @@ function projectCadPointToCanvas(point: THREE.Vector3, state: ThreeState, rect: 
     x: ((projected.x + 1) / 2) * rect.width,
     y: ((1 - projected.y) / 2) * rect.height,
   };
+}
+
+/**
+ * Ob der Punkt von der Kamera aus zu sehen ist.
+ *
+ * Der Strahl wird ueber die Bildkoordinate des Punktes aufgesetzt und nicht
+ * ueber die Kameramitte: Bei der Parallelansicht laufen alle Strahlen gleich,
+ * und nur so geht der Strahl wirklich durch den Punkt.
+ *
+ * Der Punkt selbst liegt auf einer Flaeche, der Strahl trifft dort also in
+ * etwa seinem eigenen Abstand auf. Nur was deutlich davor liegt, verdeckt
+ * ihn - `slack` haelt das Streifen der eigenen Flaeche heraus. Ein
+ * Abzugskoerper verdeckt nichts: Er ist durchsichtig gezeichnet, und der
+ * Benutzer sieht durch ihn hindurch.
+ */
+function seesPoint(state: ThreeState, point: THREE.Vector3, shapes: ReadonlyArray<WorkplaneShape>) {
+  state.camera.updateMatrixWorld();
+  const projected = point.clone().project(state.camera);
+  if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) return false;
+  state.raycaster.setFromCamera(new THREE.Vector2(projected.x, projected.y), state.camera);
+  state.raycaster.layers.set(RENDER_LAYER_SHAPES);
+  const distance = state.raycaster.ray.origin.distanceTo(point);
+  const slack = Math.max(0.02, distance * 2e-4);
+  return !state.raycaster.intersectObjects(state.shapeLayer.children, true).some((entry) => {
+    if (!(entry.object instanceof THREE.Mesh) || entry.distance >= distance - slack) return false;
+    const shapeId = entry.object.userData.shapeId;
+    const shape = typeof shapeId === "string" ? shapes.find((candidate) => candidate.id === shapeId) : undefined;
+    return shape ? !shape.hidden && !shape.hole : false;
+  });
 }
 
 function pickModifierEdgeFromScreen(state: ThreeState, edges: CadModifierEdge[], clientX: number, clientY: number) {
@@ -3281,6 +3319,10 @@ export function WorkplaneViewport({
   rotationPivot = null,
   onPivotPick,
   onPivotModeChange,
+  snapMode = null,
+  snapAnchor = null,
+  onSnapPick,
+  onSnapMiss,
   onResizeRegionChange,
   onResizeRegionLimitsChange,
   onRegionTaper,
@@ -3343,6 +3385,8 @@ export function WorkplaneViewport({
   pivotModeRef.current = pivotMode;
   const rotationPivotRef = useRef(rotationPivot);
   rotationPivotRef.current = rotationPivot;
+  const snapModeRef = useRef(snapMode);
+  snapModeRef.current = snapMode;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4178,6 +4222,7 @@ export function WorkplaneViewport({
       disposeChildren(state.helperLayer);
       disposeChildren(state.transformGuideLayer);
       disposeChildren(state.pivotLayer);
+      disposeChildren(state.snapLayer);
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
       disposeChildren(state.modifierLayer);
@@ -4204,6 +4249,7 @@ export function WorkplaneViewport({
     const visible = !workplaneMode
       && !alignMode
       && !mirrorMode
+      && !snapMode
       && !rulerMode
       && !rulerDeleteMode
       && !rulerMoveMode
@@ -4213,7 +4259,7 @@ export function WorkplaneViewport({
       state.transformGuideLayer.visible = visible;
       state.needsRender = true;
     }
-  }, [activeTransformKind, alignMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, workplaneMode]);
+  }, [activeTransformKind, alignMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, snapMode, workplaneMode]);
 
   useEffect(() => {
     window.sketchforgePerf = {
@@ -5469,7 +5515,15 @@ export function WorkplaneViewport({
     state.needsRender = true;
   }, [rotationPivot]);
 
-  const resolveRotationPivot = useCallback((clientX: number, clientY: number) => {
+  /**
+   * Das getroffene Netz in Weltkoordinaten.
+   *
+   * Beide Zeigewerkzeuge brauchen dasselbe: den Koerper unter dem Zeiger, sein
+   * Dreiecksnetz und die Nummer des getroffenen Dreiecks. Die Dreiecke liegen
+   * in Klickreihenfolge hintereinander, je neun Zahlen - so, wie es
+   * `planarFaceCentroid` und `snapPointOnMesh` erwarten.
+   */
+  const pickShapeTriangles = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
     if (!state) return null;
     const rect = state.renderer.domElement.getBoundingClientRect();
@@ -5491,7 +5545,7 @@ export function WorkplaneViewport({
     const index = geometry.getIndex();
     const corners = index ? index.count : position.count;
     const point = new THREE.Vector3();
-    const world: number[] = new Array(corners * 3);
+    const world = new Float64Array(corners * 3);
     for (let corner = 0; corner < corners; corner += 1) {
       const at = index ? index.getX(corner) : corner;
       point.fromBufferAttribute(position, at).applyMatrix4(hit.object.matrixWorld);
@@ -5499,9 +5553,76 @@ export function WorkplaneViewport({
       world[corner * 3 + 1] = point.y;
       world[corner * 3 + 2] = point.z;
     }
-    const centre = planarFaceCentroid(world, hit.faceIndex);
-    return centre ? { shapeId: hit.object.userData.shapeId as string, point: centre } : null;
+    return {
+      shapeId: hit.object.userData.shapeId as string,
+      positions: world,
+      triangle: hit.faceIndex,
+      rect,
+    };
   }, []);
+
+  /*
+   * Die Marke fuer den ersten gezeigten Punkt: ein Ring mit einem Kreuz, in
+   * Gruen, damit sie nicht mit dem roten Drehpunkt verwechselt wird. Sie
+   * steht nur, solange der zweite Punkt fehlt.
+   */
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    disposeChildren(state.snapLayer);
+    if (snapAnchor) {
+      const size = 2.4;
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(size * 0.5, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0x1f9d55, depthTest: false }),
+      );
+      const arms = new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-size * 2, 0, 0), new THREE.Vector3(size * 2, 0, 0),
+          new THREE.Vector3(0, -size * 2, 0), new THREE.Vector3(0, size * 2, 0),
+          new THREE.Vector3(0, 0, -size * 2), new THREE.Vector3(0, 0, size * 2),
+        ]),
+        new THREE.LineBasicMaterial({ color: 0x1f9d55, depthTest: false, transparent: true, opacity: 0.9 }),
+      );
+      const group = new THREE.Group();
+      group.name = "SnapPointMarker";
+      group.add(marker, arms);
+      group.position.set(snapAnchor.point.x, snapAnchor.point.y, snapAnchor.point.z);
+      group.renderOrder = 10;
+      setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
+      state.snapLayer.add(group);
+    }
+    state.needsRender = true;
+  }, [snapAnchor]);
+
+  const resolveRotationPivot = useCallback((clientX: number, clientY: number) => {
+    const picked = pickShapeTriangles(clientX, clientY);
+    if (!picked) return null;
+    const centre = planarFaceCentroid(picked.positions, picked.triangle);
+    return centre ? { shapeId: picked.shapeId, point: centre } : null;
+  }, [pickShapeTriangles]);
+
+  /**
+   * Den Punkt zum Ansetzen aus einem Klick holen.
+   *
+   * Gemessen wird in Bildpunkten, also muss jeder Bewerber auf die Leinwand
+   * abgebildet werden - dieselbe Rechnung, die auch die Kantenauswahl beim
+   * Runden benutzt. Die Sichtpruefung schickt einen Strahl zur Kamera zurueck:
+   * Was verdeckt ist, hat der Benutzer nicht gemeint.
+   */
+  const resolveSnapPoint = useCallback((clientX: number, clientY: number): SnapPick | null => {
+    const state = threeRef.current;
+    const picked = pickShapeTriangles(clientX, clientY);
+    if (!state || !picked) return null;
+    const hit = snapPointOnMesh(
+      picked.positions,
+      picked.triangle,
+      { x: clientX - picked.rect.left, y: clientY - picked.rect.top },
+      (point) => projectCadPointToCanvas(new THREE.Vector3(point.x, point.y, point.z), state, picked.rect),
+      (point) => seesPoint(state, new THREE.Vector3(point.x, point.y, point.z), shapesRef.current),
+    );
+    return hit ? { shapeId: picked.shapeId, kind: hit.kind, point: hit.point } : null;
+  }, [pickShapeTriangles]);
 
   const resolveNoteAnchor = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
@@ -5772,6 +5893,14 @@ export function WorkplaneViewport({
         const placed = resolveNoteAnchor(event.clientX, event.clientY);
         if (placed) onNoteAdd?.(placed);
         onNoteModeChange?.(false);
+        return;
+      }
+
+      if (snapModeRef.current) {
+        event.preventDefault();
+        const picked = resolveSnapPoint(event.clientX, event.clientY);
+        if (picked) onSnapPick?.(picked);
+        else onSnapMiss?.();
         return;
       }
 
@@ -6065,6 +6194,9 @@ export function WorkplaneViewport({
       pickShape,
       pickTransformHandle,
       resolveRulerCandidate,
+      resolveSnapPoint,
+      onSnapPick,
+      onSnapMiss,
       selectRulerCandidate,
       setMarqueeFromState,
       toPlanePoint,
@@ -6777,7 +6909,7 @@ export function WorkplaneViewport({
         )}
       </div>
 
-      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
+      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
         <div className="workplane-plane">
           <div
             className="three-workplane-host"
@@ -6804,7 +6936,7 @@ export function WorkplaneViewport({
               onCommit={commitMoveDimension}
             />
           ) : null}
-          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
+          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
             <TransformOverlay
               box={transformOverlay}
               measureKey={pinnedMeasureKey ?? hoverMeasureKey}
@@ -7029,6 +7161,11 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const pivotLayer = new THREE.Group();
   pivotLayer.name = "RotationPivot";
   pivotLayer.layers.set(RENDER_LAYER_HELPERS);
+  // Und eine fuer den angesetzten Punkt: Er soll neben dem Drehpunkt stehen
+  // koennen, ohne dass eine Gruppe die andere ausraeumt.
+  const snapLayer = new THREE.Group();
+  snapLayer.name = "SnapPoint";
+  snapLayer.layers.set(RENDER_LAYER_HELPERS);
   const moveDimensionLayer = new THREE.Group();
   moveDimensionLayer.name = "MoveDimensions";
   moveDimensionLayer.layers.set(RENDER_LAYER_HELPERS);
@@ -7038,7 +7175,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -7074,6 +7211,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     workplanePreviewLayer,
     shapeLayer,
     pivotLayer,
+    snapLayer,
     helperLayer,
     transformGuideLayer,
     moveDimensionLayer,

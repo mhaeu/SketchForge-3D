@@ -4534,6 +4534,13 @@ svg.sketch-reference-icon {
   cursor: crosshair;
 }
 
+/* Solange ein Punkt gezeigt werden soll, sagt der Zeiger, dass der naechste
+   Klick eine Ecke, eine Kante oder eine Flaeche greift. */
+.workplane-wrap.snap-point-mode .three-workplane-host,
+.workplane-wrap.snap-point-mode .three-workplane-host:active {
+  cursor: crosshair;
+}
+
 .workplane-wrap.ruler-delete-mode .three-workplane-host,
 .workplane-wrap.ruler-delete-mode .three-workplane-host:active {
   cursor: default;

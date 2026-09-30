@@ -84,6 +84,8 @@ import {
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
   ToolbarPivotIcon,
+  ToolbarSnapPointsIcon,
+  ToolbarSnapPointToWorkplaneIcon,
   ToolbarTrimInsideBodyIcon,
   ToolbarTrimOutsideBodyIcon,
 } from "./icons";
@@ -187,6 +189,7 @@ import {
 import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
+import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick } from "@/lib/pointSnap";
 import { PatternPanel } from "./workplane/PatternPanel";
 import {
   clampPatternCount,
@@ -3257,6 +3260,11 @@ function reflectionMatrixForAxis(axis: AlignAxis) {
   return new THREE.Matrix4().makeScale(axis === "x" ? -1 : 1, axis === "y" ? -1 : 1, axis === "z" ? -1 : 1);
 }
 
+/** Wie der gefasste Punkt in der Rueckmeldung heisst. */
+function snapWhat(kind: SnapKind) {
+  return t(kind === "corner" ? "snap.what.corner" : kind === "edge" ? "snap.what.edge" : "snap.what.face");
+}
+
 function mirroredShapePatch(shape: WorkplaneShape, axis: AlignAxis, pivot: number): Partial<WorkplaneShape> {
   const centerY = (shape.elevation ?? 0) + shape.height / 2;
   const nextCenter = axis === "x" ? 2 * pivot - shape.x : axis === "z" ? 2 * pivot - shape.z : 2 * pivot - centerY;
@@ -6125,6 +6133,8 @@ export function SketchForgeEditor({
   const [patternTool, setPatternTool] = useState<PatternSettings | null>(null);
   const [pivotMode, setPivotMode] = useState(false);
   const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
+  const [snapMode, setSnapMode] = useState<SnapMode | null>(null);
+  const [snapAnchor, setSnapAnchor] = useState<SnapPick | null>(null);
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
   const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
@@ -6583,6 +6593,12 @@ export function SketchForgeEditor({
   const selectedShapes = useMemo(() => shapes.filter((shape) => selectedIds.includes(shape.id)), [selectedIds, shapes]);
   const selectedShape = selectedShapes.at(-1) ?? null;
   const hasSelection = selectedShapes.length > 0;
+  /*
+   * Wie viele Koerper es gibt. Der Bezugspunkt zaehlt nicht mit: Er ist ein
+   * Kreuz in der Luft und hat weder Ecke noch Kante, an die man ansetzen
+   * koennte.
+   */
+  const bodyCount = useMemo(() => shapes.filter((shape) => !isReferencePoint(shape) && !shape.hidden).length, [shapes]);
   // Alle grundsaetzlich bearbeitbaren Kanten, unabhaengig von der Schwelle -
   // gezeichnet werden sie gedaempft, anklickbar bleiben sie.
   const modifierCandidateEdgeIds = useMemo(
@@ -8184,6 +8200,106 @@ export function SketchForgeEditor({
     setNotice(t("status.pivotSet"));
   }, []);
 
+  /**
+   * Zwei Punkte aufeinandersetzen - oder einen auf die Arbeitsebene.
+   *
+   * Beides ist dasselbe Werkzeug: Zeigen, was fassen soll, und zeigen, wohin.
+   * Beim Ansetzen an die Arbeitsebene faellt der zweite Klick weg, denn das
+   * Ziel steht schon fest.
+   *
+   * Eine Auswahl braucht es vorher nicht. Welcher Koerper wandert, sagt der
+   * erste Klick - so, wie beim Schneiden die Klickreihenfolge sagt, welcher
+   * Koerper Werkzeug ist und welcher Werkstueck.
+   */
+  const toggleSnapTool = useCallback((mode: SnapMode) => {
+    if (snapMode === mode) {
+      setSnapMode(null);
+      setSnapAnchor(null);
+      setNotice(t("status.snapCancelled"));
+      return;
+    }
+    // Zwei Zeigewerkzeuge zugleich waeren eine Falle: Der Klick kann nur
+    // einem gehoeren.
+    setPivotMode(false);
+    setAlignMode(false);
+    setMirrorMode(false);
+    setSnapAnchor(null);
+    setSnapMode(mode);
+    setNotice(t(mode === "workplane" ? "status.snapPickWorkplane" : "status.snapPickSource"));
+  }, [snapMode]);
+
+  /**
+   * Verschiebt, was am gefassten Koerper haengt, um `translation`.
+   *
+   * Gibt zurueck, ob das Werkzeug damit fertig ist: Bei einem festgestellten
+   * Koerper bleibt es stehen, damit man einen anderen zeigen kann.
+   */
+  const moveBySnap = useCallback((anchorShapeId: string, translation: PlacementPoint, message: string) => {
+    const moving = snapMoveIds(anchorShapeId, selectedIds, shapes);
+    if (moving.length === 0) {
+      setNotice(t("status.snapLocked"));
+      return false;
+    }
+    if (Math.hypot(translation.x, translation.y, translation.z) < 1e-6) {
+      setNotice(t("status.snapAlreadyThere"));
+      return true;
+    }
+    const wanted = new Set(moving);
+    commitShapes(
+      shapes.map((shape) => (wanted.has(shape.id)
+        ? {
+            ...shape,
+            x: cleanNearZero(shape.x + translation.x),
+            z: cleanNearZero(shape.z + translation.z),
+            elevation: cleanNearZero((shape.elevation ?? 0) + translation.y),
+          }
+        : shape)),
+      moving,
+      message,
+    );
+    return true;
+  }, [commitShapes, selectedIds, shapes]);
+
+  const takeSnapPoint = useCallback((picked: SnapPick) => {
+    if (snapMode === "workplane") {
+      /*
+       * `translationToWorkplane` setzt den tiefsten von mehreren Punkten auf
+       * die Ebene. Mit einem einzigen Punkt ist genau das gemeint: Er liegt
+       * danach in der Ebene, und der Koerper folgt ihm entlang der Normale.
+       */
+      const translation = translationToWorkplane(placementWorkplane, [picked.point]);
+      if (moveBySnap(picked.shapeId, translation, t("status.snapMovedToWorkplane", { what: snapWhat(picked.kind) }))) {
+        setSnapMode(null);
+        setSnapAnchor(null);
+      }
+      return;
+    }
+    if (!snapAnchor) {
+      setSnapAnchor(picked);
+      setNotice(t("status.snapAnchorSet", { what: snapWhat(picked.kind) }));
+      return;
+    }
+    if (picked.shapeId === snapAnchor.shapeId) {
+      // Zwei Punkte am selben Koerper wuerden ihn um deren Abstand versetzen -
+      // gemeint ist das nie, und der erste Punkt bleibt stehen.
+      setNotice(t("status.snapSameBody"));
+      return;
+    }
+    const moved = moveBySnap(
+      snapAnchor.shapeId,
+      snapTranslation(snapAnchor.point, picked.point),
+      t("status.snapMoved", { what: snapWhat(snapAnchor.kind), target: snapWhat(picked.kind) }),
+    );
+    if (moved) {
+      setSnapMode(null);
+      setSnapAnchor(null);
+    }
+  }, [moveBySnap, placementWorkplane, snapAnchor, snapMode]);
+
+  const missSnapPoint = useCallback(() => {
+    setNotice(t("status.snapNothingThere"));
+  }, []);
+
   const togglePatternTool = useCallback(() => {
     if (patternTool) {
       setPatternTool(null);
@@ -9604,6 +9720,16 @@ export function SketchForgeEditor({
     }
   }, [rotationPivot, selectedIds, shapes]);
 
+  /*
+   * Der gefasste Punkt haengt an seinem Koerper. Ist der nicht mehr da -
+   * geloescht, gruppiert, gebacken -, faellt der Punkt weg, sonst zoege der
+   * zweite Klick etwas an eine Stelle, die es nicht mehr gibt.
+   */
+  useEffect(() => {
+    if (!snapAnchor) return;
+    if (!shapes.some((shape) => shape.id === snapAnchor.shapeId)) setSnapAnchor(null);
+  }, [shapes, snapAnchor]);
+
   const regionResizeShape = regionResize ? shapes.find((shape) => shape.id === regionResize.shapeId) ?? null : null;
   // Whatever else changed the shape's size (undo, say) - the box stays inside it.
   const activeRegionResize = useMemo(
@@ -10840,6 +10966,12 @@ export function SketchForgeEditor({
           setNotice("");
           return;
         }
+        if (snapMode) {
+          setSnapMode(null);
+          setSnapAnchor(null);
+          setNotice(t("status.snapCancelled"));
+          return;
+        }
         setSelectedIds([]);
         setNotice(t("status.selectionCleared"));
         return;
@@ -11106,6 +11238,11 @@ export function SketchForgeEditor({
         patternActive={Boolean(patternTool)}
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
+        onSnapPoints={() => toggleSnapTool("point")}
+        onSnapPointToWorkplane={() => toggleSnapTool("workplane")}
+        snapMode={snapMode}
+        canSnapPoints={bodyCount > 1}
+        canSnapToWorkplane={bodyCount > 0}
         onPaste={pasteShape}
         onRedo={redo}
         onSnap={snapSelected}
@@ -11195,6 +11332,10 @@ export function SketchForgeEditor({
           rotationPivot={rotationPivot}
           onPivotPick={takeRotationPivot}
           onPivotModeChange={setPivotMode}
+          snapMode={snapMode}
+          snapAnchor={snapAnchor}
+          onSnapPick={takeSnapPoint}
+          onSnapMiss={missSnapPoint}
           onResizeRegionChange={updateRegionResize}
           onResizeRegionLimitsChange={updateRegionLimits}
           onRegionTaper={taperRegionResize}
@@ -11528,6 +11669,11 @@ function SecondaryToolbar({
   patternActive,
   onPivot,
   pivotActive,
+  onSnapPoints,
+  onSnapPointToWorkplane,
+  snapMode,
+  canSnapPoints,
+  canSnapToWorkplane,
   onPaste,
   onRedo,
   onSnap,
@@ -11621,6 +11767,11 @@ function SecondaryToolbar({
   patternActive: boolean;
   onPivot: () => void;
   pivotActive: boolean;
+  onSnapPoints: () => void;
+  onSnapPointToWorkplane: () => void;
+  snapMode: SnapMode | null;
+  canSnapPoints: boolean;
+  canSnapToWorkplane: boolean;
   onPaste: () => void;
   onRedo: () => void;
   onSnap: () => void;
@@ -11872,6 +12023,10 @@ function SecondaryToolbar({
     { label: t("editor.tool.dropToWorkplane"), icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
     { label: t("editor.tool.centerOnWorkplane"), icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
     { label: t("editor.tool.alignToWorkplane"), icon: ToolbarAlignToWorkplaneIcon, action: onAlignToWorkplane, enabled: hasSelection },
+    // Diese beiden brauchen keine Auswahl: Der Klick sagt, welcher Koerper
+    // wandert. Nur Koerper muessen da sein, an denen es etwas zu zeigen gibt.
+    { label: t("editor.tool.snapPoints"), icon: ToolbarSnapPointsIcon, action: onSnapPoints, enabled: canSnapPoints, active: snapMode === "point" },
+    { label: t("editor.tool.snapPointToWorkplane"), icon: ToolbarSnapPointToWorkplaneIcon, action: onSnapPointToWorkplane, enabled: canSnapToWorkplane, active: snapMode === "workplane" },
   ];
   const renderToolButton = (tool: (typeof leftTools)[number] | (typeof visibilityTools)[number] | (typeof combineTools)[number] | (typeof modifyTools)[number] | (typeof arrangeTools)[number]) => {
     const { icon: Icon, action, enabled, label } = tool;

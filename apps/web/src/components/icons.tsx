@@ -429,6 +429,42 @@ export function ToolbarPivotIcon(props: IconProps) {
 }
 
 /**
+ * Punkt auf Punkt setzen: zwei Koerper, an jedem eine gezeigte Ecke, und ein
+ * Pfeil, der die eine auf die andere bringt. Der wandernde Koerper ist
+ * gestrichelt - er steht noch nicht da, wo er hin soll.
+ */
+export function ToolbarSnapPointsIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round">
+        <rect x="5" y="26" width="17" height="17" rx="2" strokeDasharray="3.2 3.4" opacity="0.62" />
+        <rect x="27" y="5" width="16" height="16" rx="2" />
+      </g>
+      <path d="M23 25 L28 20" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M31 17 L28.5 22.5 L24.5 19.5 Z" fill="currentColor" />
+      <circle cx="22" cy="26" r="3.6" fill="currentColor" />
+      <circle cx="27" cy="21" r="3.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
+ * Punkt auf die Arbeitsebene setzen: ein Koerper mit einer gezeigten Ecke und
+ * ein Pfeil, der genau diese Ecke auf die Ebene bringt.
+ */
+export function ToolbarSnapPointToWorkplaneIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <rect x="13" y="6" width="25" height="17" rx="2" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <circle cx="13" cy="23" r="3.8" fill="currentColor" />
+      <path d="M13 28v6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M9 33h8l-4 5Z" fill="currentColor" />
+      <path d="M4 42h40" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
  * Innen bzw. aussen abschneiden: ein Stab, der in einen Koerper hineinragt,
  * und je nach Seite faellt der Teil darin oder der Teil davor weg. Ohne Ebene -
  * die Rundung des Koerpers ist die Grenze.
