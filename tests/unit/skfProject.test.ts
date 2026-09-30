@@ -550,4 +550,71 @@ describe("SketchForge .skf project packages", () => {
     files[asset.path][20] ^= 0xff;
     await expect(importSkfProject(zipSync(files))).rejects.toThrow("integrity check");
   });
+  /**
+   * Eine Datei, die der Schreiber von vor der Reparatur hinterlassen hat.
+   *
+   * Der Bezugspunkt gehoert nicht in die Datei, und der Schreiber liess ihn
+   * eine Zeit lang nur auf der obersten Ebene weg. Geriet er in eine Gruppe,
+   * stand er mit darin - geschrieben ohne Klage, gelesen gar nicht mehr. Der
+   * Editor kam leer hoch und der naechste Speicherstand schrieb das Leere
+   * fest.
+   */
+  describe("Bezugspunkte in einer alten Datei", () => {
+    const referenceDefinition = {
+      id: "reference-point", name: "Reference point", kind: "reference", color: "#f5c542",
+      x: 0, z: 0, elevation: 0, size: 20, width: 20, depth: 20, height: 20,
+      rotation: 0, rotationX: 0, rotationZ: 0, crossArm: 20, markerRadius: 1,
+    };
+
+    async function packageWithReferencePoint(where: "root" | "group") {
+      const group: WorkplaneShape = { ...shape("box", "group-1"), groupedShapes: [shape("box", "child-1")] };
+      const exported = await exportSkfProject(input([shape("box", "box-1"), group]));
+      const files = unzipSync(exported);
+      const document = JSON.parse(strFromU8(files["project.json"])) as SkfProjectDocumentV1;
+      const state = document.states[0];
+      const nodeId = where === "root"
+        ? "state-1/object/reference-point"
+        : "state-1/object/group-1/group/reference-point";
+      state.nodes.push({
+        nodeId,
+        objectId: "reference-point",
+        objectType: "native",
+        workplaneId: "base",
+        definition: referenceDefinition,
+      } as unknown as (typeof state.nodes)[number]);
+      if (where === "root") state.rootNodeIds.push(nodeId);
+      else {
+        const groupNode = state.nodes.find((node) => node.objectId === "group-1")!;
+        groupNode.groupedShapeNodeIds = [...(groupNode.groupedShapeNodeIds ?? []), nodeId];
+        // So stand es in der Datei: Das Gruppieren zaehlt seine Teile auf, und
+        // der Bezugspunkt war eines davon.
+        const groupFeature = document.features.find((feature) => feature.type === "group");
+        if (groupFeature) groupFeature.inputObjectIds = [...groupFeature.inputObjectIds, "reference-point"];
+      }
+      files["project.json"] = strToU8(JSON.stringify(document));
+      return zipSync(files);
+    }
+
+    it("liest eine Datei mit einem Bezugspunkt auf der obersten Ebene und laesst ihn weg", async () => {
+      const restored = await importSkfProject(await packageWithReferencePoint("root"));
+      expect(restored.shapes.map((entry) => entry.id)).toEqual(["box-1", "group-1"]);
+      expect(restored.shapes.some((entry) => entry.kind === "reference")).toBe(false);
+    });
+
+    it("liest eine Datei mit einem Bezugspunkt in einer Gruppe und laesst ihn weg", async () => {
+      const restored = await importSkfProject(await packageWithReferencePoint("group"));
+      expect(restored.shapes.map((entry) => entry.id)).toEqual(["box-1", "group-1"]);
+      const group = restored.shapes.find((entry) => entry.id === "group-1")!;
+      expect(group.groupedShapes?.map((child) => child.id)).toEqual(["child-1"]);
+    });
+
+    it("laesst die Zeichnung ganz, wenn ein Bezugspunkt weggefallen ist", async () => {
+      // Die Probe darauf, dass nicht einfach alles weg ist: Der Kasten und die
+      // Gruppe kommen mit allem, was an ihnen haengt, zurueck.
+      const restored = await importSkfProject(await packageWithReferencePoint("group"));
+      expect(restored.shapes).toHaveLength(2);
+      expect(restored.history).toHaveLength(1);
+      expect(restored.projectName).toBe("Round trip");
+    });
+  });
 });

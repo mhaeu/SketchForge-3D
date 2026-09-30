@@ -1087,6 +1087,72 @@ function validateFeatureGraph(features: unknown, activeObjectIds: Set<string>) {
   byId.forEach((_feature, id) => visit(id));
 }
 
+/**
+ * Bezugspunkte aus einem Stand nehmen, und sagen, welche das waren.
+ *
+ * Der Bezugspunkt ist ein Helfer der Szene und keine Geometrie; der Schreiber
+ * laesst ihn darum weg, und `ensureReferencePoint` setzt beim Laden einen
+ * neuen an den Nullpunkt. Eine Zeit lang liess der Schreiber ihn aber nur auf
+ * der obersten Ebene weg. Wer ihn in eine Gruppe geraten liess - und das ging
+ * bis vor kurzem beim Gruppieren einer Gesamtauswahl -, bekam eine Datei mit
+ * einem Knoten der Art "reference" darin.
+ *
+ * Geschrieben wurde die Datei ohne Klage. Gelesen werden konnte sie nicht:
+ * Die Pruefung kennt diese Art nicht und lehnte das ganze Paket ab. Der
+ * Editor kam daraufhin leer hoch, und der naechste Speicherstand schrieb das
+ * Leere fest - aus einem falsch geschriebenen Helfer wurde eine verlorene
+ * Zeichnung.
+ *
+ * Also wird der Knoten hier still herausgenommen, samt seiner Spur in den
+ * Gruppen, in der Kantengeschichte und in den Vorgaengen. Eine Datei, die
+ * schon Schaden hat, heilt damit beim naechsten Oeffnen.
+ */
+function dropReferencePointNodes(state: SkfStateV1): Set<string> {
+  const droppedObjectIds = new Set<string>();
+  if (!Array.isArray(state?.nodes)) return droppedObjectIds;
+  const droppedNodeIds = new Set<string>();
+  state.nodes.forEach((node) => {
+    const kind = (node?.definition as { kind?: unknown } | undefined)?.kind;
+    if (kind !== "reference" || typeof node?.nodeId !== "string") return;
+    droppedNodeIds.add(node.nodeId);
+    if (typeof node.objectId === "string") droppedObjectIds.add(node.objectId);
+  });
+  if (droppedNodeIds.size === 0) return droppedObjectIds;
+
+  state.nodes = state.nodes.filter((node) => !droppedNodeIds.has(node?.nodeId));
+  if (Array.isArray(state.rootNodeIds)) {
+    state.rootNodeIds = state.rootNodeIds.filter((nodeId) => !droppedNodeIds.has(nodeId));
+  }
+  state.nodes.forEach((node) => {
+    if (Array.isArray(node.groupedShapeNodeIds)) {
+      node.groupedShapeNodeIds = node.groupedShapeNodeIds.filter((nodeId) => !droppedNodeIds.has(nodeId));
+    }
+    if (Array.isArray(node.edgeTreatmentHistory)) {
+      node.edgeTreatmentHistory = node.edgeTreatmentHistory.filter((entry) => !droppedNodeIds.has(entry?.beforeNodeId));
+    }
+  });
+  return droppedObjectIds;
+}
+
+/**
+ * Die weggelassenen Koerper auch aus den Vorgaengen nehmen.
+ *
+ * Ein Gruppieren steht als Vorgang in der Datei und zaehlt seine Teile auf.
+ * War der Bezugspunkt eines davon, zeigte der Vorgang nach dem Herausnehmen
+ * auf einen Koerper, den es nicht mehr gibt - und die Pruefung lehnte wieder
+ * das ganze Paket ab.
+ */
+function dropObjectsFromFeatures(features: unknown, droppedObjectIds: ReadonlySet<string>) {
+  if (droppedObjectIds.size === 0 || !Array.isArray(features)) return;
+  features.forEach((feature) => {
+    const inputs = (feature as { inputObjectIds?: unknown })?.inputObjectIds;
+    if (!Array.isArray(inputs)) return;
+    (feature as { inputObjectIds: unknown[] }).inputObjectIds = inputs.filter(
+      (id) => typeof id !== "string" || !droppedObjectIds.has(id),
+    );
+  });
+}
+
 async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
   const document = objectRecord(raw, "project.json") as unknown as SkfProjectDocumentV1;
   if (document.schema !== SKF_SCHEMA_ID) throw new Error("This file is not a SketchForge project");
@@ -1129,8 +1195,12 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
 
   const stateById = new Map<string, SkfStateV1>();
   const activeObjectIds = new Set<string>();
+  const droppedObjectIds = new Set<string>();
   for (let stateIndex = 0; stateIndex < document.states.length; stateIndex += 1) {
     const state = document.states[stateIndex];
+    // Vor jeder Pruefung: Was nicht in die Datei gehoert, kommt heraus, statt
+    // das Paket daran scheitern zu lassen.
+    dropReferencePointNodes(state).forEach((objectId) => droppedObjectIds.add(objectId));
     const stateId = stringValue(state?.id, `states[${stateIndex}].id`);
     if (stateById.has(stateId)) throw new Error(`Duplicate state ID '${stateId}'`);
     if (!Array.isArray(state.nodes) || state.nodes.length > SKF_LIMITS.objectsPerState) throw new Error(`State '${stateId}' has too many objects`);
@@ -1187,6 +1257,7 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
     if (entry.workplane !== undefined) objectRecord(entry.workplane, `history.entries[${index}].workplane`);
   });
   if (document.history.entries[document.history.index]?.stateId !== document.sceneStateId) throw new Error("Active scene and undo history index do not match");
+  dropObjectsFromFeatures(document.features, droppedObjectIds);
   validateFeatureGraph(document.features, activeObjectIds);
   const editor = objectRecord(document.editor, "editor");
   finiteNumber(editor.placementElevation, "editor.placementElevation");

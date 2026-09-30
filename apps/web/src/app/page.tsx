@@ -608,17 +608,27 @@ export default function Home() {
         }
       })
       .catch((error) => {
-        if (!canceled) {
-          setDashboardNotice(error instanceof Error ? error.message : t("notice.projectShapesLoadFailed"));
-          setProjectShapesById((current) => {
-            // A failed background read must not erase a project that has already
-            // received live editor changes while the read was pending.
-            if (current[activeProjectId]) return current;
-            return {
-              ...current,
-              [activeProjectId]: projectShapeCacheEntry(activeProject.revision ?? Date.now(), []),
-            };
-          });
+        if (canceled) return;
+        setDashboardNotice(error instanceof Error ? error.message : t("notice.projectShapesLoadFailed"));
+        /*
+         * Ein gescheitertes Lesen darf nicht wie eine leere Zeichnung
+         * aussehen.
+         *
+         * Vorher stand hier ein leerer Eintrag mit der Nummer des Projekts.
+         * Der Editor kam damit leer hoch - und weil diese Nummer so gross war
+         * wie die des gespeicherten Stands, schrieb der naechste
+         * Speichervorgang das Leere ueber die Zeichnung. Aus einem Lesefehler
+         * wurde so ein Verlust.
+         *
+         * Hat der Editor schon Inhalt, bleibt er unberuehrt: Dann war das nur
+         * ein Nachlesen im Hintergrund. Sonst geht es zurueck zur Startseite,
+         * wo die Meldung steht und die Datei unangetastet liegen bleibt.
+         */
+        if (projectShapesById[activeProjectId]) return;
+        setActiveProjectId(null);
+        setView("dashboard");
+        if (typeof window !== "undefined") {
+          window.history.replaceState(null, "", "/");
         }
       });
     return () => {

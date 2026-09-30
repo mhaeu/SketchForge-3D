@@ -71,11 +71,34 @@ export function createReferencePoint(
  * zurueck, und er stand doppelt in der Szene.
  */
 export function ensureReferencePoint(shapes: WorkplaneShape[]): WorkplaneShape[] {
-  const points = shapes.filter(isReferencePoint);
-  if (points.length === 0) return [createReferencePoint(), ...shapes];
-  if (points.length === 1) return shapes;
+  /*
+   * Zuerst die Gruppen: In einer Gruppe hat der Bezugspunkt nichts zu suchen,
+   * und eine Zeichnung, in der er dort sitzt, ist nicht abzulegen - die Datei
+   * kennt seine Art nicht. Wer so eine Zeichnung offen hat, bekommt sie hier
+   * gesaeubert, und der naechste Speicherstand ist wieder in Ordnung.
+   */
+  const cleaned = shapes.map((shape) => {
+    if (!shape.groupedShapes?.length) return shape;
+    const children = withoutReferencePoints(shape.groupedShapes);
+    return sameList(children, shape.groupedShapes) ? shape : { ...shape, groupedShapes: children };
+  });
+  const points = cleaned.filter(isReferencePoint);
+  if (points.length === 0) return [createReferencePoint(), ...cleaned];
+  if (points.length === 1) return cleaned;
   const keep = points[0];
-  return shapes.filter((shape) => !isReferencePoint(shape) || shape === keep);
+  return cleaned.filter((shape) => !isReferencePoint(shape) || shape === keep);
+}
+
+/**
+ * Ob sich an einer Liste nichts geaendert hat - Kind fuer Kind, nicht nach
+ * ihrer Zahl. Faellt erst eine Ebene tiefer etwas weg, bleibt die Zahl oben
+ * gleich, das Kind ist aber ein neues.
+ *
+ * Anderswo haengen Zwischenspeicher an der Gleichheit des Objekts; wer ohne
+ * Not ein neues baut, laesst sie ins Leere laufen.
+ */
+function sameList<T>(next: ReadonlyArray<T>, previous: ReadonlyArray<T>) {
+  return next.length === previous.length && next.every((entry, index) => entry === previous[index]);
 }
 
 /** Reads the point coordinates, falling back to the origin. */
@@ -107,14 +130,7 @@ export function withoutReferencePoints<T extends Pick<WorkplaneShape, "kind"> & 
     .map((shape) => {
       if (!shape.groupedShapes?.length) return shape;
       const children = withoutReferencePoints(shape.groupedShapes);
-      /*
-       * Nur neu bauen, wenn wirklich etwas wegfiel: Anderswo haengen
-       * Zwischenspeicher an der Gleichheit des Objekts. Verglichen wird Kind
-       * fuer Kind und nicht ihre Zahl - faellt erst eine Ebene tiefer etwas
-       * weg, bleibt die Zahl hier gleich, das Kind ist aber ein neues.
-       */
-      const same = children.length === shape.groupedShapes.length
-        && children.every((child, index) => child === shape.groupedShapes![index]);
-      return same ? shape : { ...shape, groupedShapes: children };
+      // Nur neu bauen, wenn wirklich etwas wegfiel - siehe `sameList`.
+      return sameList(children, shape.groupedShapes) ? shape : { ...shape, groupedShapes: children };
     });
 }

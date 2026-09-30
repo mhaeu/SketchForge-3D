@@ -78,3 +78,36 @@ describe("Den Bezugspunkt heraushalten", () => {
     expect(withoutReferencePoints([grouped])[0]).toBe(grouped);
   });
 });
+
+/**
+ * Eine Zeichnung, in der der Bezugspunkt in einer Gruppe sitzt, ist nicht
+ * abzulegen: Die Datei kennt seine Art nicht, und ein Paket mit ihm darin
+ * liess sich bis vor kurzem schreiben, aber nicht mehr lesen. Wer so eine
+ * Zeichnung offen hat, soll sie beim Laden gesaeubert bekommen.
+ */
+describe("Beim Laden saeubern", () => {
+  it("holt den Bezugspunkt aus einer Gruppe heraus und setzt einen an den Nullpunkt", () => {
+    const grouped = body("gruppe", [body("kind"), point("reference-point-group-child-48f0")]);
+    const shapes = ensureReferencePoint([body("a"), grouped]);
+    const group = shapes.find((shape) => shape.id === "gruppe")!;
+    expect(group.groupedShapes?.map((child) => child.id)).toEqual(["kind"]);
+    // Einer bleibt - aber auf der obersten Ebene, wo er hingehoert.
+    expect(shapes.filter(isReferencePoint)).toHaveLength(1);
+    expect(isReferencePoint(shapes[0])).toBe(true);
+  });
+
+  it("laesst den vorhandenen Punkt stehen und saeubert nur die Gruppe", () => {
+    const only = point("eins");
+    const grouped = body("gruppe", [point("zwei"), body("kind")]);
+    const shapes = ensureReferencePoint([only, grouped]);
+    expect(shapes.filter(isReferencePoint)).toEqual([only]);
+    expect(shapes.find((shape) => shape.id === "gruppe")!.groupedShapes).toHaveLength(1);
+  });
+
+  it("baut nichts neu, wenn nichts zu saeubern ist", () => {
+    const grouped = body("gruppe", [body("eins")]);
+    const only = point("eins");
+    const shapes = ensureReferencePoint([only, grouped]);
+    expect(shapes.find((shape) => shape.id === "gruppe")).toBe(grouped);
+  });
+});
