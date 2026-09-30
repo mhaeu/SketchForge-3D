@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import {
   SNAP_MAX_TRIANGLES,
+  chainMiddle,
   meshSnapFeatures,
   snapMoveIds,
   snapPointOnMesh,
   snapTranslation,
   type SnapPoint,
+  type SnapTarget,
 } from "@/lib/pointSnap";
 
 /**
@@ -45,6 +47,13 @@ function nearly(a: SnapPoint, b: SnapPoint, tolerance = 1e-4) {
 function visible(point: SnapPoint) {
   return point.x + point.y + point.z >= 0;
 }
+
+/**
+ * Die Stelle, an der der Strahl auftrifft. Nur die Vorgabe "Fläche, frei"
+ * gibt sie zurueck; alle anderen rechnen selbst, und dann steht hier
+ * irgendein Punkt.
+ */
+const FACE_POINT = { x: 0, y: 0, z: 3 };
 
 describe("Was am Netz zum Anfassen da ist", () => {
   it("findet am Kasten acht Ecken und zwoelf Kanten", () => {
@@ -118,7 +127,7 @@ describe("Der Punkt, auf den gezeigt wird", () => {
   it("nimmt die Ecke, wenn der Zeiger nah an ihr steht", () => {
     const wanted = { x: 10, y: 5, z: 3 };
     const screen = project(wanted);
-    const hit = snapPointOnMesh(box, 0, { x: screen.x + 4, y: screen.y - 5 }, project, visible)!;
+    const hit = snapPointOnMesh({ positions: box, triangle: 0, pointer: { x: screen.x + 4, y: screen.y - 5 }, hitPoint: FACE_POINT, target: "auto", project, visible })!;
     expect(hit.kind).toBe("corner");
     expect(nearly(hit.point, wanted)).toBe(true);
   });
@@ -126,7 +135,7 @@ describe("Der Punkt, auf den gezeigt wird", () => {
   it("nimmt die Stelle auf der Kante, auf die gezeigt wird", () => {
     // Ein Viertel entlang der oberen vorderen Kante, weit weg von beiden Ecken.
     const wanted = { x: -5, y: 5, z: 3 };
-    const hit = snapPointOnMesh(box, 0, project(wanted), project, visible)!;
+    const hit = snapPointOnMesh({ positions: box, triangle: 0, pointer: project(wanted), hitPoint: FACE_POINT, target: "auto", project, visible })!;
     expect(hit.kind).toBe("edge");
     expect(nearly(hit.point, wanted)).toBe(true);
   });
@@ -134,7 +143,7 @@ describe("Der Punkt, auf den gezeigt wird", () => {
   it("nimmt die Mitte der Flaeche, wenn weit und breit keine Kante ist", () => {
     const screen = project({ x: 0, y: 0, z: 3 });
     // Dreieck 8 und 9 bilden bei three.js die vordere Wand (z = +3).
-    const hit = snapPointOnMesh(box, 8, screen, project, visible)!;
+    const hit = snapPointOnMesh({ positions: box, triangle: 8, pointer: screen, hitPoint: FACE_POINT, target: "auto", project, visible })!;
     expect(hit.kind).toBe("face");
     expect(hit.point.x).toBeCloseTo(0, 6);
     expect(hit.point.y).toBeCloseTo(0, 6);
@@ -149,7 +158,7 @@ describe("Der Punkt, auf den gezeigt wird", () => {
    */
   it("wuerde ohne Sichtpruefung an der verdeckten Kante dahinter haengen", () => {
     const screen = project({ x: 0, y: 0, z: 3 });
-    const blind = snapPointOnMesh(box, 8, screen, project)!;
+    const blind = snapPointOnMesh({ positions: box, triangle: 8, pointer: screen, hitPoint: FACE_POINT, target: "auto", project })!;
     expect(blind.kind).toBe("edge");
     expect(blind.point.z).toBeCloseTo(-3, 6);
   });
@@ -161,7 +170,7 @@ describe("Der Punkt, auf den gezeigt wird", () => {
   it("bevorzugt die Ecke, wenn beide in Reichweite liegen", () => {
     const corner = { x: 10, y: 5, z: 3 };
     const screen = project(corner);
-    const hit = snapPointOnMesh(box, 0, { x: screen.x - 2, y: screen.y + 2 }, project, visible)!;
+    const hit = snapPointOnMesh({ positions: box, triangle: 0, pointer: { x: screen.x - 2, y: screen.y + 2 }, hitPoint: FACE_POINT, target: "auto", project, visible })!;
     expect(hit.kind).toBe("corner");
     expect(nearly(hit.point, corner)).toBe(true);
   });
@@ -170,20 +179,20 @@ describe("Der Punkt, auf den gezeigt wird", () => {
     const corner = { x: 10, y: 5, z: 3 };
     const screen = project(corner);
     const behind = (point: SnapPoint) => (nearly(point, corner) ? null : project(point));
-    const hit = snapPointOnMesh(box, 0, { x: screen.x + 1, y: screen.y + 1 }, behind, visible)!;
+    const hit = snapPointOnMesh({ positions: box, triangle: 0, pointer: { x: screen.x + 1, y: screen.y + 1 }, hitPoint: FACE_POINT, target: "auto", project: behind, visible })!;
     expect(nearly(hit.point, corner)).toBe(false);
   });
 
   it("nimmt die naechste Ecke, die nicht verdeckt ist", () => {
     const hidden = { x: 10, y: 5, z: 3 };
     const screen = project(hidden);
-    const hit = snapPointOnMesh(box, 0, screen, project, (point) => !nearly(point, hidden))!;
+    const hit = snapPointOnMesh({ positions: box, triangle: 0, pointer: screen, hitPoint: FACE_POINT, target: "auto", project, visible: (point) => !nearly(point, hidden) })!;
     expect(nearly(hit.point, hidden)).toBe(false);
   });
 
   it("gibt nichts zurueck, wenn das getroffene Dreieck nicht zum Netz gehoert", () => {
-    expect(snapPointOnMesh(box, 999, { x: 0, y: 0 }, project)).toBeNull();
-    expect(snapPointOnMesh(box, -1, { x: 0, y: 0 }, project)).toBeNull();
+    expect(snapPointOnMesh({ positions: box, triangle: 999, pointer: { x: 0, y: 0 }, hitPoint: FACE_POINT, target: "auto", project })).toBeNull();
+    expect(snapPointOnMesh({ positions: box, triangle: -1, pointer: { x: 0, y: 0 }, hitPoint: FACE_POINT, target: "auto", project })).toBeNull();
   });
 });
 
@@ -215,5 +224,184 @@ describe("Was aus zwei Punkten folgt", () => {
 
   it("bewegt nichts, wenn der angesetzte Koerper nicht mehr da ist", () => {
     expect(snapMoveIds("a", ["a"], [{ id: "b" }])).toEqual([]);
+  });
+});
+
+describe("Ganze Kanten", () => {
+  it("legt die zwoelf Kanten eines Kastens einzeln ab", () => {
+    const features = meshSnapFeatures(soup(new THREE.BoxGeometry(20, 10, 6)));
+    expect(features.chains).toHaveLength(12);
+    for (const chain of features.chains) {
+      expect(chain.closed).toBe(false);
+      // Zwischen zwei Kastenecken liegt nichts, also bleibt es bei zwei Punkten.
+      expect(chain.points).toHaveLength(2);
+    }
+  });
+
+  it("fasst den Rand eines Rohrendes zu einem Ring zusammen", () => {
+    const features = meshSnapFeatures(soup(new THREE.CylinderGeometry(5, 5, 20, 32)));
+    expect(features.chains).toHaveLength(2);
+    for (const chain of features.chains) {
+      expect(chain.closed).toBe(true);
+      // Der letzte Punkt ist nicht noch einmal der erste.
+      expect(chain.points).toHaveLength(32);
+    }
+  });
+
+  /**
+   * Die Probe auf das Zusammenlegen: Der Rand einer unterteilten Wand besteht
+   * aus vier Stuecken. Wer sie einzeln nimmt, findet als "Mitte" das Ende
+   * eines Stuecks und nicht die Mitte der Kante.
+   */
+  it("findet die Mitte einer unterteilten Kante und nicht die eines Stuecks", () => {
+    const features = meshSnapFeatures(soup(new THREE.PlaneGeometry(20, 10, 4, 3)));
+    const along = features.chains.filter((chain) => chain.points.length === 5);
+    expect(along).toHaveLength(2);
+    for (const chain of along) {
+      const middle = chainMiddle(chain)!;
+      expect(middle.x).toBeCloseTo(0, 6);
+      expect(Math.abs(middle.y)).toBeCloseTo(5, 6);
+    }
+  });
+
+  it("nimmt bei einer geraden Kante ihre Mitte", () => {
+    const features = meshSnapFeatures(soup(new THREE.BoxGeometry(20, 10, 6)));
+    const front = features.chains.find((chain) => chain.points.every((point) => (
+      Math.abs(point.y - 5) < 1e-4 && Math.abs(point.z - 3) < 1e-4
+    )))!;
+    expect(nearly(chainMiddle(front)!, { x: 0, y: 5, z: 3 })).toBe(true);
+  });
+
+  /**
+   * Beim Ring gibt es keine halbe Laenge, die etwas bedeutet - seine Mitte
+   * ist die Achse. Genau das braucht man, um zwei Rohre am Rand anzusetzen,
+   * ohne auf das Ende selbst klicken zu koennen.
+   */
+  it("nimmt beim Ring seine Achse", () => {
+    const features = meshSnapFeatures(soup(new THREE.CylinderGeometry(5, 5, 20, 32)));
+    for (const chain of features.chains) {
+      const middle = chainMiddle(chain)!;
+      expect(middle.x).toBeCloseTo(0, 6);
+      expect(middle.z).toBeCloseTo(0, 6);
+      expect(Math.abs(middle.y)).toBeCloseTo(10, 6);
+    }
+  });
+});
+
+describe("Eine Vorgabe gilt auch weit weg", () => {
+  const box = soup(new THREE.BoxGeometry(20, 10, 6));
+  const middleOfWall = project({ x: 0, y: 0, z: 3 });
+  const request = (target: SnapTarget, pointer: { x: number; y: number }, triangle = 8) => snapPointOnMesh({
+    positions: box,
+    triangle,
+    pointer,
+    hitPoint: FACE_POINT,
+    target,
+    project,
+    visible,
+  });
+
+  it("holt die naechste Ecke, auch wenn der Zeiger mitten auf der Wand steht", () => {
+    const hit = request("corner", middleOfWall)!;
+    expect(hit.kind).toBe("corner");
+    const corners = meshSnapFeatures(box).corners;
+    expect(corners.some((corner) => nearly(corner, hit.point))).toBe(true);
+    // Auch ohne Zielkreis bleibt der Vorzug: eine Ecke, die man sieht.
+    expect(visible(hit.point)).toBe(true);
+  });
+
+  it("holt die naechste Stelle auf einer Kante", () => {
+    const hit = request("edge", middleOfWall)!;
+    expect(hit.kind).toBe("edge");
+    expect(visible(hit.point)).toBe(true);
+    // Auf einer Kante des Kastens liegt immer mindestens eine Koordinate auf
+    // dem Rand.
+    const onBorder = [
+      Math.abs(Math.abs(hit.point.x) - 10) < 1e-4,
+      Math.abs(Math.abs(hit.point.y) - 5) < 1e-4,
+      Math.abs(Math.abs(hit.point.z) - 3) < 1e-4,
+    ].filter(Boolean).length;
+    expect(onBorder).toBeGreaterThanOrEqual(2);
+  });
+
+  it("holt die Mitte der naechsten ganzen Kante", () => {
+    const wanted = { x: -5, y: 5, z: 3 };
+    const hit = request("edgeMiddle", project(wanted))!;
+    expect(hit.kind).toBe("edgeMiddle");
+    expect(nearly(hit.point, { x: 0, y: 5, z: 3 })).toBe(true);
+  });
+
+  it("nimmt bei der Flaechenmitte auch dann die Mitte, wenn der Zeiger auf einer Ecke steht", () => {
+    const hit = request("face", project({ x: 10, y: 5, z: 3 }))!;
+    expect(hit.kind).toBe("face");
+    expect(nearly(hit.point, { x: 0, y: 0, z: 3 })).toBe(true);
+  });
+
+  it("gibt bei der freien Flaeche genau die getroffene Stelle zurueck", () => {
+    const hit = request("surface", project({ x: 10, y: 5, z: 3 }))!;
+    expect(hit.kind).toBe("surface");
+    expect(hit.point).toEqual(FACE_POINT);
+  });
+
+  /**
+   * Die Mitte eines Rings liegt in seinem Loch. Ob man sie sieht, sagt darum
+   * nichts darueber, ob dieser Ring gemeint war - gefragt wird an der Stelle
+   * des Rings, auf die gezeigt wurde.
+   */
+  it("waehlt den Ring nach der gezeigten Stelle und nicht nach seiner Mitte", () => {
+    const disc = soup(new THREE.CylinderGeometry(15, 15, 20, 48));
+    // Die Mitte des unteren Randes liegt fuer diese Kamera hinter dem
+    // Koerper, ein Stueck seines Randes aber nicht.
+    const onLowerRim = { x: 10.6, y: -10, z: 10.6 };
+    expect(visible(onLowerRim)).toBe(true);
+    expect(visible({ x: 0, y: -10, z: 0 })).toBe(false);
+    const hit = snapPointOnMesh({
+      positions: disc,
+      triangle: 4,
+      pointer: project(onLowerRim),
+      hitPoint: FACE_POINT,
+      target: "edgeMiddle",
+      project,
+      visible,
+    })!;
+    expect(hit.point.y).toBeCloseTo(-10, 6);
+  });
+
+  /**
+   * Eine Ansage ist eine Ansage: Liegt die naechste Ecke hinter dem Koerper,
+   * kommt sie trotzdem. Eine Absage waere hier das Falsche - der Benutzer hat
+   * "Eckpunkt" gewaehlt und sieht sonst nur, dass nichts passiert.
+   */
+  it("nimmt auch eine verdeckte Ecke, wenn keine sichtbare da ist", () => {
+    const hit = snapPointOnMesh({
+      positions: box,
+      triangle: 8,
+      pointer: middleOfWall,
+      hitPoint: FACE_POINT,
+      target: "corner",
+      project,
+      visible: () => false,
+    })!;
+    expect(hit.kind).toBe("corner");
+    expect(meshSnapFeatures(box).corners.some((corner) => nearly(corner, hit.point))).toBe(true);
+  });
+
+  it("sagt ab, wenn es am Koerper nicht gibt, was verlangt wird", () => {
+    const ball = soup(new THREE.SphereGeometry(8, 32, 16));
+    const ask = (target: SnapTarget) => snapPointOnMesh({
+      positions: ball,
+      triangle: 4,
+      pointer: { x: 0, y: 0 },
+      hitPoint: FACE_POINT,
+      target,
+      project,
+      visible,
+    });
+    expect(ask("corner")).toBeNull();
+    expect(ask("edge")).toBeNull();
+    expect(ask("edgeMiddle")).toBeNull();
+    // Eine Flaeche hat sie immer - und sei es nur die eine Facette.
+    expect(ask("face")).not.toBeNull();
+    expect(ask("surface")).not.toBeNull();
   });
 });

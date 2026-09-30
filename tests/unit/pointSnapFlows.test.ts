@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { snapPointOnMesh, snapTranslation, type SnapPoint } from "@/lib/pointSnap";
+import { snapPointOnMesh, snapTranslation, type SnapPoint, type SnapTarget } from "@/lib/pointSnap";
 
 /**
  * Der ganze Weg vom Klick bis zum verschobenen Koerper, an gedrehten Netzen.
@@ -41,8 +41,16 @@ function project(point: SnapPoint) {
 }
 
 /** Der Punkt am Koerper, auf den ein Klick auf `screen` faellt. */
-function pick(positions: Float64Array, triangle: number, screen: { x: number; y: number }) {
-  const hit = snapPointOnMesh(positions, triangle, screen, project);
+function pick(positions: Float64Array, triangle: number, screen: { x: number; y: number }, target: SnapTarget = "auto") {
+  const hit = snapPointOnMesh({
+    positions,
+    triangle,
+    pointer: screen,
+    // Kommt nur bei "Fläche, frei" heraus; hier rechnet die Vorgabe selbst.
+    hitPoint: { x: 0, y: 0, z: 0 },
+    target,
+    project,
+  });
   expect(hit).not.toBeNull();
   return hit!;
 }

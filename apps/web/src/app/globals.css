@@ -1615,6 +1615,16 @@ button {
   border-color: #3b6c92;
 }
 
+/* Sechs Vorgaben passen nicht in eine Reihe: zwei Spalten, drei Zeilen. */
+.point-target-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.point-target-footer {
+  line-height: 1.35;
+}
+
 .edge-modifier-panel {
   position: fixed;
   top: calc(var(--editor-toolbar-height) + 14px);

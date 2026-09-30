@@ -189,8 +189,9 @@ import {
 import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
-import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick } from "@/lib/pointSnap";
+import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { PatternPanel } from "./workplane/PatternPanel";
+import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import {
   clampPatternCount,
   defaultPatternSettings,
@@ -3262,7 +3263,11 @@ function reflectionMatrixForAxis(axis: AlignAxis) {
 
 /** Wie der gefasste Punkt in der Rueckmeldung heisst. */
 function snapWhat(kind: SnapKind) {
-  return t(kind === "corner" ? "snap.what.corner" : kind === "edge" ? "snap.what.edge" : "snap.what.face");
+  if (kind === "corner") return t("snap.what.corner");
+  if (kind === "edge") return t("snap.what.edge");
+  if (kind === "edgeMiddle") return t("snap.what.edgeMiddle");
+  if (kind === "surface") return t("snap.what.surface");
+  return t("snap.what.face");
 }
 
 function mirroredShapePatch(shape: WorkplaneShape, axis: AlignAxis, pivot: number): Partial<WorkplaneShape> {
@@ -6135,6 +6140,12 @@ export function SketchForgeEditor({
   const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
   const [snapMode, setSnapMode] = useState<SnapMode | null>(null);
   const [snapAnchor, setSnapAnchor] = useState<SnapPick | null>(null);
+  /*
+   * Was ein Klick fassen soll. Eine Vorgabe fuer alle drei Zeigewerkzeuge -
+   * die Frage ist bei allen dieselbe, und sie bleibt stehen, wenn man vom
+   * Drehpunkt zum Ansetzen wechselt.
+   */
+  const [snapTarget, setSnapTarget] = useState<SnapTarget>("auto");
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
   const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
@@ -8191,6 +8202,8 @@ export function SketchForgeEditor({
       setNotice(t("status.selectShapeFirst"));
       return;
     }
+    setSnapMode(null);
+    setSnapAnchor(null);
     setPivotMode(true);
     setNotice(t("status.pivotPick"));
   }, [hasSelection, pivotMode, rotationPivot]);
@@ -8296,8 +8309,8 @@ export function SketchForgeEditor({
     }
   }, [moveBySnap, placementWorkplane, snapAnchor, snapMode]);
 
-  const missSnapPoint = useCallback(() => {
-    setNotice(t("status.snapNothingThere"));
+  const missSnapPoint = useCallback((reason: "nothing" | "target") => {
+    setNotice(t(reason === "target" ? "status.snapNoTarget" : "status.snapNothingThere"));
   }, []);
 
   const togglePatternTool = useCallback(() => {
@@ -10966,9 +10979,10 @@ export function SketchForgeEditor({
           setNotice("");
           return;
         }
-        if (snapMode) {
+        if (snapMode || pivotMode) {
           setSnapMode(null);
           setSnapAnchor(null);
+          setPivotMode(false);
           setNotice(t("status.snapCancelled"));
           return;
         }
@@ -11117,6 +11131,7 @@ export function SketchForgeEditor({
     hasSelection,
     nudgeSelected,
     pasteShape,
+    pivotMode,
     raiseSelected,
     redo,
     rotateSelectedBy,
@@ -11128,6 +11143,9 @@ export function SketchForgeEditor({
     sketchUndo,
     setSelectionHoleMode,
     showHidden,
+    // Ohne diese beiden hielte der Zuhoerer den Wert vom Anheften fest, und
+    // Escape legte das Zeigewerkzeug nie ab.
+    snapMode,
     toggleHidden,
     toggleMirrorMode,
     toggleLocked,
@@ -11333,6 +11351,7 @@ export function SketchForgeEditor({
           onPivotPick={takeRotationPivot}
           onPivotModeChange={setPivotMode}
           snapMode={snapMode}
+          snapTarget={snapTarget}
           snapAnchor={snapAnchor}
           onSnapPick={takeSnapPoint}
           onSnapMiss={missSnapPoint}
@@ -11384,6 +11403,19 @@ export function SketchForgeEditor({
           />
         )}
       </div>
+      {snapMode || pivotMode ? (
+        <PointTargetPanel
+          target={snapTarget}
+          tool={snapMode ?? "pivot"}
+          onChange={setSnapTarget}
+          onCancel={() => {
+            setSnapMode(null);
+            setSnapAnchor(null);
+            setPivotMode(false);
+            setNotice(t("status.snapCancelled"));
+          }}
+        />
+      ) : null}
       {patternTool ? (
         <PatternPanel
           settings={patternTool}

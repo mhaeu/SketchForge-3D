@@ -56,8 +56,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
-import { planarFaceCentroid } from "@/lib/rotationPivot";
-import { snapPointOnMesh, type SnapMode, type SnapPick } from "@/lib/pointSnap";
+import { snapPointOnMesh, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
@@ -245,11 +244,17 @@ type WorkplaneViewportProps = {
   onPivotModeChange?: (active: boolean) => void;
   /** Laeuft das Ansetzen, zeigt der naechste Klick einen Punkt am Koerper. */
   snapMode?: SnapMode | null;
+  /** Was ein Klick fassen soll - gilt auch fuer den Drehpunkt. */
+  snapTarget?: SnapTarget;
   /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
   snapAnchor?: SnapPick | null;
   onSnapPick?: (picked: SnapPick) => void;
-  /** Der Klick traf keinen Koerper. */
-  onSnapMiss?: () => void;
+  /**
+   * Der Klick brachte keinen Punkt: entweder gar keinen Koerper getroffen
+   * ("nothing") oder am getroffenen Koerper gibt es nicht, was die Vorgabe
+   * verlangt ("target") - eine Kugel hat keine Ecke.
+   */
+  onSnapMiss?: (reason: "nothing" | "target") => void;
   onResizeRegionChange: (region: ResizeRegion) => void;
   onResizeRegionLimitsChange: (limits: ResizeRegion) => void;
   onRegionTaper: (taper: RegionTaper) => void;
@@ -3320,6 +3325,7 @@ export function WorkplaneViewport({
   onPivotPick,
   onPivotModeChange,
   snapMode = null,
+  snapTarget = "auto",
   snapAnchor = null,
   onSnapPick,
   onSnapMiss,
@@ -3387,6 +3393,8 @@ export function WorkplaneViewport({
   rotationPivotRef.current = rotationPivot;
   const snapModeRef = useRef(snapMode);
   snapModeRef.current = snapMode;
+  const snapTargetRef = useRef(snapTarget);
+  snapTargetRef.current = snapTarget;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -5474,13 +5482,6 @@ export function WorkplaneViewport({
    * Arbeitsebene. Anders als das Lineal sucht sie keine Ecke und keine Kante;
    * eine Notiz will dort stehen, wo hingezeigt wurde.
    */
-  /**
-   * Den Drehpunkt aus einem Klick auf eine Flaeche holen.
-   *
-   * Der Strahl liefert das getroffene Dreieck; `planarFaceCentroid` sucht von
-   * dort die ganze zusammenhaengende ebene Flaeche und gibt deren Mitte. Auf
-   * dem runden Ende eines Rohrs ist das seine Achse.
-   */
   /*
    * Die Marke fuer den Drehpunkt: eine kleine Kugel mit einem Kreuz darum,
    * damit man sie auch vor einer hellen Flaeche sieht. Sie haengt in ihrer
@@ -5521,7 +5522,7 @@ export function WorkplaneViewport({
    * Beide Zeigewerkzeuge brauchen dasselbe: den Koerper unter dem Zeiger, sein
    * Dreiecksnetz und die Nummer des getroffenen Dreiecks. Die Dreiecke liegen
    * in Klickreihenfolge hintereinander, je neun Zahlen - so, wie es
-   * `planarFaceCentroid` und `snapPointOnMesh` erwarten.
+   * `snapPointOnMesh` erwartet.
    */
   const pickShapeTriangles = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
@@ -5557,6 +5558,7 @@ export function WorkplaneViewport({
       shapeId: hit.object.userData.shapeId as string,
       positions: world,
       triangle: hit.faceIndex,
+      point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
       rect,
     };
   }, []);
@@ -5595,32 +5597,31 @@ export function WorkplaneViewport({
     state.needsRender = true;
   }, [snapAnchor]);
 
-  const resolveRotationPivot = useCallback((clientX: number, clientY: number) => {
-    const picked = pickShapeTriangles(clientX, clientY);
-    if (!picked) return null;
-    const centre = planarFaceCentroid(picked.positions, picked.triangle);
-    return centre ? { shapeId: picked.shapeId, point: centre } : null;
-  }, [pickShapeTriangles]);
-
   /**
-   * Den Punkt zum Ansetzen aus einem Klick holen.
+   * Den gezeigten Punkt aus einem Klick holen.
    *
    * Gemessen wird in Bildpunkten, also muss jeder Bewerber auf die Leinwand
    * abgebildet werden - dieselbe Rechnung, die auch die Kantenauswahl beim
    * Runden benutzt. Die Sichtpruefung schickt einen Strahl zur Kamera zurueck:
    * Was verdeckt ist, hat der Benutzer nicht gemeint.
+   *
+   * Dasselbe Werkzeug bedient auch den Drehpunkt. Der nahm bisher immer die
+   * Mitte der getroffenen Flaeche - das ist jetzt eine der Vorgaben unter
+   * mehreren, und welche gilt, sagt `snapTarget`.
    */
   const resolveSnapPoint = useCallback((clientX: number, clientY: number): SnapPick | null => {
     const state = threeRef.current;
     const picked = pickShapeTriangles(clientX, clientY);
     if (!state || !picked) return null;
-    const hit = snapPointOnMesh(
-      picked.positions,
-      picked.triangle,
-      { x: clientX - picked.rect.left, y: clientY - picked.rect.top },
-      (point) => projectCadPointToCanvas(new THREE.Vector3(point.x, point.y, point.z), state, picked.rect),
-      (point) => seesPoint(state, new THREE.Vector3(point.x, point.y, point.z), shapesRef.current),
-    );
+    const hit = snapPointOnMesh({
+      positions: picked.positions,
+      triangle: picked.triangle,
+      pointer: { x: clientX - picked.rect.left, y: clientY - picked.rect.top },
+      hitPoint: picked.point,
+      target: snapTargetRef.current,
+      project: (point) => projectCadPointToCanvas(new THREE.Vector3(point.x, point.y, point.z), state, picked.rect),
+      visible: (point) => seesPoint(state, new THREE.Vector3(point.x, point.y, point.z), shapesRef.current),
+    });
     return hit ? { shapeId: picked.shapeId, kind: hit.kind, point: hit.point } : null;
   }, [pickShapeTriangles]);
 
@@ -5900,15 +5901,21 @@ export function WorkplaneViewport({
         event.preventDefault();
         const picked = resolveSnapPoint(event.clientX, event.clientY);
         if (picked) onSnapPick?.(picked);
-        else onSnapMiss?.();
+        else onSnapMiss?.(pickShapeTriangles(event.clientX, event.clientY) ? "target" : "nothing");
         return;
       }
 
       if (pivotModeRef.current) {
         event.preventDefault();
-        const picked = resolveRotationPivot(event.clientX, event.clientY);
-        if (picked) onPivotPick?.(picked);
-        onPivotModeChange?.(false);
+        const picked = resolveSnapPoint(event.clientX, event.clientY);
+        if (picked) {
+          onPivotPick?.({ shapeId: picked.shapeId, point: picked.point });
+          onPivotModeChange?.(false);
+        } else {
+          // Daneben getroffen: Das Werkzeug bleibt in der Hand, sonst muesste
+          // man es nach jedem Fehlklick neu holen.
+          onSnapMiss?.(pickShapeTriangles(event.clientX, event.clientY) ? "target" : "nothing");
+        }
         return;
       }
 
