@@ -1679,6 +1679,125 @@ button {
   }
 }
 
+/* Die Objektliste. Sie sitzt links unter der Leiste, damit sie den
+   Eigenschaften auf der rechten Seite nicht ins Gehege kommt, und ist so
+   schmal wie moeglich - sie liegt ueber dem Bild. */
+.object-list-panel {
+  position: fixed;
+  top: calc(var(--editor-toolbar-height) + 14px);
+  left: 14px;
+  z-index: 46;
+  display: flex;
+  width: min(268px, calc(100vw - 28px));
+  max-height: calc(100vh - var(--editor-toolbar-height) - 96px);
+  flex-direction: column;
+  padding: 12px 12px 8px;
+  color: #274158;
+  background: rgba(250, 252, 254, 0.98);
+  border: 1px solid #c8d6e1;
+  border-radius: 12px;
+  box-shadow: 0 14px 38px rgba(30, 55, 74, 0.2);
+  backdrop-filter: blur(12px);
+}
+
+.object-list {
+  margin: 8px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.object-list-empty {
+  margin: 10px 2px 4px;
+  color: #5b7893;
+  font-size: 13px;
+}
+
+.object-list-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
+}
+
+.object-list-row.selected {
+  background: rgba(0, 174, 234, 0.16);
+}
+
+.object-list-row.hidden-shape .object-list-label {
+  opacity: 0.5;
+}
+
+.object-list-name {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.object-list-swatch {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  border: 1px solid rgba(39, 65, 88, 0.3);
+  border-radius: 3px;
+}
+
+.object-list-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.object-list-note {
+  flex: 0 0 auto;
+  color: #6d879e;
+  font-size: 11px;
+}
+
+.object-list-toggle {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  color: #5b7893;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.object-list-toggle:hover {
+  color: #274158;
+  background: rgba(0, 174, 234, 0.14);
+}
+
+html[data-theme="dark"] .object-list-panel {
+  color: #d8e4ef;
+  background: rgba(24, 33, 42, 0.97);
+  border-color: #3a4a5a;
+}
+
+html[data-theme="dark"] .object-list-note,
+html[data-theme="dark"] .object-list-empty,
+html[data-theme="dark"] .object-list-toggle {
+  color: #9fb4c7;
+}
+
+html[data-theme="dark"] .object-list-toggle:hover {
+  color: #e6eef6;
+}
+
 /* Das Feld der geoeffneten Gruppe steht unter den anderen Werkzeugfeldern und
    soll auffallen: Solange es da ist, ist die Zeichnung in einem Zwischenstand. */
 .open-group-panel {

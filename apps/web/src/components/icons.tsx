@@ -429,6 +429,24 @@ export function ToolbarPivotIcon(props: IconProps) {
 }
 
 /**
+ * Objektliste: drei Zeilen mit je einem Feld davor - die Liste der Koerper.
+ */
+export function ToolbarObjectListIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <g fill="currentColor">
+        <rect x="8" y="12" width="7" height="7" rx="1.6" />
+        <rect x="8" y="22" width="7" height="7" rx="1.6" />
+        <rect x="8" y="32" width="7" height="7" rx="1.6" />
+      </g>
+      <g fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+        <path d="M20 15.5h20M20 25.5h20M20 35.5h13" />
+      </g>
+    </svg>
+  );
+}
+
+/**
  * Gruppe oeffnen: der Gruppenkasten gestrichelt, die Teile darin einzeln
  * greifbar - einer schon herausgezogen.
  */

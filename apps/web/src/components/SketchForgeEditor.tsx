@@ -84,6 +84,7 @@ import {
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
   ToolbarLayFlatIcon,
+  ToolbarObjectListIcon,
   ToolbarOpenGroupIcon,
   ToolbarPivotIcon,
   ToolbarSnapPointsIcon,
@@ -196,6 +197,7 @@ import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@
 import { PatternPanel } from "./workplane/PatternPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
+import { ObjectListPanel } from "./workplane/ObjectListPanel";
 import {
   clampPatternCount,
   defaultPatternSettings,
@@ -6151,6 +6153,7 @@ export function SketchForgeEditor({
    */
   const [snapTarget, setSnapTarget] = useState<SnapTarget>("auto");
   const [layFlatMode, setLayFlatMode] = useState(false);
+  const [objectListOpen, setObjectListOpen] = useState(false);
   /*
    * Die geoeffnete Gruppe: ihre Kennung, wie sie vorher aussah, und welche
    * Teile jetzt einzeln in der Szene liegen. Beim Schliessen wird aus genau
@@ -9085,6 +9088,32 @@ export function SketchForgeEditor({
     );
   }, [commitShapes, hasSelection, selectedIds, selectedShapes, shapes]);
 
+  /*
+   * Auge und Schloss je Koerper - fuer die Objektliste. Die Knoepfe in der
+   * Leiste wirken auf die Auswahl; hier ist der Koerper gemeint, auf dessen
+   * Zeile geklickt wurde, und der muss dafuer nicht ausgewaehlt sein.
+   */
+  const setShapeHidden = useCallback((id: string, hidden: boolean) => {
+    const shape = shapesRef.current.find((entry) => entry.id === id);
+    if (!shape || shape.locked) {
+      setNotice(t("status.unlockBeforeHide"));
+      return;
+    }
+    commitShapes(
+      shapesRef.current.map((entry) => (entry.id === id ? { ...entry, hidden } : entry)),
+      selectedIdsRef.current,
+      hidden ? t("status.selectionHidden") : t("status.selectionVisible"),
+    );
+  }, [commitShapes]);
+
+  const setShapeLocked = useCallback((id: string, locked: boolean) => {
+    commitShapes(
+      shapesRef.current.map((entry) => (entry.id === id ? { ...entry, locked } : entry)),
+      selectedIdsRef.current,
+      locked ? t("status.selectionLocked") : t("status.selectionUnlocked"),
+    );
+  }, [commitShapes]);
+
   const showHidden = useCallback(() => {
     const hiddenCount = shapes.filter((shape) => shape.hidden).length;
     if (hiddenCount === 0) {
@@ -11355,6 +11384,8 @@ export function SketchForgeEditor({
         canGroup={selectedShapes.length > 1 && selectedShapes.every((shape) => !shape.locked)}
         onOpenGroup={openSelectedGroup}
         groupOpen={Boolean(openGroup)}
+        onToggleObjectList={() => setObjectListOpen((open) => !open)}
+        objectListOpen={objectListOpen}
         canIntersect={selectedShapes.some((shape) => !shape.locked && !shape.hole) && selectedShapes.some((shape) => !shape.locked && Boolean(shape.hole))}
         canUngroup={selectedShapes.some((shape) => Boolean(shape.groupedShapes?.length))}
         hasClipboard={clipboard.length > 0 || systemClipboardSupported}
@@ -11586,6 +11617,16 @@ export function SketchForgeEditor({
           />
         )}
       </div>
+      {objectListOpen ? (
+        <ObjectListPanel
+          shapes={shapes.filter((shape) => !isReferencePoint(shape))}
+          selectedIds={selectedIds}
+          onSelect={selectShape}
+          onSetHidden={setShapeHidden}
+          onSetLocked={setShapeLocked}
+          onClose={() => setObjectListOpen(false)}
+        />
+      ) : null}
       {openGroup ? (
         <OpenGroupPanel
           name={openGroup.shape.name}
@@ -11829,6 +11870,8 @@ function SecondaryToolbar({
   canGroup,
   onOpenGroup,
   groupOpen,
+  onToggleObjectList,
+  objectListOpen,
   canIntersect,
   canRedo,
   canUngroup,
@@ -11931,6 +11974,8 @@ function SecondaryToolbar({
   canGroup: boolean;
   onOpenGroup: () => void;
   groupOpen: boolean;
+  onToggleObjectList: () => void;
+  objectListOpen: boolean;
   canIntersect: boolean;
   canRedo: boolean;
   canUngroup: boolean;
@@ -12259,6 +12304,16 @@ function SecondaryToolbar({
         onToggleHidden();
       },
       enabled: hasSelection,
+    },
+    {
+      label: t("editor.objectList"),
+      icon: ToolbarObjectListIcon,
+      action: () => {
+        setVisibilityOpen(false);
+        onToggleObjectList();
+      },
+      enabled: true,
+      active: objectListOpen,
     },
   ];
   const combineTools = [
