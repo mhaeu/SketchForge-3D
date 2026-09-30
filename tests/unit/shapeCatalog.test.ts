@@ -3,6 +3,7 @@ import type { ShapeAsset } from "@/types/sketchforge";
 import { makeShapeFromAsset, sceneShape, toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
 import { canonicalizeShape, isSolidShape, solidShapesOnly } from "@/lib/workplaneShapes";
+import { teardropDepthFor } from "@/lib/boreGeometry";
 
 describe("shape catalog", () => {
   it("does not expose removed decorative shapes in the toolbar catalog", () => {
@@ -218,5 +219,56 @@ describe("shapes from the extended palette", () => {
     expect(isSolidShape(ruler)).toBe(false);
     expect(isSolidShape(makeShapeFromAsset(assetFor("box")))).toBe(true);
     expect(solidShapesOnly([ruler, makeShapeFromAsset(assetFor("box"))])).toHaveLength(1);
+  });
+});
+
+/**
+ * Die drei Bohrformen sind zum Abziehen gedacht. Kaemen sie als Vollkoerper
+ * in die Szene, muesste man sie jedes Mal erst umschalten - und wer das
+ * vergisst, druckt einen Zapfen statt eines Lochs.
+ */
+describe("Bohrformen", () => {
+  const boreAsset = (kind: "counterbore" | "countersink" | "teardrop"): ShapeAsset =>
+    toolbarShapeAssets.find((asset) => asset.kind === kind)!;
+
+  it("stehen im Formenmenue", () => {
+    const kinds = toolbarShapeAssets.map((asset) => asset.kind);
+    expect(kinds).toContain("counterbore");
+    expect(kinds).toContain("countersink");
+    expect(kinds).toContain("teardrop");
+  });
+
+  it("kommen als Abzugskoerper in die Szene", () => {
+    for (const kind of ["counterbore", "countersink", "teardrop"] as const) {
+      expect(makeShapeFromAsset(boreAsset(kind)).hole, kind).toBe(true);
+    }
+  });
+
+  it("bringen die Werte mit, die ihre Form braucht", () => {
+    const counterbore = makeShapeFromAsset(boreAsset("counterbore"));
+    expect(counterbore.boreHeadDiameter).toBeGreaterThan(counterbore.width);
+    expect(counterbore.boreHeadDepth).toBeGreaterThan(0);
+    expect(counterbore.boreHeadDepth).toBeLessThan(counterbore.height);
+    expect(counterbore.sides).toBe(64);
+
+    const countersink = makeShapeFromAsset(boreAsset("countersink"));
+    expect(countersink.boreHeadAngle).toBe(90);
+    expect(countersink.boreHeadDiameter).toBeGreaterThan(countersink.width);
+
+    const teardrop = makeShapeFromAsset(boreAsset("teardrop"));
+    expect(teardrop.boreTipAngle).toBe(90);
+  });
+
+  /**
+   * Die Tiefe eines Tropfenlochs ist kein eigenes Mass: Sie folgt aus Breite
+   * und Winkel, sonst waere das Loch nicht rund.
+   */
+  it("rechnen die Tiefe des Tropfenlochs aus Breite und Winkel", () => {
+    const teardrop = makeShapeFromAsset(boreAsset("teardrop"), undefined, { width: 12 });
+    expect(teardrop.width).toBe(12);
+    expect(teardrop.depth).toBeCloseTo(teardropDepthFor(12, 90), 6);
+    // Eine eingetragene Tiefe wird nicht genommen - sie waere ein Widerspruch.
+    const wanted = makeShapeFromAsset(boreAsset("teardrop"), undefined, { width: 12, depth: 99 });
+    expect(wanted.depth).toBeCloseTo(teardropDepthFor(12, 90), 6);
   });
 });
