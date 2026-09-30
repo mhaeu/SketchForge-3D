@@ -1,6 +1,6 @@
 "use client";
 
-import { BoxSelect, Check, Circle as CircleIcon, Grid2x2, Spline, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { BoxSelect, Check, Circle as CircleIcon, Grid2x2, Spline, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FilePlus2, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
@@ -168,9 +168,9 @@ import { attachProjectAsset, dedupeProjectAssets, projectAssetFromBytes, sourceF
 import { findSketchOutlineIntersection } from "@/lib/sketchProfileValidation";
 import { addLineIntersectionPoints, splitSketchSegment } from "@/lib/sketchPointRefinement";
 import { buildFilledSketchRevolveMesh, buildSketchRevolveMesh, DEFAULT_SKETCH_REVOLVE_SETTINGS, normalizeSketchRevolveSettings, type SketchRevolveMesh } from "@/lib/sketchRevolve";
-import { exportSkfProject, SKF_MEDIA_TYPE } from "@/lib/skfProject";
+import { exportSkfProject, importSkfProject, SKF_MEDIA_TYPE } from "@/lib/skfProject";
 import { makeShapeFromAsset, sceneShape, shapeAssetLabel, toolbarShapeAssets, type ToolbarShapeAsset } from "@/lib/shapeCatalog";
-import { ensureReferencePoint, isReferencePoint, referencePointPosition, REFERENCE_POINT_ID } from "@/lib/referencePoint";
+import { ensureReferencePoint, isReferencePoint, referencePointPosition, withoutReferencePoints, REFERENCE_POINT_ID } from "@/lib/referencePoint";
 import { importExtensionSupported } from "@/lib/importExtensions";
 import { importedShapeFromStl } from "@/lib/stlImport";
 import { importedShapeFrom3mf } from "@/lib/threemfImport";
@@ -6169,6 +6169,7 @@ export function SketchForgeEditor({
   const [notice, setNotice] = useState("Ready");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const projectFileInputRef = useRef<HTMLInputElement | null>(null);
+  const insertProjectInputRef = useRef<HTMLInputElement | null>(null);
   const sketchImageInputRef = useRef<HTMLInputElement | null>(null);
   const sketchSvgInputRef = useRef<HTMLInputElement | null>(null);
   const booleanAutomationRunRef = useRef<string | null>(null);
@@ -11027,6 +11028,45 @@ export function SketchForgeEditor({
     setTopPanel(null);
   }, [commitShapes, onOpenSkfProjectFile]);
 
+  /**
+   * Eine gespeicherte Zeichnung in die offene einfuegen.
+   *
+   * Bisher wurde aus einer .skf immer ein **neues** Projekt. Wer aus zwei
+   * Zeichnungen eine machen will - eine Halterung und der Deckel, der schon
+   * gezeichnet ist -, musste alles von Hand nachbauen.
+   *
+   * Die Koerper kommen mit frischen Kennungen herein, sonst traefen sie auf
+   * ihre eigenen aus der offenen Zeichnung. Ihre Lage behalten sie: Wer sie
+   * woanders haben will, verschiebt sie, und das ist besser, als eine Lage zu
+   * raten. Der Bezugspunkt der eingefuegten Zeichnung bleibt draussen - es
+   * gibt nur einen.
+   *
+   * Nach Layerling 1.19.0.
+   */
+  const insertSkfProject = useCallback(async (file: File) => {
+    try {
+      setNotice(t("status.projectInserting", { name: file.name }));
+      const restored = await importSkfProject(await file.arrayBuffer());
+      const incoming = withoutReferencePoints(restored.shapes)
+        .map((shape) => canonicalizeShape(cloneWorkplaneShapeTreeWithFreshIds(shape, "insert")));
+      if (incoming.length === 0) {
+        setNotice(t("status.projectInsertEmpty"));
+        return;
+      }
+      const nextAssets = dedupeProjectAssets([...projectAssetsRef.current, ...restored.assets]);
+      projectAssetsRef.current = nextAssets;
+      setProjectAssets(nextAssets);
+      commitShapes(
+        [...shapesRef.current, ...incoming],
+        incoming.map((shape) => shape.id),
+        t("status.projectInserted", { count: incoming.length, name: restored.projectName }),
+      );
+      setTopPanel(null);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t("notice.projectOpenFailed"));
+    }
+  }, [commitShapes]);
+
   const selectFiles = useCallback(
     (files: FileList | File[]) => {
       const selectedFiles = Array.from(files);
@@ -11730,6 +11770,7 @@ export function SketchForgeEditor({
           onImportFiles={selectFiles}
           onPickFile={() => fileInputRef.current?.click()}
           onPickProjectFile={() => projectFileInputRef.current?.click()}
+          onPickInsertProjectFile={() => insertProjectInputRef.current?.click()}
           onNotice={setNotice}
         />
       ) : null}
@@ -11763,6 +11804,17 @@ export function SketchForgeEditor({
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           if (file) selectFiles([file]);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={insertProjectInputRef}
+        className="hidden-file-input"
+        type="file"
+        accept=".skf"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) void insertSkfProject(file);
           event.currentTarget.value = "";
         }}
       />
@@ -13015,6 +13067,7 @@ function TopActionPanel({
   onImportFiles,
   onPickFile,
   onPickProjectFile,
+  onPickInsertProjectFile,
   onNotice,
 }: {
   panel: Exclude<TopPanel, null>;
@@ -13031,6 +13084,7 @@ function TopActionPanel({
   onImportFiles: (files: FileList | File[]) => void;
   onPickFile: () => void;
   onPickProjectFile: () => void;
+  onPickInsertProjectFile: () => void;
   onNotice: (message: string) => void;
 }) {
   const [exportFormat, setExportFormat] = useState<ExportFormat>("stl");
@@ -13108,6 +13162,13 @@ function TopActionPanel({
             <span>
               <strong>{t("import.openProject")}</strong>
               <small>{t("import.openProjectHintSkf")}</small>
+            </span>
+          </button>
+          <button className="open-skf-project-button" type="button" onClick={onPickInsertProjectFile}>
+            <span className="open-skf-project-icon"><FilePlus2 size={18} /></span>
+            <span>
+              <strong>{t("import.insertProject")}</strong>
+              <small>{t("import.insertProjectHint")}</small>
             </span>
           </button>
           <div className="import-kind-divider"><span>or add geometry</span></div>

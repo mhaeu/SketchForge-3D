@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock3, EllipsisVertical, FileUp, FolderKanban, Grid3X3, HomeIcon, List, Palette, Pencil, Plus, RefreshCw, Search, Settings, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Clock3, Download, EllipsisVertical, FileUp, FolderKanban, Grid3X3, HomeIcon, List, Palette, Pencil, Plus, RefreshCw, Search, Settings, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SketchForgeEditor, importedShapeFromObj, importedShapeFromStl, importedShapeFromSvg } from "@/components/SketchForgeEditor";
 import { importedShapeFrom3mf } from "@/lib/threemfImport";
@@ -9,7 +9,9 @@ import { applyAppTheme, readStoredAppTheme, resolveAppTheme, storeAppTheme, type
 import type { AppUpdateStatus } from "@/lib/appUpdates";
 import { isChallengeTutorialId, type ChallengeTutorialId } from "@/lib/challenges";
 import { hydrateEditorHistoryState, notesForHistoryIndex, type EditorHistoryEntry } from "@/lib/editorHistory";
+import { zipSync } from "fflate";
 import { createLocalId } from "@/lib/localIds";
+import { downloadBlobToChosenPlace, safeFileName, uniqueFileName } from "@/lib/fileDownload";
 import {
   horizontalPlacementWorkplane,
   normalizePlacementWorkplane,
@@ -200,6 +202,31 @@ function projectResourceRecordId(projectId: string, kind: ProjectShapeResourceRe
   return `${projectId}:${projectResourceKey(kind, resourceId)}`;
 }
 
+/**
+ * Das gespeicherte Paket einer Zeichnung, wie es auf der Platte liegt.
+ *
+ * Fuer die Sicherung genau das Richtige: kein Auspacken, kein Pruefen, kein
+ * Neuschreiben. Eine Datei, die sich gerade nicht lesen laesst, wird so
+ * mitgesichert, statt bei der Sicherung durchzufallen - und genau die will
+ * man ja in Haenden haben.
+ */
+async function readProjectPackage(projectId: string): Promise<Uint8Array | null> {
+  const database = await openProjectShapesDb();
+  try {
+    const record = await new Promise<ProjectShapeRecord | null>((resolve, reject) => {
+      const transaction = database.transaction(PROJECT_SHAPES_STORE_NAME, "readonly");
+      const request = transaction.objectStore(PROJECT_SHAPES_STORE_NAME).get(projectId);
+      request.onerror = () => reject(request.error ?? new Error(t("notice.projectShapesLoadFailed")));
+      request.onsuccess = () => resolve((request.result as ProjectShapeRecord | undefined) ?? null);
+      transaction.onerror = () => reject(transaction.error ?? new Error(t("notice.projectShapesLoadFailed")));
+    });
+    if (!record?.skfPackage) return null;
+    return record.skfPackage instanceof Uint8Array ? record.skfPackage : new Uint8Array(record.skfPackage as ArrayBuffer);
+  } finally {
+    database.close();
+  }
+}
+
 async function loadProjectShapes(projectId: string) {
   const database = await openProjectShapesDb();
   const record = await new Promise<ProjectShapeRecord | null>((resolve, reject) => {
@@ -279,8 +306,9 @@ async function loadProjectShapes(projectId: string) {
   };
 }
 
-async function saveProjectShapes(projectId: string, entry: ProjectShapeCacheEntry, context: ProjectShapeSaveContext) {
-  const skfPackage = await exportSkfProject({
+/** Das Paket zu einem Stand - dieselben Bytes, die auch gespeichert werden. */
+function projectPackageBytes(projectId: string, entry: ProjectShapeCacheEntry, context: ProjectShapeSaveContext) {
+  return exportSkfProject({
     projectId,
     projectName: context.projectName,
     createdAt: context.createdAt,
@@ -297,6 +325,10 @@ async function saveProjectShapes(projectId: string, entry: ProjectShapeCacheEntr
     sketchPlacementWorkplane: context.sketchPlacementWorkplane,
     compressionLevel: 1,
   });
+}
+
+async function saveProjectShapes(projectId: string, entry: ProjectShapeCacheEntry, context: ProjectShapeSaveContext) {
+  const skfPackage = await projectPackageBytes(projectId, entry, context);
   const database = await openProjectShapesDb();
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(PROJECT_SHAPES_STORE_NAME, "readwrite");
@@ -427,6 +459,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [themePreference, setThemePreference] = useState<AppThemePreference>("system");
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedAppTheme>("light");
+  const [backupRunning, setBackupRunning] = useState(false);
   const [downloadMode, setDownloadMode] = useState<DownloadMode>("browser");
   const [downloadFolder, setDownloadFolder] = useState("");
   const [showProjectNameInToolbar, setShowProjectNameInToolbar] = useState(true);
@@ -880,6 +913,68 @@ export default function Home() {
     });
   }, []);
 
+  /**
+   * Alle Zeichnungen in einem Archiv sichern.
+   *
+   * Genommen werden die gespeicherten Pakete, so wie sie auf der Platte
+   * liegen - kein Auspacken, kein Pruefen, kein Neuschreiben. Eine Datei, die
+   * sich gerade nicht oeffnen laesst, kommt so mit in die Sicherung, und
+   * genau die will man ja in Haenden haben.
+   *
+   * Nur wo kein Paket liegt - ein alter Eintrag, der noch nicht umgeschrieben
+   * wurde -, wird eines aus dem Stand im Arbeitsspeicher gebaut. Geht auch das
+   * nicht, sagt die Meldung, wie viele Zeichnungen fehlen.
+   *
+   * Nach Layerling 1.19.0.
+   */
+  const backupAllProjects = useCallback(async () => {
+    if (backupRunning || projects.length === 0) return;
+    setBackupRunning(true);
+    setDashboardNotice(t("notice.backupRunning", { count: projects.length }));
+    try {
+      const taken = new Set<string>();
+      const files: Record<string, Uint8Array> = {};
+      let missing = 0;
+      for (const project of projects) {
+        let bytes = await readProjectPackage(project.id).catch(() => null);
+        if (!bytes) {
+          const cached = projectShapesById[project.id];
+          bytes = cached
+            ? await projectPackageBytes(project.id, cached, projectShapeSaveContext(project)).catch(() => null)
+            : null;
+        }
+        if (!bytes) {
+          missing += 1;
+          continue;
+        }
+        files[uniqueFileName(`${safeFileName(project.name)}.skf`, taken)] = bytes;
+      }
+      const saved = Object.keys(files).length;
+      if (saved === 0) {
+        setDashboardNotice(t("notice.backupNothing"));
+        return;
+      }
+      // Die Pakete sind selbst schon gepackt: noch einmal zu packen kostet
+      // Zeit und bringt nichts.
+      const archive = zipSync(files, { level: 0 });
+      const fileName = `sketchforge-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+      const result = await downloadBlobToChosenPlace(
+        fileName,
+        new Blob([archive as BlobPart], { type: "application/zip" }),
+        { staticExportBuild: STATIC_EXPORT_BUILD, failureMessage: t("notice.backupFailed") },
+      );
+      setDashboardNotice(result.mode === "folder"
+        ? t("notice.backupSavedTo", { count: saved, path: result.path })
+        : missing > 0
+          ? t("notice.backupDonePartly", { count: saved, missing })
+          : t("notice.backupDone", { count: saved }));
+    } catch (error) {
+      setDashboardNotice(error instanceof Error ? error.message : t("notice.backupFailed"));
+    } finally {
+      setBackupRunning(false);
+    }
+  }, [backupRunning, projectShapesById, projects]);
+
   const createAndOpenProject = (name?: string, challengeTutorial: ChallengeTutorialId | null = null) => {
     const project = newProject(name ?? `Untitled design ${projects.length + 1}`, projects.length);
     setProjectShapesById((current) => ({
@@ -1190,6 +1285,9 @@ export default function Home() {
           onDeleteProject={deleteProject}
           onDeleteSharedProject={(project) => void deleteSharedProject(project)}
           onDownloadFolderChange={setDownloadFolder}
+          onBackupAll={() => void backupAllProjects()}
+          backupRunning={backupRunning}
+          projectCount={projects.length}
           onDownloadModeChange={setDownloadMode}
           onImportFile={() => dashboardImportInputRef.current?.click()}
           onChallenges={() => {
@@ -1350,6 +1448,9 @@ function Dashboard({
   onDeleteProject,
   onDeleteSharedProject,
   onDownloadFolderChange,
+  onBackupAll,
+  backupRunning,
+  projectCount,
   onDownloadModeChange,
   onImportFile,
   onChallenges,
@@ -1385,6 +1486,9 @@ function Dashboard({
   onDeleteProject: (projectId: string) => void;
   onDeleteSharedProject: (project: SharedProject) => void;
   onDownloadFolderChange: (value: string) => void;
+  onBackupAll: () => void;
+  backupRunning: boolean;
+  projectCount: number;
   onDownloadModeChange: (value: DownloadMode) => void;
   onImportFile: () => void;
   onChallenges: () => void;
@@ -1998,6 +2102,16 @@ function Dashboard({
               placeholder="C:\\Users\\username\\Downloads"
             />
           </label>
+          <section className="dashboard-backup-row" aria-label={t("settings.backupAll")}>
+            <div>
+              <strong>{t("settings.backupAll")}</strong>
+              <span>{t("settings.backupAllHint")}</span>
+            </div>
+            <button type="button" onClick={onBackupAll} disabled={backupRunning || projectCount === 0}>
+              <Download size={15} />
+              <span>{backupRunning ? t("notice.backupRunning", { count: projectCount }) : t("settings.backupAllButton")}</span>
+            </button>
+          </section>
           <div className="dashboard-version-row">
             <span>{t("updates.version")}</span>
             <strong>{desktopAppVersion ?? updateStatus?.currentVersion ?? SKF_CREATED_WITH_VERSION}</strong>
