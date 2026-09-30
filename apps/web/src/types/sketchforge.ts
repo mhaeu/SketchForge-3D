@@ -111,6 +111,8 @@ export type ShapeCustomizationMap = Partial<Record<ShapeKind, ShapeCustomization
 export type WorkplaneWorkspaceSettings = {
   width: number;
   depth: number;
+  /** Wie hoch der Drucker bauen kann, in Millimetern. */
+  buildHeight: number;
   sizePreset: string;
   gridBlockSize: number;
   gridBlockPreset: string;

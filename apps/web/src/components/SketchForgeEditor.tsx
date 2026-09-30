@@ -1,6 +1,6 @@
 "use client";
 
-import { BoxSelect, Check, Circle as CircleIcon, Grid2x2, Spline, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FilePlus2, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
+import { AlertTriangle, BoxSelect, Check, Circle as CircleIcon, Grid2x2, Spline, FlipHorizontal, FlipVertical, Link, Link2, Link2Off, RotateCcw, RotateCw, RulerDimensionLine, StretchVertical, UnfoldVertical, Unlink2, CloudUpload, Download, Eye, EyeOff, FilePlus2, FolderOpen, Hexagon as HexagonIcon, Square as SquareIcon, Triangle as TriangleIcon, X } from "lucide-react";
 import type manifoldModule from "manifold-3d";
 import type { ManifoldToplevel } from "manifold-3d";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
@@ -194,6 +194,7 @@ import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
+import { bodiesTooTall } from "@/lib/buildVolume";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
@@ -6628,6 +6629,27 @@ export function SketchForgeEditor({
    * Kreuz in der Luft und hat weder Ecke noch Kante, an die man ansetzen
    * koennte.
    */
+  /*
+   * Die Warnung fuer zu hohe Koerper.
+   *
+   * Sie steht, solange etwas ueber die Bauhoehe hinausragt - eine
+   * verschwindende Meldung waere hier falsch, denn der Umstand verschwindet
+   * nicht von selbst. Gemeldet wird der schlimmste Fall samt der Zahl.
+   */
+  const tooTallBodies = useMemo(
+    () => bodiesTooTall(shapes, workspaceSettings.buildHeight),
+    [shapes, workspaceSettings.buildHeight],
+  );
+  const tooTallWarning = useMemo(() => {
+    const worst = tooTallBodies[0];
+    if (!worst) return null;
+    const over = Number(worst.over.toFixed(1));
+    const height = Number(workspaceSettings.buildHeight.toFixed(1));
+    return tooTallBodies.length === 1
+      ? t("status.tooTallOne", { name: worst.name, over, height })
+      : t("status.tooTallMany", { count: tooTallBodies.length, name: worst.name, over, height });
+  }, [tooTallBodies, workspaceSettings.buildHeight]);
+
   const bodyCount = useMemo(() => shapes.filter((shape) => !isReferencePoint(shape) && !shape.hidden).length, [shapes]);
   // Alle grundsaetzlich bearbeitbaren Kanten, unabhaengig von der Schwelle -
   // gezeichnet werden sie gedaempft, anklickbar bleiben sie.
@@ -11831,6 +11853,20 @@ export function SketchForgeEditor({
           event.currentTarget.value = "";
         }}
       />
+      {tooTallWarning ? (
+        <button
+          className="editor-too-tall"
+          type="button"
+          role="alert"
+          title={tooTallWarning}
+          // Ein Klick waehlt die zu hohen Koerper aus - dann sieht man, um
+          // welche es geht, statt sie in der Liste suchen zu muessen.
+          onClick={() => selectShape(tooTallBodies.map((body) => body.id))}
+        >
+          <AlertTriangle size={15} />
+          <span>{tooTallWarning}</span>
+        </button>
+      ) : null}
       <div className="editor-toast" role="status" title={notice}>
         {notice}
       </div>

@@ -3765,6 +3765,42 @@ svg.sketch-reference-icon {
 
 /* Eine lange Meldung wird umgebrochen statt abgeschnitten - abgeschnitten
    stand dort die halbe Auskunft, und gerade die langen sagen etwas. */
+/* Die Warnung fuer zu hohe Koerper sitzt ueber der Statusmeldung, in Rot, und
+   bleibt stehen, solange sie gilt - der Umstand verschwindet nicht von
+   selbst. Ein Klick waehlt die betroffenen Koerper aus. */
+.editor-too-tall {
+  position: fixed;
+  left: 64px;
+  bottom: 54px;
+  z-index: 51;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: min(460px, calc(100vw - 380px));
+  padding: 8px 12px;
+  color: #8a2b20;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: left;
+  background: rgba(255, 238, 235, 0.96);
+  border: 1px solid #e3a79c;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(28, 48, 68, 0.14);
+  cursor: pointer;
+}
+
+.editor-too-tall svg {
+  flex: 0 0 auto;
+}
+
+html[data-theme="dark"] .editor-too-tall {
+  color: #ffc9bf;
+  background: rgba(64, 30, 26, 0.96);
+  border-color: #7d3a30;
+}
+
 .editor-toast {
   position: fixed;
   left: 64px;

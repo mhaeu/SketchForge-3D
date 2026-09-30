@@ -38,6 +38,7 @@ import {
 } from "@/lib/springGeometry";
 import { measurementOptionLabel, normalizeScaleForUnits, parseMeasurementInput, scaleOptionsForUnits, WORKSPACE_UNIT_OPTIONS } from "@/lib/measurementUnits";
 import { shapeAssetDefaultDimensions, shapeAssetSpecialDefaults, toolbarShapeAssets } from "@/lib/shapeCatalog";
+import { clampBuildHeight } from "@/lib/buildVolume";
 import { DEFAULT_WORKPLANE_WORKSPACE, MAX_CUSTOM_SHAPE_DIMENSION, MAX_HIGH_RESOLUTION_SIDES, MIN_CUSTOM_SHAPE_DIMENSION } from "@/lib/workplaneSettings";
 import type { GearType, GridSize, ShapeCustomization, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
@@ -260,6 +261,7 @@ export function WorkspaceSettingsModal({
     width: workspace.width.toFixed(workspace.accuracy),
     depth: workspace.depth.toFixed(workspace.accuracy),
   }));
+  const [buildHeightDraft, setBuildHeightDraft] = useState(() => clampBuildHeight(workspace.buildHeight).toFixed(workspace.accuracy));
   const [gridBlockSizeDraft, setGridBlockSizeDraft] = useState(() => workspace.gridBlockSize.toFixed(workspace.accuracy));
   const [customHistoryDraft, setCustomHistoryDraft] = useState(() =>
     typeof workspace.historyLimit === "number" && !isHistoryLimitPreset(workspace.historyLimit)
@@ -294,6 +296,9 @@ export function WorkspaceSettingsModal({
   useEffect(() => {
     setGridBlockSizeDraft(workspace.gridBlockSize.toFixed(workspace.accuracy));
   }, [workspace.accuracy, workspace.gridBlockSize]);
+  useEffect(() => {
+    setBuildHeightDraft(clampBuildHeight(workspace.buildHeight).toFixed(workspace.accuracy));
+  }, [workspace.accuracy, workspace.buildHeight]);
   useEffect(() => {
     if (typeof workspace.historyLimit === "number" && !isHistoryLimitPreset(workspace.historyLimit)) {
       setCustomHistoryDraft(String(workspace.historyLimit));
@@ -359,6 +364,12 @@ export function WorkspaceSettingsModal({
     const next = clamp(Number.isFinite(parsed) ? parsed : workspace[key], MIN_WORKSPACE_SIZE, MAX_WORKSPACE_SIZE);
     setDimensionDrafts((current) => ({ ...current, [key]: next.toFixed(workspace.accuracy) }));
     patchWorkspace({ [key]: next, sizePreset: "Custom" } as Partial<WorkspaceSettings>);
+  };
+  const setBuildHeight = (value: string) => {
+    const parsed = parseMeasurementInput(value);
+    const next = clampBuildHeight(Number.isFinite(parsed) ? parsed : workspace.buildHeight);
+    setBuildHeightDraft(next.toFixed(workspace.accuracy));
+    patchWorkspace({ buildHeight: next });
   };
   const setWorkspaceSizePreset = (sizePreset: string) => {
     const preset = WORKSPACE_SIZE_PRESETS.find((entry) => entry.label === sizePreset);
@@ -583,7 +594,23 @@ export function WorkspaceSettingsModal({
                         }}
                       />
                     </label>
+                    {/* Die Bauhoehe steht bei Breite und Laenge: Wer die Masse
+                        des Druckers eintraegt, sucht alle drei beieinander. */}
+                    <label>
+                      <span>{t("workspace.buildHeight")}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={buildHeightDraft}
+                        onChange={(event) => setBuildHeightDraft(event.currentTarget.value)}
+                        onBlur={(event) => setBuildHeight(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                    </label>
                   </div>
+                  <p className="workspace-field-hint">{t("workspace.buildHeightHint")}</p>
                   <WorkspaceToggle
                     label={t("workspace.showGrid")}
                     checked={workspace.showGrid}

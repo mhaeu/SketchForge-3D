@@ -1,6 +1,7 @@
 import type { GridSize, HistoryRetentionLimit, MeasurementAccuracy, ShapeCustomization, ShapeCustomizationMap, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { normalizeScaleForUnits } from "@/lib/measurementUnits";
 import { DEFAULT_WORKPLANE_GRID_COLOR } from "@/lib/workplaneGrid";
+import { clampBuildHeight, DEFAULT_BUILD_HEIGHT_MM } from "@/lib/buildVolume";
 import {
   MAX_THREAD_CLEARANCE,
   MAX_THREAD_DIAMETER,
@@ -27,6 +28,7 @@ export const MAX_HIGH_RESOLUTION_SIDES = 512;
 export const DEFAULT_WORKPLANE_WORKSPACE: WorkplaneWorkspaceSettings = {
   width: 200,
   depth: 200,
+  buildHeight: DEFAULT_BUILD_HEIGHT_MM,
   sizePreset: "200 x 200 mm",
   gridBlockSize: 5,
   gridBlockPreset: "5 mm",
@@ -214,6 +216,8 @@ export function normalizeWorkspaceSettings(value: unknown, fallback: WorkplaneWo
   return {
     width: numberOrDefault(candidate.width, fallback.width),
     depth: numberOrDefault(candidate.depth, fallback.depth),
+    // Alte Projekte haben keine Bauhoehe - dann gilt die uebliche.
+    buildHeight: clampBuildHeight(numberOrDefault(candidate.buildHeight, fallback.buildHeight)),
     sizePreset: stringOrDefault(candidate.sizePreset, fallback.sizePreset),
     gridBlockSize: numberOrDefault(candidate.gridBlockSize, fallback.gridBlockSize),
     gridBlockPreset: stringOrDefault(candidate.gridBlockPreset, fallback.gridBlockPreset),
