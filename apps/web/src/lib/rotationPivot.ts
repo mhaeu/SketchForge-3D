@@ -30,6 +30,20 @@ export type PivotPoint = { x: number; y: number; z: number };
  * Dreieck entartet ist.
  */
 export function planarFaceCentroid(positions: ArrayLike<number>, hitTriangle: number): PivotPoint | null {
+  return planarFace(positions, hitTriangle)?.centre ?? null;
+}
+
+/**
+ * Dieselbe Flaeche, samt ihrer Richtung.
+ *
+ * Die Normale ist die des getroffenen Dreiecks, und weil zur Flaeche nur
+ * zaehlt, was in derselben Ebene liegt, ist sie die Normale der ganzen
+ * Flaeche. Sie zeigt nach aussen, denn so liegen die Dreiecke im Netz.
+ *
+ * Gebraucht wird sie zum Flachlegen: Der Koerper dreht sich so, dass diese
+ * Richtung nach unten zeigt.
+ */
+export function planarFace(positions: ArrayLike<number>, hitTriangle: number): { centre: PivotPoint; normal: PivotPoint } | null {
   const triangleCount = Math.floor(positions.length / 9);
   if (hitTriangle < 0 || hitTriangle >= triangleCount) return null;
 
@@ -143,5 +157,8 @@ export function planarFaceCentroid(positions: ArrayLike<number>, hitTriangle: nu
     }
   }
 
-  return { x: cx / weight, y: cy / weight, z: cz / weight };
+  return {
+    centre: { x: cx / weight, y: cy / weight, z: cz / weight },
+    normal: { x: hx, y: hy, z: hz },
+  };
 }

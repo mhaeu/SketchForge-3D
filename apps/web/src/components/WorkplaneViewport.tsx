@@ -57,6 +57,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { snapPointOnMesh, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
+import { planarFace } from "@/lib/rotationPivot";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
@@ -246,6 +247,9 @@ type WorkplaneViewportProps = {
   snapMode?: SnapMode | null;
   /** Was ein Klick fassen soll - gilt auch fuer den Drehpunkt. */
   snapTarget?: SnapTarget;
+  /** Der naechste Klick sagt, welche Flaeche unten liegen soll. */
+  layFlatMode?: boolean;
+  onLayFlatPick?: (picked: { shapeId: string; centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
   /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
   snapAnchor?: SnapPick | null;
   onSnapPick?: (picked: SnapPick) => void;
@@ -3326,6 +3330,8 @@ export function WorkplaneViewport({
   onPivotModeChange,
   snapMode = null,
   snapTarget = "auto",
+  layFlatMode = false,
+  onLayFlatPick,
   snapAnchor = null,
   onSnapPick,
   onSnapMiss,
@@ -3395,6 +3401,8 @@ export function WorkplaneViewport({
   snapModeRef.current = snapMode;
   const snapTargetRef = useRef(snapTarget);
   snapTargetRef.current = snapTarget;
+  const layFlatModeRef = useRef(layFlatMode);
+  layFlatModeRef.current = layFlatMode;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4258,6 +4266,7 @@ export function WorkplaneViewport({
       && !alignMode
       && !mirrorMode
       && !snapMode
+      && !layFlatMode
       && !rulerMode
       && !rulerDeleteMode
       && !rulerMoveMode
@@ -4267,7 +4276,7 @@ export function WorkplaneViewport({
       state.transformGuideLayer.visible = visible;
       state.needsRender = true;
     }
-  }, [activeTransformKind, alignMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, snapMode, workplaneMode]);
+  }, [activeTransformKind, alignMode, layFlatMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, snapMode, workplaneMode]);
 
   useEffect(() => {
     window.sketchforgePerf = {
@@ -5897,6 +5906,15 @@ export function WorkplaneViewport({
         return;
       }
 
+      if (layFlatModeRef.current) {
+        event.preventDefault();
+        const picked = pickShapeTriangles(event.clientX, event.clientY);
+        const face = picked ? planarFace(picked.positions, picked.triangle) : null;
+        if (picked && face) onLayFlatPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
+        else onSnapMiss?.(picked ? "target" : "nothing");
+        return;
+      }
+
       if (snapModeRef.current) {
         event.preventDefault();
         const picked = resolveSnapPoint(event.clientX, event.clientY);
@@ -6204,6 +6222,8 @@ export function WorkplaneViewport({
       resolveSnapPoint,
       onSnapPick,
       onSnapMiss,
+      onLayFlatPick,
+      pickShapeTriangles,
       selectRulerCandidate,
       setMarqueeFromState,
       toPlanePoint,
@@ -6916,7 +6936,7 @@ export function WorkplaneViewport({
         )}
       </div>
 
-      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
+      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
         <div className="workplane-plane">
           <div
             className="three-workplane-host"
@@ -6943,7 +6963,7 @@ export function WorkplaneViewport({
               onCommit={commitMoveDimension}
             />
           ) : null}
-          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
+          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !layFlatMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
             <TransformOverlay
               box={transformOverlay}
               measureKey={pinnedMeasureKey ?? hoverMeasureKey}

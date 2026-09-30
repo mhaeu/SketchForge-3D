@@ -83,6 +83,7 @@ import {
   ToolbarUndoIcon,
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
+  ToolbarLayFlatIcon,
   ToolbarPivotIcon,
   ToolbarSnapPointsIcon,
   ToolbarSnapPointToWorkplaneIcon,
@@ -190,6 +191,7 @@ import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cut
 import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
+import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import {
@@ -6146,6 +6148,7 @@ export function SketchForgeEditor({
    * Drehpunkt zum Ansetzen wechselt.
    */
   const [snapTarget, setSnapTarget] = useState<SnapTarget>("auto");
+  const [layFlatMode, setLayFlatMode] = useState(false);
   const [mirrorPreviewAxis, setMirrorPreviewAxis] = useState<AlignAxis | null>(null);
   const [activeMode, setActiveMode] = useState(t("editor.mode3d"));
   const [notice, setNotice] = useState("Ready");
@@ -8204,6 +8207,7 @@ export function SketchForgeEditor({
     }
     setSnapMode(null);
     setSnapAnchor(null);
+    setLayFlatMode(false);
     setPivotMode(true);
     setNotice(t("status.pivotPick"));
   }, [hasSelection, pivotMode, rotationPivot]);
@@ -8236,6 +8240,7 @@ export function SketchForgeEditor({
     setPivotMode(false);
     setAlignMode(false);
     setMirrorMode(false);
+    setLayFlatMode(false);
     setSnapAnchor(null);
     setSnapMode(mode);
     setNotice(t(mode === "workplane" ? "status.snapPickWorkplane" : "status.snapPickSource"));
@@ -8308,6 +8313,73 @@ export function SketchForgeEditor({
       setSnapAnchor(null);
     }
   }, [moveBySnap, placementWorkplane, snapAnchor, snapMode]);
+
+  /**
+   * Auf eine Flaeche legen.
+   *
+   * Der Klick sagt, welche Flaeche unten liegen soll. Gedreht wird um die
+   * Mitte dieser Flaeche - so bleibt der Koerper dort, wo er steht, statt
+   * beim Drehen um seine eigene Mitte wegzuwandern - und danach setzt sich
+   * alles gemeinsam auf die Arbeitsebene.
+   *
+   * Gehoert der angeklickte Koerper zur Auswahl, dreht die ganze Auswahl um
+   * denselben Punkt: Eine Baugruppe legt sich als Ganzes flach, sonst faellt
+   * sie auseinander.
+   */
+  const toggleLayFlatTool = useCallback(() => {
+    if (layFlatMode) {
+      setLayFlatMode(false);
+      setNotice(t("status.layFlatCancelled"));
+      return;
+    }
+    setSnapMode(null);
+    setSnapAnchor(null);
+    setPivotMode(false);
+    setAlignMode(false);
+    setMirrorMode(false);
+    setLayFlatMode(true);
+    setNotice(t("status.layFlatPick"));
+  }, [layFlatMode]);
+
+  const layFlatOnFace = useCallback((picked: {
+    shapeId: string;
+    centre: { x: number; y: number; z: number };
+    normal: { x: number; y: number; z: number };
+  }) => {
+    const rotation = layFlatRotation(picked.normal, placementWorkplane);
+    const moving = snapMoveIds(picked.shapeId, selectedIds, shapes);
+    if (!rotation || moving.length === 0) {
+      setNotice(t("status.layFlatLocked"));
+      return;
+    }
+    const wanted = new Set(moving);
+    const pivot = new THREE.Vector3(picked.centre.x, picked.centre.y, picked.centre.z);
+    const laid = shapes.map((shape) => (wanted.has(shape.id)
+      ? canonicalizeShape({ ...shape, ...rotatedGeometryShapePatch(shape, rotation, pivot) })
+      : shape));
+    /*
+     * Erst drehen, dann messen: Wie tief der Koerper danach liegt, steht
+     * nicht in den Winkeln, sondern in seinem gedrehten Netz.
+     */
+    const translation = dropTogetherTranslation(
+      placementWorkplane,
+      laid.filter((shape) => wanted.has(shape.id)).flatMap((shape) => meshForShape(shape).vertices.map(([x, y, z]) => ({ x, y, z }))),
+    );
+    const angle = layFlatAngleDegrees(rotation);
+    commitShapes(
+      laid.map((shape) => (wanted.has(shape.id)
+        ? {
+            ...shape,
+            x: cleanNearZero(shape.x + translation.x),
+            z: cleanNearZero(shape.z + translation.z),
+            elevation: cleanNearZero((shape.elevation ?? 0) + translation.y),
+          }
+        : shape)),
+      moving,
+      angle < 0.05 ? t("status.layFlatAlready") : t("status.layFlatDone", { angle: Number(angle.toFixed(1)) }),
+    );
+    setLayFlatMode(false);
+  }, [commitShapes, placementWorkplane, selectedIds, shapes]);
 
   const missSnapPoint = useCallback((reason: "nothing" | "target") => {
     setNotice(t(reason === "target" ? "status.snapNoTarget" : "status.snapNothingThere"));
@@ -10979,10 +11051,11 @@ export function SketchForgeEditor({
           setNotice("");
           return;
         }
-        if (snapMode || pivotMode) {
+        if (snapMode || pivotMode || layFlatMode) {
           setSnapMode(null);
           setSnapAnchor(null);
           setPivotMode(false);
+          setLayFlatMode(false);
           setNotice(t("status.snapCancelled"));
           return;
         }
@@ -11143,8 +11216,9 @@ export function SketchForgeEditor({
     sketchUndo,
     setSelectionHoleMode,
     showHidden,
-    // Ohne diese beiden hielte der Zuhoerer den Wert vom Anheften fest, und
-    // Escape legte das Zeigewerkzeug nie ab.
+    // Ohne diese hielte der Zuhoerer den Wert vom Anheften fest, und Escape
+    // legte das Zeigewerkzeug nie ab.
+    layFlatMode,
     snapMode,
     toggleHidden,
     toggleMirrorMode,
@@ -11256,6 +11330,8 @@ export function SketchForgeEditor({
         patternActive={Boolean(patternTool)}
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
+        onLayFlat={toggleLayFlatTool}
+        layFlatActive={layFlatMode}
         onSnapPoints={() => toggleSnapTool("point")}
         onSnapPointToWorkplane={() => toggleSnapTool("workplane")}
         snapMode={snapMode}
@@ -11352,6 +11428,8 @@ export function SketchForgeEditor({
           onPivotModeChange={setPivotMode}
           snapMode={snapMode}
           snapTarget={snapTarget}
+          layFlatMode={layFlatMode}
+          onLayFlatPick={layFlatOnFace}
           snapAnchor={snapAnchor}
           onSnapPick={takeSnapPoint}
           onSnapMiss={missSnapPoint}
@@ -11701,6 +11779,8 @@ function SecondaryToolbar({
   patternActive,
   onPivot,
   pivotActive,
+  onLayFlat,
+  layFlatActive,
   onSnapPoints,
   onSnapPointToWorkplane,
   snapMode,
@@ -11799,6 +11879,8 @@ function SecondaryToolbar({
   patternActive: boolean;
   onPivot: () => void;
   pivotActive: boolean;
+  onLayFlat: () => void;
+  layFlatActive: boolean;
   onSnapPoints: () => void;
   onSnapPointToWorkplane: () => void;
   snapMode: SnapMode | null;
@@ -12084,6 +12166,7 @@ function SecondaryToolbar({
   const arrangeTools = [
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.dropToWorkplane"), icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
+    { label: t("editor.tool.layFlat"), icon: ToolbarLayFlatIcon, action: onLayFlat, enabled: canSnapToWorkplane, active: layFlatActive },
     { label: t("editor.tool.centerOnWorkplane"), icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
     { label: t("editor.tool.alignToWorkplane"), icon: ToolbarAlignToWorkplaneIcon, action: onAlignToWorkplane, enabled: hasSelection },
     // Diese beiden brauchen keine Auswahl: Der Klick sagt, welcher Koerper

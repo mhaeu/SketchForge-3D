@@ -429,6 +429,22 @@ export function ToolbarPivotIcon(props: IconProps) {
 }
 
 /**
+ * Auf eine Flaeche legen: ein gekippter Koerper, eine hervorgehobene Flaeche
+ * und der Pfeil, der sie nach unten auf die Platte dreht.
+ */
+export function ToolbarLayFlatIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M11 22 L27 10 L37 21 L21 33 Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M11 22 L27 10 L37 21 Z" fill="currentColor" opacity="0.34" />
+      <path d="M31 28 a11 11 0 0 1 -9 8" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M24 33 l-3 6 6 1 Z" fill="currentColor" />
+      <path d="M5 42h38" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
  * Punkt auf Punkt setzen: zwei Koerper, an jedem eine gezeigte Ecke, und ein
  * Pfeil, der die eine auf die andere bringt. Der wandernde Koerper ist
  * gestrichelt - er steht noch nicht da, wo er hin soll.
