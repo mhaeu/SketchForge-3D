@@ -195,6 +195,7 @@ import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
 import { bodiesTooTall } from "@/lib/buildVolume";
+import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
@@ -2418,6 +2419,40 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
     case "ring":
     case "tube":
       geometry = createBooleanHollowCylinderGeometry(width, height, depth, shape.bevel ?? 4, 144);
+      break;
+    /*
+     * Die Bohrformen rechnen hier mit demselben Netz wie in der Anzeige.
+     * Waeren sie hier nicht aufgefuehrt, fiele alles - Verschneiden, Ausfuhr,
+     * Gewicht - auf den Ausweichquader zurueck, und ein Loch sieht anders aus
+     * als ein Quader.
+     */
+    case "counterbore":
+      geometry = createCounterboreGeometry({
+        width,
+        depth,
+        height,
+        headDiameter: shape.boreHeadDiameter,
+        headDepth: shape.boreHeadDepth,
+        sides: shape.sides,
+      });
+      break;
+    case "countersink":
+      geometry = createCountersinkGeometry({
+        width,
+        depth,
+        height,
+        headDiameter: shape.boreHeadDiameter,
+        headAngle: shape.boreHeadAngle,
+        sides: shape.sides,
+      });
+      break;
+    case "teardrop":
+      geometry = createTeardropGeometry({
+        width,
+        height,
+        tipAngle: shape.boreTipAngle,
+        sides: shape.sides,
+      });
       break;
     case "gear":
       geometry = createGearGeometry({

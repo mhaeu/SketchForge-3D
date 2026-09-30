@@ -3,6 +3,14 @@ import { normalizeScaleForUnits } from "@/lib/measurementUnits";
 import { DEFAULT_WORKPLANE_GRID_COLOR } from "@/lib/workplaneGrid";
 import { clampBuildHeight, DEFAULT_BUILD_HEIGHT_MM } from "@/lib/buildVolume";
 import {
+  MAX_BORE_SIDES,
+  MAX_COUNTERSINK_ANGLE,
+  MAX_TEARDROP_TIP_ANGLE,
+  MIN_BORE_SIDES,
+  MIN_COUNTERSINK_ANGLE,
+  MIN_TEARDROP_TIP_ANGLE,
+} from "@/lib/boreGeometry";
+import {
   MAX_THREAD_CLEARANCE,
   MAX_THREAD_DIAMETER,
   MAX_THREAD_PITCH,
@@ -53,7 +61,7 @@ const snapGridOptions: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 
 const customizableShapeKinds: ShapeKind[] = [
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
-  "mesh", "loft",
+  "mesh", "loft", "counterbore", "countersink", "teardrop",
 ];
 
 function numberOrDefault(value: unknown, fallback: number) {
@@ -121,6 +129,21 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
       entry.honeycombCellSize = optionalShapeNumber(source.honeycombCellSize, fallbackEntry?.honeycombCellSize, 2, 100);
       entry.honeycombWallThickness = optionalShapeNumber(source.honeycombWallThickness, fallbackEntry?.honeycombWallThickness, 0.4, 50);
       entry.honeycombFrameWidth = optionalShapeNumber(source.honeycombFrameWidth, fallbackEntry?.honeycombFrameWidth, 0, 100);
+    }
+    if (kind === "counterbore" || kind === "countersink" || kind === "teardrop") {
+      entry.sides = optionalShapeNumber(source.sides, fallbackEntry?.sides, MIN_BORE_SIDES, MAX_BORE_SIDES, true);
+      if (kind === "counterbore" || kind === "countersink") {
+        entry.boreHeadDiameter = optionalShapeNumber(source.boreHeadDiameter, fallbackEntry?.boreHeadDiameter, 0.2, MAX_CUSTOM_SHAPE_DIMENSION);
+      }
+      if (kind === "counterbore") {
+        entry.boreHeadDepth = optionalShapeNumber(source.boreHeadDepth, fallbackEntry?.boreHeadDepth, 0.05, MAX_CUSTOM_SHAPE_DIMENSION);
+      }
+      if (kind === "countersink") {
+        entry.boreHeadAngle = optionalShapeNumber(source.boreHeadAngle, fallbackEntry?.boreHeadAngle, MIN_COUNTERSINK_ANGLE, MAX_COUNTERSINK_ANGLE);
+      }
+      if (kind === "teardrop") {
+        entry.boreTipAngle = optionalShapeNumber(source.boreTipAngle, fallbackEntry?.boreTipAngle, MIN_TEARDROP_TIP_ANGLE, MAX_TEARDROP_TIP_ANGLE);
+      }
     }
     if (kind === "roundedBox") {
       entry.cornerFillet = optionalShapeNumber(source.cornerFillet, fallbackEntry?.cornerFillet, 0, MAX_CUSTOM_SHAPE_DIMENSION / 2);

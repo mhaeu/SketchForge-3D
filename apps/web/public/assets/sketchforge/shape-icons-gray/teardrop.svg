@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Tropfenloch: der Kreis mit der Spitze oben, die der Drucker braucht. -->
+  <path d="M 128 34 L 194 100 A 66 66 0 1 1 62 100 Z"
+        fill="#b0b0b0" stroke="#4a4a4a" stroke-width="7" stroke-linejoin="round" />
+  <circle cx="128" cy="140" r="30" fill="#e3e3e3" stroke="#4a4a4a" stroke-width="7" />
+</svg>

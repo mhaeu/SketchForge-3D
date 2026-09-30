@@ -23,6 +23,20 @@ import {
   normalizeGearType,
   gearToothPitch,
 } from "@/lib/gearGeometry";
+import {
+  MAX_BORE_SIDES,
+  MAX_COUNTERSINK_ANGLE,
+  MAX_TEARDROP_TIP_ANGLE,
+  MIN_BORE_SIDES,
+  MIN_COUNTERSINK_ANGLE,
+  MIN_TEARDROP_TIP_ANGLE,
+  normalizeBoreHeadDepth,
+  normalizeBoreHeadDiameter,
+  normalizeBoreSides,
+  normalizeCountersinkAngle,
+  normalizeTeardropTipAngle,
+  teardropDepthFor,
+} from "@/lib/boreGeometry";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import { MIN_REGION_SIZE, regionSliderBounds, type ResizeRegion } from "@/lib/regionResize";
 import { regionTaperIsUntouched, untouchedRegionTaper, type RegionTaper } from "@/lib/regionTaper";
@@ -897,6 +911,135 @@ function getShapePropertiesWithAppLimits(
       { id: "length", label: t("prop.length"), value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
+  }
+
+  /*
+   * Die drei Bohrformen.
+   *
+   * Sie tragen alle den Seitenregler: Mit wenigen Seiten wird aus der Bohrung
+   * ein Vielkant - ein Sechskant fuer eine Mutter, ein Achtkant als
+   * Verdrehsicherung -, mit vielen bleibt sie rund.
+   */
+  if (shape.kind === "counterbore" || shape.kind === "countersink") {
+    const headDiameter = normalizeBoreHeadDiameter(shape.boreHeadDiameter, width);
+    const properties: ShapePropertyConfig[] = [
+      {
+        id: "boreHeadDiameter",
+        label: t("prop.boreHeadDiameter"),
+        value: headDiameter,
+        min: width * 1.05,
+        max: width * 6,
+        step: 0.1,
+        onChange: (value) => onUpdate({ boreHeadDiameter: normalizeBoreHeadDiameter(value, width) }),
+      },
+    ];
+    if (shape.kind === "counterbore") {
+      properties.push({
+        id: "boreHeadDepth",
+        label: t("prop.boreHeadDepth"),
+        value: normalizeBoreHeadDepth(shape.boreHeadDepth, shape.height),
+        min: shape.height * 0.02,
+        max: shape.height * 0.95,
+        step: 0.1,
+        onChange: (value) => onUpdate({ boreHeadDepth: normalizeBoreHeadDepth(value, shape.height) }),
+      });
+    } else {
+      properties.push({
+        id: "boreHeadAngle",
+        label: t("prop.boreHeadAngle"),
+        value: normalizeCountersinkAngle(shape.boreHeadAngle),
+        min: MIN_COUNTERSINK_ANGLE,
+        max: MAX_COUNTERSINK_ANGLE,
+        step: 1,
+        onChange: (value) => onUpdate({ boreHeadAngle: normalizeCountersinkAngle(value) }),
+      });
+    }
+    properties.push(
+      {
+        id: "sides",
+        label: t("prop.sides"),
+        value: normalizeBoreSides(shape.sides),
+        min: MIN_BORE_SIDES,
+        max: MAX_BORE_SIDES,
+        step: 1,
+        onChange: (value) => onUpdate({ sides: normalizeBoreSides(value) }),
+      },
+      // Breite heisst hier Schaftdurchmesser: Der Kopf folgt ihm, damit er
+      // nicht ploetzlich schmaler als der Schaft ist.
+      {
+        id: "width",
+        label: t("prop.boreShaft"),
+        value: width,
+        min: MIN_SHAPE_SIZE,
+        max: 160,
+        onChange: (value) => onUpdate({
+          width: value,
+          depth: value,
+          size: resizedShapeSize(value, value),
+          boreHeadDiameter: normalizeBoreHeadDiameter(shape.boreHeadDiameter, value),
+        }, { resizeAxis: "width" }),
+      },
+      {
+        id: "height",
+        label: t("prop.boreDepth"),
+        value: shape.height,
+        min: MIN_SHAPE_SIZE,
+        max: 160,
+        onChange: (value) => onUpdate({
+          height: value,
+          ...(shape.kind === "counterbore" ? { boreHeadDepth: normalizeBoreHeadDepth(shape.boreHeadDepth, value) } : {}),
+        }, { resizeAxis: "height" }),
+      },
+    );
+    return properties;
+  }
+
+  if (shape.kind === "teardrop") {
+    const tipAngle = normalizeTeardropTipAngle(shape.boreTipAngle);
+    return [
+      {
+        id: "boreTipAngle",
+        label: t("prop.boreTipAngle"),
+        value: tipAngle,
+        min: MIN_TEARDROP_TIP_ANGLE,
+        max: MAX_TEARDROP_TIP_ANGLE,
+        step: 1,
+        onChange: (value) => {
+          const next = normalizeTeardropTipAngle(value);
+          // Die Tiefe haengt am Winkel: eine spitzere Spitze steht hoeher.
+          onUpdate({ boreTipAngle: next, depth: teardropDepthFor(width, next) });
+        },
+      },
+      {
+        id: "sides",
+        label: t("prop.sides"),
+        value: normalizeBoreSides(shape.sides),
+        min: MIN_BORE_SIDES,
+        max: MAX_BORE_SIDES,
+        step: 1,
+        onChange: (value) => onUpdate({ sides: normalizeBoreSides(value) }),
+      },
+      {
+        id: "width",
+        label: t("prop.boreHole"),
+        value: width,
+        min: MIN_SHAPE_SIZE,
+        max: 160,
+        onChange: (value) => onUpdate({
+          width: value,
+          depth: teardropDepthFor(value, tipAngle),
+          size: resizedShapeSize(value, value),
+        }, { resizeAxis: "width" }),
+      },
+      {
+        id: "height",
+        label: t("prop.boreLength"),
+        value: shape.height,
+        min: MIN_SHAPE_SIZE,
+        max: 300,
+        onChange: setHeight,
+      },
     ];
   }
 

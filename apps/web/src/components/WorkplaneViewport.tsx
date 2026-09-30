@@ -58,6 +58,7 @@ import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/camer
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { snapPointOnMesh, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { planarFace } from "@/lib/rotationPivot";
+import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
@@ -9489,6 +9490,36 @@ function createShapeObject(
       break;
     case "tube":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createHollowCylinderGeometry(width, height, depth, shape.bevel ?? 4, 144)), material, shape);
+      break;
+    case "counterbore":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createCounterboreGeometry({
+        width,
+        depth,
+        height,
+        headDiameter: shape.boreHeadDiameter,
+        headDepth: shape.boreHeadDepth,
+        sides: shape.sides,
+      })), material, shape);
+      break;
+    case "countersink":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createCountersinkGeometry({
+        width,
+        depth,
+        height,
+        headDiameter: shape.boreHeadDiameter,
+        headAngle: shape.boreHeadAngle,
+        sides: shape.sides,
+      })), material, shape);
+      break;
+    case "teardrop":
+      // Die Tiefe steht im Datensatz, gerechnet aus Breite und Winkel - das
+      // Netz baut sie aus denselben Zahlen und braucht sie nicht.
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createTeardropGeometry({
+        width,
+        height,
+        tipAngle: shape.boreTipAngle,
+        sides: shape.sides,
+      })), material, shape);
       break;
     case "gear":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createGearGeometry({

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Senkung: der Kegel ueber dem Schaft, im Schnitt. -->
+  <path d="M 56 60 L 200 60 L 158 122 L 158 208 L 98 208 L 98 122 Z"
+        fill="#b0b0b0" stroke="#4a4a4a" stroke-width="7" stroke-linejoin="round" />
+  <ellipse cx="128" cy="60" rx="72" ry="20" fill="#e3e3e3" stroke="#4a4a4a" stroke-width="7" />
+</svg>

@@ -25,6 +25,9 @@ export type ShapeKind =
   | "icosahedron"
   | "mesh"
   | "reference"
+  | "counterbore"
+  | "countersink"
+  | "teardrop"
   | "loft";
 
 /** Was fuer ein Koerper das Gewinde ist - Stange, Schraube, Gewindestift, Mutter, Loch. */
@@ -83,6 +86,14 @@ export type ShapeCustomization = {
   topWidth?: number;
   topDepth?: number;
   baseRadius?: number;
+  /** Bohrformen: Kopfdurchmesser der Senkung bzw. Zylindersenkung, in mm. */
+  boreHeadDiameter?: number;
+  /** Zylindersenkung: wie tief die weite Bohrung reicht, in mm. */
+  boreHeadDepth?: number;
+  /** Senkung: der ganze Kegelwinkel, in Grad. */
+  boreHeadAngle?: number;
+  /** Tropfenloch: der Spitzenwinkel, in Grad. */
+  boreTipAngle?: number;
   teeth?: number;
   toothSize?: number;
   toothWidth?: number;
@@ -409,6 +420,20 @@ export type WorkplaneShape = {
   taperHeightRight?: number;
   taperHeightFront?: number;
   taperHeightBack?: number;
+  /** Bohrformen: Kopfdurchmesser der Senkung bzw. Zylindersenkung, in mm. */
+  boreHeadDiameter?: number;
+  /** Zylindersenkung: wie tief die weite Bohrung reicht, in mm. */
+  boreHeadDepth?: number;
+  /** Senkung: der ganze Kegelwinkel, in Grad. */
+  boreHeadAngle?: number;
+  /**
+   * Tropfenloch: der Spitzenwinkel, in Grad.
+   *
+   * Die Tiefe des Koerpers folgt daraus und aus der Breite - siehe
+   * `teardropDepthFor`. Ein eigenes Mass waere sie nicht: Wer daran drehen
+   * koennte, machte aus dem runden Loch ein ovales.
+   */
+  boreTipAngle?: number;
   teeth?: number;
   toothSize?: number;
   toothWidth?: number;

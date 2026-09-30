@@ -77,6 +77,7 @@ describe("SketchForge .skf project packages", () => {
     const nativeKinds: ShapeKind[] = [
       "box", "cylinder", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
       "halfSphere", "torus", "tube", "gear", "ring", "wedge", "polygon", "icosahedron", "loft",
+      "counterbore", "countersink", "teardrop",
     ];
     const shapes = nativeKinds.map((kind, index) => shape(kind, `${kind}-${index}`, {
       hole: index === 2,
@@ -98,6 +99,10 @@ describe("SketchForge .skf project packages", () => {
       loftBottomRotation: kind === "loft" ? 15 : undefined,
       loftTopRotation: kind === "loft" ? 45 : undefined,
       loftSegments: kind === "loft" ? 60 : undefined,
+      boreHeadDiameter: kind === "counterbore" || kind === "countersink" ? 18 : undefined,
+      boreHeadDepth: kind === "counterbore" ? 7 : undefined,
+      boreHeadAngle: kind === "countersink" ? 82 : undefined,
+      boreTipAngle: kind === "teardrop" ? 60 : undefined,
       loftLayers: kind === "loft" ? 30 : undefined,
       text: kind === "text" ? "Editable" : undefined,
       sketchProfile: kind === "sketch" ? {

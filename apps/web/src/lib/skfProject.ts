@@ -32,6 +32,7 @@ export const SKF_LIMITS = {
 const SHAPE_KINDS = new Set([
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
+  "counterbore", "countersink", "teardrop",
 ]);
 
 const LOFT_PROFILE_SHAPES = new Set(["Oval", "Rectangle", "Triangle", "Pentagon", "Hexagon"]);

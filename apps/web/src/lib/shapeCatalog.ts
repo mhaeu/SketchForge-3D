@@ -17,6 +17,18 @@ import {
 } from "@/lib/roundedBoxGeometry";
 import { canonicalizeShape } from "@/lib/workplaneShapes";
 import { normalizePyramidTop } from "@/lib/pyramidGeometry";
+import {
+  DEFAULT_BORE_SIDES,
+  isBoreKind,
+  normalizeCountersinkAngle,
+  normalizeBoreSides,
+  normalizeTeardropTipAngle,
+  DEFAULT_COUNTERSINK_ANGLE,
+  DEFAULT_TEARDROP_TIP_ANGLE,
+  normalizeBoreHeadDepth,
+  normalizeBoreHeadDiameter,
+  teardropDepthFor,
+} from "@/lib/boreGeometry";
 import { t, type MessageKey } from "@/lib/i18n";
 import { createLocalId } from "@/lib/localIds";
 import {
@@ -96,6 +108,9 @@ const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   ruler: "shape.ruler",
   gear: "shape.gear",
   loft: "shape.loft",
+  counterbore: "shape.counterbore",
+  countersink: "shape.countersink",
+  teardrop: "shape.teardrop",
   "thread-external": "shape.threadExternal",
   "thread-internal": "shape.threadInternal",
 };
@@ -128,6 +143,11 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "ruler", name: "Ruler", src: "assets/sketchforge/shape-icons-gray/ruler.png", menuIcon: "assets/sketchforge/shape-icons-gray/ruler.png", kind: "ruler", color: "#f2e4b8" },
   { id: "gear", name: "Gear", src: "assets/sketchforge/gear-types/spur.png", menuIcon: "assets/sketchforge/gear-types/spur.png", kind: "gear", color: "#6f7f8d" },
   { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
+  // Die drei Bohrformen. Sie sind zum Abziehen gedacht - hinstellen, mit dem
+  // Werkstueck verschneiden, fertig - und tragen darum eine eigene Farbe.
+  { id: "counterbore", name: "Counterbore", src: "assets/sketchforge/shape-icons-gray/counterbore.svg", menuIcon: "assets/sketchforge/shape-icons-gray/counterbore.svg", kind: "counterbore", color: "#8d95a3", hole: true },
+  { id: "countersink", name: "Countersink", src: "assets/sketchforge/shape-icons-gray/countersink.svg", menuIcon: "assets/sketchforge/shape-icons-gray/countersink.svg", kind: "countersink", color: "#8d95a3", hole: true },
+  { id: "teardrop", name: "Teardrop hole", src: "assets/sketchforge/shape-icons-gray/teardrop.svg", menuIcon: "assets/sketchforge/shape-icons-gray/teardrop.svg", kind: "teardrop", color: "#8d95a3", hole: true },
 
   // The two generated-mesh threads are gone from the palette: the parametric
   // "thread" above does everything they did and more. Their code path stays -
@@ -156,6 +176,15 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
   }
   if (kind === "ruler") {
     return { width: 150, depth: RULER_DEPTH, height: RULER_HEIGHT };
+  }
+  if (kind === "counterbore" || kind === "countersink") {
+    // Ein Loch fuer eine M5: Schaft 5,2 mm, Kopf breiter, und tief genug, um
+    // durch eine gewoehnliche Wand zu gehen.
+    return { width: 5.2, depth: 5.2, height: 20 };
+  }
+  if (kind === "teardrop") {
+    // Die Tiefe folgt der Breite samt Spitze - sie ist kein eigenes Mass.
+    return { width: 8, depth: teardropDepthFor(8, DEFAULT_TEARDROP_TIP_ANGLE), height: 24 };
   }
   if (kind === "ellipse") {
     // Bewusst ungleiche Vorgabe, damit sich die Ellipse beim Einfuegen sofort
@@ -200,6 +229,21 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
   if (kind === "pyramid") return { sides: 4, topWidth: 0, topDepth: 0 };
   if (kind === "roundRoof") return { sides: 64 };
   if (kind === "tube" || kind === "ring") return { bevel: 4 };
+  if (kind === "counterbore") {
+    return {
+      sides: DEFAULT_BORE_SIDES,
+      boreHeadDiameter: normalizeBoreHeadDiameter(undefined, dimensions.width),
+      boreHeadDepth: normalizeBoreHeadDepth(undefined, dimensions.height),
+    };
+  }
+  if (kind === "countersink") {
+    return {
+      sides: DEFAULT_BORE_SIDES,
+      boreHeadDiameter: normalizeBoreHeadDiameter(undefined, dimensions.width),
+      boreHeadAngle: DEFAULT_COUNTERSINK_ANGLE,
+    };
+  }
+  if (kind === "teardrop") return { sides: DEFAULT_BORE_SIDES, boreTipAngle: DEFAULT_TEARDROP_TIP_ANGLE };
   if (kind === "text") return { text: "TEXT", font: "Multilanguage", bevel: 0, segments: 0 };
   if (kind === "spring") {
     return {
@@ -380,7 +424,10 @@ export function makeShapeFromAsset(
   }) : null;
   const threadFootprint = threadDefaults ? threadNaturalFootprint(threadDefaults) : null;
   const width = threadFootprint?.width ?? customization.width ?? defaults.width;
-  const depth = threadFootprint?.depth ?? customization.depth ?? defaults.depth;
+  const teardropWidth = customization.width ?? defaults.width;
+  const depth = asset.kind === "teardrop"
+    ? teardropDepthFor(teardropWidth, normalizeTeardropTipAngle(customization.boreTipAngle))
+    : threadFootprint?.depth ?? customization.depth ?? defaults.depth;
   const height = customization.height ?? (threadDefaults ? threadNaturalHeight(threadDefaults) : defaults.height);
   const size = Math.max(width, depth);
   const gearTeeth = asset.kind === "gear" ? normalizeGearTeeth(customization.teeth ?? DEFAULT_GEAR_TEETH) : undefined;
@@ -407,7 +454,11 @@ export function makeShapeFromAsset(
     text: asset.kind === "text" ? customization.text ?? "TEXT" : undefined,
     font: asset.kind === "text" ? customization.font ?? "Multilanguage" : undefined,
     steps: asset.kind === "box" ? 10 : asset.kind === "sphere" ? customization.steps ?? 24 : asset.kind === "halfSphere" ? customization.steps ?? 32 : undefined,
-    sides: asset.kind === "cylinder" || asset.kind === "ellipse" || asset.kind === "cone" ? customization.sides ?? 96 : asset.kind === "roundRoof" ? customization.sides ?? 64 : asset.kind === "pyramid" ? customization.sides ?? 4 : asset.kind === "polygon" ? customization.sides ?? 6 : undefined,
+    sides: asset.kind === "cylinder" || asset.kind === "ellipse" || asset.kind === "cone" ? customization.sides ?? 96 : asset.kind === "roundRoof" ? customization.sides ?? 64 : asset.kind === "pyramid" ? customization.sides ?? 4 : asset.kind === "polygon" ? customization.sides ?? 6 : isBoreKind(asset.kind) ? normalizeBoreSides(customization.sides) : undefined,
+    boreHeadDiameter: asset.kind === "counterbore" || asset.kind === "countersink" ? normalizeBoreHeadDiameter(customization.boreHeadDiameter, width) : undefined,
+    boreHeadDepth: asset.kind === "counterbore" ? normalizeBoreHeadDepth(customization.boreHeadDepth, height) : undefined,
+    boreHeadAngle: asset.kind === "countersink" ? normalizeCountersinkAngle(customization.boreHeadAngle) : undefined,
+    boreTipAngle: asset.kind === "teardrop" ? normalizeTeardropTipAngle(customization.boreTipAngle) : undefined,
     bevel: asset.kind === "cylinder" || asset.kind === "ellipse" ? 0 : asset.kind === "tube" || asset.kind === "ring" ? customization.bevel ?? 4 : asset.kind === "text" ? customization.bevel : undefined,
     segments: asset.kind === "cylinder" || asset.kind === "ellipse" ? 1 : asset.kind === "text" ? customization.segments : undefined,
     topRadius: asset.kind === "cone" ? customization.topRadius ?? 0 : undefined,
