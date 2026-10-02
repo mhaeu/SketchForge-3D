@@ -11362,6 +11362,23 @@ export function SketchForgeEditor({
         return;
       }
 
+      /*
+       * Importieren und Ausfuehren ueber die Tastatur. Beides lag nur im
+       * Menue, und beides macht man am oeftesten - ein Entwurf geht ein
+       * Dutzend Mal durch den Drucker.
+       */
+      if (shortcut && key === "i") {
+        event.preventDefault();
+        setTopPanel(topPanel === "import" ? null : "import");
+        return;
+      }
+
+      if (shortcut && key === "e") {
+        event.preventDefault();
+        setTopPanel(topPanel === "export" ? null : "export");
+        return;
+      }
+
       if (shortcut && key === "h") {
         event.preventDefault();
         if (event.shiftKey) {
@@ -11445,6 +11462,7 @@ export function SketchForgeEditor({
     sketchUndo,
     setSelectionHoleMode,
     showHidden,
+    topPanel,
     // Ohne diese hielte der Zuhoerer den Wert vom Anheften fest, und Escape
     // legte das Zeigewerkzeug nie ab.
     layFlatMode,

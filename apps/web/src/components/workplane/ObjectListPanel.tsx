@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Eye, EyeOff, Lock, LockOpen, X } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -39,12 +40,40 @@ export function ObjectListPanel({
   /** Alle Koerper, in der Reihenfolge der Szene; der Bezugspunkt ist schon heraus. */
   shapes: ReadonlyArray<WorkplaneShape>;
   selectedIds: ReadonlyArray<string>;
-  onSelect: (id: string, mode: "replace" | "toggle") => void;
+  onSelect: (id: string | string[], mode: "replace" | "toggle") => void;
   onSetHidden: (id: string, hidden: boolean) => void;
   onSetLocked: (id: string, locked: boolean) => void;
   onClose: () => void;
 }) {
   useLanguage();
+  /*
+   * Der Anker fuer die Bereichsauswahl: die Zeile, auf die zuletzt ohne
+   * Umschalttaste geklickt wurde. Shift waehlt von dort bis hierher - so, wie
+   * man es aus jeder Liste kennt. Strg schaltet eine einzelne Zeile dazu oder
+   * ab; vorher tat Shift dasselbe wie Strg, und eine Reihe von zwanzig
+   * Koerpern musste man zwanzigmal anklicken.
+   */
+  const anchorRef = useRef<string | null>(null);
+  const clickRow = (id: string, event: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
+    const anchor = anchorRef.current;
+    if (event.shiftKey && anchor && anchor !== id) {
+      const from = shapes.findIndex((shape) => shape.id === anchor);
+      const to = shapes.findIndex((shape) => shape.id === id);
+      if (from >= 0 && to >= 0) {
+        const range = shapes.slice(Math.min(from, to), Math.max(from, to) + 1).map((shape) => shape.id);
+        onSelect(range, "replace");
+        return;
+      }
+    }
+    if (event.ctrlKey || event.metaKey) {
+      onSelect(id, "toggle");
+      // Der Anker wandert mit: Von hier aus geht die naechste Reihe los.
+      anchorRef.current = id;
+      return;
+    }
+    anchorRef.current = id;
+    onSelect(id, "replace");
+  };
   return (
     <aside className="object-list-panel" aria-label={t("objectList.title")}>
       <div className="edge-modifier-header">
@@ -68,9 +97,8 @@ export function ObjectListPanel({
                   className="object-list-name"
                   aria-pressed={selected}
                   title={shape.name}
-                  // Mit Steuerungs- oder Umschalttaste dazu- oder abwaehlen,
-                  // wie im Bild selbst.
-                  onClick={(event) => onSelect(shape.id, event.ctrlKey || event.metaKey || event.shiftKey ? "toggle" : "replace")}
+                  // Strg waehlt einzeln dazu, Shift einen ganzen Bereich.
+                  onClick={(event) => clickRow(shape.id, event)}
                 >
                   <span className="object-list-swatch" style={{ background: shape.color }} aria-hidden="true" />
                   <span className="object-list-label">{shape.name}</span>

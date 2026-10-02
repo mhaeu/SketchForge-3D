@@ -132,7 +132,7 @@ describe("STEP export round-trip (real OCCT kernel)", () => {
   });
 
   it("throws when there is nothing exact to export", async () => {
-    await expect(exportShapesToStep([shape({ kind: "pyramid", name: "Pyramid" })])).rejects.toThrow(/No box\/cylinder\/sphere/i);
+    await expect(exportShapesToStep([shape({ kind: "pyramid", name: "Pyramid" })])).rejects.toThrow(/No exportable B-Rep solids/i);
   });
 });
 
