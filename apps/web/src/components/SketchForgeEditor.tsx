@@ -196,6 +196,7 @@ import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
 import { bodiesTooTall } from "@/lib/buildVolume";
+import { toolbarDensityFor, TOOLBAR_BASE_ICON_SIZE } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
@@ -3312,6 +3313,40 @@ function mirrorFlagPatch(shape: WorkplaneShape, axis: AlignAxis) {
 
 function reflectionMatrixForAxis(axis: AlignAxis) {
   return new THREE.Matrix4().makeScale(axis === "x" ? -1 : 1, axis === "y" ? -1 : 1, axis === "z" ? -1 : 1);
+}
+
+/**
+ * Die Werkzeugleiste messen und ihre Stufe setzen.
+ *
+ * Gemessen wird die Summe der festen Abschnitte. Der Fuellstreifen zaehlt
+ * nicht mit, denn er waechst in den freien Platz hinein und wuerde die Summe
+ * immer so gross machen wie die Leiste; vom Namensfeld zaehlt nur seine
+ * Mindestbreite. Welche Stufe daraus folgt, rechnet `toolbarDensityFor` -
+ * und zwar so, dass die Entscheidung nicht an der Stufe haengt, die gerade
+ * gilt.
+ */
+function applyToolbarDensity(bar: HTMLElement, content: HTMLElement) {
+  const available = content.clientWidth;
+  if (available <= 0) return;
+  let fixed = 0;
+  let flexible = 0;
+  Array.from(content.children).forEach((child) => {
+    if (!(child instanceof HTMLElement)) return;
+    if (!child.classList.contains("toolbar-spacer")) {
+      fixed += child.offsetWidth;
+      return;
+    }
+    const minWidth = Number.parseFloat(getComputedStyle(child).minWidth);
+    flexible += Number.isFinite(minWidth) ? minWidth : 0;
+  });
+  const density = toolbarDensityFor({
+    available,
+    fixed,
+    flexible,
+    icons: content.querySelectorAll(".toolbar-icon, .shape-menu-trigger, .action-icon-button").length,
+    currentIconSize: Number.parseFloat(getComputedStyle(bar).getPropertyValue("--toolbar-icon-size")) || TOOLBAR_BASE_ICON_SIZE,
+  });
+  if (bar.dataset.density !== density) bar.dataset.density = density;
 }
 
 /** Wie der gefasste Punkt in der Rueckmeldung heisst. */
@@ -12374,11 +12409,18 @@ function SecondaryToolbar({
    * Leistenkasten und ist von seiner Hoehe unabhaengig.
    */
   const toolbarContentRef = useRef<HTMLDivElement | null>(null);
+  const toolbarBarRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     const content = toolbarContentRef.current;
-    if (!content || typeof ResizeObserver === "undefined") return;
+    const bar = toolbarBarRef.current;
+    if (!content || !bar || typeof ResizeObserver === "undefined") return;
     const root = document.documentElement;
     const apply = () => {
+      /*
+       * Erst die Dichte, dann die Hoehe - in dieser Reihenfolge, denn eine
+       * kleinere Stufe kann den Umbruch verhindern und damit die Hoehe aendern.
+       */
+      applyToolbarDensity(bar, content);
       const styles = getComputedStyle(root);
       const title = Number.parseFloat(styles.getPropertyValue("--editor-toolbar-title-height")) || 32;
       // Eine verborgene Leiste misst null - dann bleibt die Hoehe fuer eine Zeile.
@@ -12392,7 +12434,7 @@ function SecondaryToolbar({
       observer.disconnect();
       root.style.removeProperty("--editor-toolbar-height");
     };
-  }, []);
+  }, [toolbarMode, projectName, showProjectNameInToolbar]);
   const [shapesOpen, setShapesOpen] = useState(false);
   const [sketchCreateOpen, setSketchCreateOpen] = useState(false);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
@@ -12667,7 +12709,7 @@ function SecondaryToolbar({
   };
 
   return (
-    <div className="secondary-toolbar">
+    <div className="secondary-toolbar" ref={toolbarBarRef} data-density="full">
       <div ref={toolbarContentRef} className={`toolbar-mode-content ${toolbarMode}`}>
         {toolbarMode === "geometry" ? (
           <>

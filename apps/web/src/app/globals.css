@@ -1632,51 +1632,46 @@ button {
   line-height: 1.35;
 }
 
-/* Die Leiste traegt zwoelf Abschnitte und braucht in voller Groesse etwa
-   1880px - mehr, als ein Schirm hat. Bevor sie umbricht, gehen die Symbole in
-   zwei Stufen zurueck (etwa 1740px und 1520px), denn eine Zeile ist leichter
-   zu lesen als zwei. Reicht auch die kleinste Stufe nicht, brechen die
-   Gruppen um (siehe `flex-wrap` an `.toolbar-mode-content`), und unter 1240px
-   darf auch eine Gruppe in sich umbrechen. Die Breiten sind gerechnet und
-   nicht im Browser gemessen; wenn eine Stufe zu spaet greift, bricht die
-   Leiste um statt etwas zu verstecken. */
-@media (max-width: 1919px) {
-  :root {
-    --toolbar-icon-size: 39px;
-  }
+/* Die Leiste traegt zwoelf Abschnitte und braucht in voller Groesse mehr
+   Platz, als ein Schirm hat. Bevor sie umbricht, gehen die Symbole in zwei
+   Stufen zurueck, denn eine Zeile ist leichter zu lesen als zwei.
+
+   Welche Stufe gilt, entscheidet nicht die Fensterbreite, sondern die
+   **gemessene** Breite der Leiste: Der Editor rechnet nach, wie breit sie in
+   jeder Stufe waere, und setzt `--toolbar-icon-size` samt `data-density`
+   selbst (siehe SecondaryToolbar). Eine Schwelle nach Fensterbreite waere
+   immer geraten - die Leiste wird je nach Sprache, Werkzeugen und
+   eingeblendetem Entwurfsnamen unterschiedlich breit. */
+[data-density="medium"] {
+  --toolbar-icon-size: 39px;
 }
 
-@media (max-width: 1599px) {
-  :root {
-    --toolbar-icon-size: 35px;
-  }
-
-  .toolbar-section {
-    min-width: auto;
-  }
-
-  .toolbar-section.compact,
-  .toolbar-visibility-section {
-    min-width: auto;
-  }
-
-  .toolbar-section-label {
-    padding-inline: 7px;
-    font-size: 10px;
-  }
-
-  .toolbar-project-name {
-    min-width: 160px;
-    padding: 0 12px;
-  }
+[data-density="compact"] {
+  --toolbar-icon-size: 35px;
 }
 
-@media (max-width: 1240px) {
-  /* `display: contents` loest den Gruppenkasten auf, damit die Abschnitte
-     einzeln umbrechen koennen statt als ganze Gruppe. */
-  .toolbar-mode-content .tool-group {
-    display: contents;
-  }
+[data-density="compact"] .toolbar-section,
+[data-density="compact"] .toolbar-section.compact,
+[data-density="compact"] .toolbar-visibility-section {
+  min-width: auto;
+}
+
+[data-density="compact"] .toolbar-section-label {
+  padding-inline: 7px;
+  font-size: 10px;
+}
+
+[data-density="compact"] .toolbar-project-name {
+  min-width: 160px;
+  padding: 0 12px;
+}
+
+/* Reicht auch die kleinste Stufe nicht, brechen die Gruppen um (siehe
+   `flex-wrap` an `.toolbar-mode-content`). `display: contents` loest dann den
+   Gruppenkasten auf, damit die Abschnitte einzeln umbrechen koennen statt als
+   ganze Gruppe. */
+[data-density="compact"] .toolbar-mode-content .tool-group {
+  display: contents;
 }
 
 /* Die Sicherung aller Zeichnungen in den Einstellungen der Startseite: eine
