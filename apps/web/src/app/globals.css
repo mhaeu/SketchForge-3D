@@ -3268,6 +3268,49 @@ svg.sketch-reference-icon {
   text-transform: lowercase;
 }
 
+/* Die Schaetzung im Ausgabefenster: Werkstoffwahl und drei Zahlen. */
+.print-estimate-material {
+  flex: none;
+  height: 28px;
+  padding: 0 6px;
+  color: #20384d;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  background: #f7f9fb;
+  border: 1px solid #d9e2e9;
+  border-radius: 6px;
+}
+
+.print-estimate-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.print-estimate-values > div {
+  display: grid;
+  gap: 2px;
+}
+
+.print-estimate-values dt,
+.print-estimate-busy,
+.print-estimate-note {
+  color: #718494;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.print-estimate-values dd {
+  margin: 0;
+  color: #20384d;
+  font-size: 15px;
+  font-weight: 800;
+  /* Gleich breite Ziffern: Sonst huepfen die Zahlen beim Nachrechnen. */
+  font-variant-numeric: tabular-nums;
+}
+
 .export-section-heading {
   display: flex;
   align-items: flex-start;
@@ -8801,6 +8844,22 @@ html[data-theme="dark"] .export-file-input {
 }
 
 html[data-theme="dark"] .export-file-input-wrap > span,
+html[data-theme="dark"] .print-estimate-material {
+  color: #d8e8f1;
+  background: #0f1921;
+  border-color: #3c505d;
+}
+
+html[data-theme="dark"] .print-estimate-values dd {
+  color: #d8e8f1;
+}
+
+html[data-theme="dark"] .print-estimate-values dt,
+html[data-theme="dark"] .print-estimate-busy,
+html[data-theme="dark"] .print-estimate-note {
+  color: #91a7b7;
+}
+
 html[data-theme="dark"] .export-section-heading > div > span,
 html[data-theme="dark"] .export-format-summary span,
 html[data-theme="dark"] .export-format-summary p {

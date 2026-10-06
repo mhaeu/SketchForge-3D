@@ -42,7 +42,7 @@ import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
 import { meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
 import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
 import { workplaneAlignRotation, workplaneCentringShift } from "@/lib/workplaneArrange";
-import { t, translateIfKey, type MessageKey } from "@/lib/i18n";
+import { getLanguage, t, translateIfKey, type MessageKey } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import {
   SketchBoltCircleIcon,
@@ -148,6 +148,8 @@ import {
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
 import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
+import { closedMeshVolume } from "@/lib/meshVolume";
+import { DEFAULT_PRINT_MATERIAL, PRINT_MATERIALS, normalizePrintMaterial, printEstimate, type PrintMaterial } from "@/lib/printEstimate";
 import { composedShapeRotation, geometryRotationDegreesForShortcut, geometryRotationDelta, rotatedGeometryShapePatch } from "@/lib/geometryRotation";
 import { bakedRotationForBake, parametricRebuildPlan, parametricSourceForBake, patchTouchesBodyParameters, patchTouchesRotation } from "@/lib/parametricSource";
 import { createLocalId } from "@/lib/localIds";
@@ -4829,6 +4831,34 @@ function manifoldMeshToMeshData(mesh: InstanceType<ManifoldToplevel["Mesh"]>, na
  * unveraendert weiter: eine Datei mit doppelten Huellen ist immer noch besser
  * als gar keine.
  */
+/**
+ * Das Volumen dessen, was eine STL enthielte: dieselben Koerper, die die
+ * Ausfuhr schreibt, Durchdringungen nur einmal gezaehlt. Daraus schaetzt das
+ * Ausgabefenster Gewicht und Filament.
+ *
+ * Verschmolzen wird mit demselben Lauf wie fuer die Datei - sonst zaehlte eine
+ * Durchdringung doppelt, und die Schaetzung waere groesser als der Druck.
+ */
+async function exportSolidVolume(source: readonly WorkplaneShape[]) {
+  const solids = source.filter((shape) => !shape.hole && isSolidShape(shape));
+  if (solids.length === 0) return { volumeMm3: 0, solids: 0, bodies: 0, unionFailed: 0 };
+  const { meshes, failed } = await unionOverlappingExportMeshes(solids, solids.map(meshForShape));
+  const volumeMm3 = meshes.reduce((sum, mesh) => sum + closedMeshVolume(mesh.vertices, mesh.faces), 0);
+  return { volumeMm3, solids: solids.length, bodies: meshes.length, unionFailed: failed };
+}
+
+type ExportSolidVolume = Awaited<ReturnType<typeof exportSolidVolume>>;
+
+const PRINT_MATERIAL_STORAGE_KEY = "sketchforge.printMaterial";
+
+/** Zahlen in der Sprache der Oberflaeche, mit fester Stellenzahl. */
+function formatEstimateNumber(value: number, digits: number) {
+  return value.toLocaleString(getLanguage() === "de" ? "de-DE" : "en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
 async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: MeshData[]) {
   const clusters = overlappingExportClusters(meshes.map((mesh) => meshBounds(mesh.vertices)));
   if (!clusters.some((cluster) => cluster.length > 1)) {
@@ -11012,9 +11042,17 @@ export function SketchForgeEditor({
     void run();
   }, [commitShapes]);
 
+  /*
+   * Was die Ausfuhr schreibt - dieselbe Liste bekommt die Schaetzung, damit
+   * die Zahl zur Datei gehoert und nicht zu einer anderen Auswahl.
+   */
+  const exportTargetShapes = useMemo(
+    () => (hasSelection ? selectedShapes : shapes).filter((shape) => !shape.hole && isSolidShape(shape)),
+    [hasSelection, selectedShapes, shapes],
+  );
+
   const exportDesign = useCallback((format: DirectExportFormat, exportName: string) => {
-    const sourceShapes = hasSelection ? selectedShapes : shapes;
-    const exportable = sourceShapes.filter((shape) => !shape.hole && isSolidShape(shape));
+    const exportable = exportTargetShapes;
     if (exportable.length === 0) {
       setNotice(hasSelection ? t("status.selectSolidBeforeExport") : t("status.addSolidBeforeExport"));
       return;
@@ -11055,7 +11093,7 @@ export function SketchForgeEditor({
         else finishNotice(label, result);
       })
       .catch((error: unknown) => failNotice(label, error));
-  }, [hasSelection, projectName, selectedShapes, shapes]);
+  }, [exportTargetShapes, hasSelection, projectName]);
 
   const exportStepDesign = useCallback(async (exportName: string) => {
     if (stepExporting) {
@@ -12069,6 +12107,8 @@ export function SketchForgeEditor({
           projectName={projectName}
           shapeCount={exportableShapeCount}
           scopeLabel={exportScopeLabel}
+          estimateShapes={exportTargetShapes}
+          onEstimatePrint={exportSolidVolume}
           onClose={() => setTopPanel(null)}
           onExport={exportDesign}
           onExportSkf={exportSkfDesign}
@@ -13412,6 +13452,8 @@ function TopActionPanel({
   projectName,
   shapeCount,
   scopeLabel,
+  estimateShapes,
+  onEstimatePrint,
   onClose,
   onExport,
   onExportSkf,
@@ -13429,6 +13471,8 @@ function TopActionPanel({
   projectName: string;
   shapeCount: number;
   scopeLabel: "selected" | "total";
+  estimateShapes: readonly WorkplaneShape[];
+  onEstimatePrint: (shapes: readonly WorkplaneShape[]) => Promise<ExportSolidVolume>;
   onClose: () => void;
   onExport: (format: DirectExportFormat, exportName: string) => void;
   onExportSkf: (exportName: string, historyLimit: SkfHistoryLimit, target?: SkfExportTarget) => void;
@@ -13446,6 +13490,47 @@ function TopActionPanel({
   const [exportName, setExportName] = useState(projectName);
   const previousProjectNameRef = useRef(projectName);
   const [skfHistoryLimit, setSkfHistoryLimit] = useState<SkfHistoryLimit>("unlimited");
+  const [printMaterial, setPrintMaterial] = useState<PrintMaterial>(() => {
+    try {
+      return normalizePrintMaterial(window.localStorage.getItem(PRINT_MATERIAL_STORAGE_KEY));
+    } catch {
+      return DEFAULT_PRINT_MATERIAL;
+    }
+  });
+  const [printVolume, setPrintVolume] = useState<ExportSolidVolume | null>(null);
+  /*
+   * Nur fuer Formate, die Koerper schreiben: Eine Zeichnung (SVG) und ein
+   * Projekt (SKF) wiegen nichts, und das Projekt enthaelt ohnehin alles.
+   */
+  const showPrintEstimate = panel === "export" && exportFormat !== "svg" && exportFormat !== "skf" && shapeCount > 0;
+  useEffect(() => {
+    if (!showPrintEstimate) return;
+    let cancelled = false;
+    setPrintVolume(null);
+    /*
+     * Kurz warten: Beim Tippen oder Ziehen im Hintergrund soll nicht jedes Mal
+     * neu verschmolzen werden - das laeuft durch den Manifold-Kern und kostet.
+     */
+    const timer = window.setTimeout(() => {
+      onEstimatePrint(estimateShapes)
+        .then((result) => { if (!cancelled) setPrintVolume(result); })
+        .catch(() => { if (!cancelled) setPrintVolume(null); });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [showPrintEstimate, estimateShapes, onEstimatePrint]);
+  const choosePrintMaterial = (value: string) => {
+    const material = normalizePrintMaterial(value);
+    setPrintMaterial(material);
+    try {
+      window.localStorage.setItem(PRINT_MATERIAL_STORAGE_KEY, material);
+    } catch {
+      // Ohne Speicher gilt die Wahl bis zum Schliessen des Fensters.
+    }
+  };
+  const estimate = printVolume ? printEstimate(printVolume.volumeMm3, printMaterial) : null;
   useEffect(() => {
     const previousProjectName = previousProjectNameRef.current;
     setExportName((current) => current === previousProjectName ? projectName : current);
@@ -13619,6 +13704,49 @@ function TopActionPanel({
                   </span>
                 ))}
               </div>
+            </section>
+          ) : null}
+
+          {showPrintEstimate ? (
+            <section className="export-setting-section print-estimate-section" aria-live="polite">
+              <div className="export-section-heading">
+                <div>
+                  <strong>{t("export.estimateTitle")}</strong>
+                  <span>{t("export.estimateHint")}</span>
+                </div>
+                <select
+                  id="export-print-material"
+                  className="print-estimate-material"
+                  value={printMaterial}
+                  aria-label={t("export.estimateMaterial")}
+                  onChange={(event) => choosePrintMaterial(event.currentTarget.value)}
+                >
+                  {PRINT_MATERIALS.map((material) => (
+                    <option key={material} value={material}>{t(`export.material.${material}` as MessageKey)}</option>
+                  ))}
+                </select>
+              </div>
+              {estimate ? (
+                <dl className="print-estimate-values">
+                  <div>
+                    <dt>{t("export.estimateVolume")}</dt>
+                    <dd>{formatEstimateNumber(estimate.volumeCm3, estimate.volumeCm3 < 10 ? 2 : 1)} cm³</dd>
+                  </div>
+                  <div>
+                    <dt>{t("export.estimateWeight")}</dt>
+                    <dd>{formatEstimateNumber(estimate.grams, estimate.grams < 10 ? 1 : 0)} g</dd>
+                  </div>
+                  <div>
+                    <dt>{t("export.estimateFilament")}</dt>
+                    <dd>{formatEstimateNumber(estimate.filamentMeters, estimate.filamentMeters < 10 ? 2 : 1)} m</dd>
+                  </div>
+                </dl>
+              ) : (
+                <span className="print-estimate-busy">{t("export.estimateBusy")}</span>
+              )}
+              {printVolume && printVolume.unionFailed > 0 ? (
+                <span className="print-estimate-note">{t("export.estimateOverlap")}</span>
+              ) : null}
             </section>
           ) : null}
 
