@@ -428,18 +428,24 @@ describe("Vorgerechnete Ecken und Kanten", () => {
     });
   });
 
+  /**
+   * Dass die vorgerechneten Merkmale wirklich genommen werden - und nicht
+   * stillschweigend noch einmal gesucht. Darum muss der Zeiger genau auf
+   * einer Ecke stehen: Steht er irgendwo im Leeren, faellt die Rechnung
+   * ohnehin auf die Flaechenmitte, und die Pruefung sagte nichts.
+   */
   it("werden genommen und nicht noch einmal gesucht", () => {
+    const onCorner = project({ x: 10, y: 5, z: 3 });
+    const shared = { positions, triangle: 3, pointer: onCorner, hitPoint: { x: 1, y: 2, z: 3 }, target: "auto" as const, project };
+
+    // Mit echten Merkmalen ist es die Ecke, auf die der Zeiger zeigt.
+    const found = snapPointOnMesh({ ...shared, features });
+    expect(found?.kind).toBe("corner");
+    expect(nearly(found!.point, { x: 10, y: 5, z: 3 })).toBe(true);
+
     // Ein leerer Satz heisst: keine Ecken, keine Kanten. Wuerde die Rechnung
-    // ihn uebergehen und selbst suchen, kaeme hier eine Ecke heraus.
-    const hit = snapPointOnMesh({
-      positions,
-      triangle: 3,
-      pointer: { x: 0, y: 0 },
-      hitPoint: { x: 1, y: 2, z: 3 },
-      target: "auto",
-      project,
-      features: { corners: [], edges: [], chains: [] },
-    });
-    expect(hit?.kind).toBe("face");
+    // ihn uebergehen und selbst suchen, kaeme auch hier die Ecke heraus.
+    const given = snapPointOnMesh({ ...shared, features: { corners: [], edges: [], chains: [] } });
+    expect(given?.kind).toBe("face");
   });
 });
