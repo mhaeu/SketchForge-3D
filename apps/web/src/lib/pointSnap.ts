@@ -482,6 +482,15 @@ export type SnapRequest = {
    * es bleibt greifbar, wenn man es ausdruecklich verlangt.
    */
   available?: (point: SnapPoint) => boolean;
+  /**
+   * Die Ecken und Kanten dieses Netzes, falls sie schon gerechnet sind.
+   *
+   * Sie zu finden kostet an einem eingelesenen Koerper Zeit - bei 24 000
+   * Dreiecken gemessen 111 ms. Fuer einen Klick geht das; fuer eine Vorschau,
+   * die jeder Zeigerbewegung folgt, nicht. Der Aufrufer rechnet sie darum
+   * einmal je Koerper und Lage und gibt sie hier wieder herein.
+   */
+  features?: SnapFeatures;
 };
 
 /**
@@ -527,7 +536,7 @@ export function snapPointOnMesh(request: SnapRequest): SnapHit | null {
     return centre && available(centre) ? { kind: "face", point: centre } : null;
   }
 
-  const features = meshSnapFeatures(positions);
+  const features = request.features ?? meshSnapFeatures(positions);
 
   if (target === "corner") {
     const point = nearestPreferablyVisible(offered(cornerCandidates(features, pointer, project, Infinity)), visible);

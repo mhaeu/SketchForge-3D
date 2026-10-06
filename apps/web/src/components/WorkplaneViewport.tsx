@@ -58,7 +58,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
-import { snapPointOnMesh, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
+import { meshSnapFeatures, snapPointOnMesh, type SnapFeatures, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { planarFace } from "@/lib/rotationPivot";
 import { shapeWorldBounds } from "@/lib/cutTools";
 import {
@@ -189,6 +189,47 @@ const WORKPLANE_GRID_RENDER_ORDER = -1;
 const transparentSort = createTransparentSurfaceSort();
 const sharedShapeGeometryCache = new Map<string, { geometry: THREE.BufferGeometry; users: number }>();
 const sharedEdgesGeometryCache = new WeakMap<THREE.BufferGeometry, Map<number, THREE.EdgesGeometry>>();
+/**
+ * Die Weltpunkte eines Netzes und seine Ecken und Kanten, einmal gerechnet.
+ *
+ * Sie zu finden kostet: bei 24 000 Dreiecken gemessen 111 ms. Fuer einen Klick
+ * geht das; eine Vorschau, die dem Zeiger folgt, braucht sie dreissig Mal in
+ * der Sekunde. Also einmal je Netz und Lage und dann behalten.
+ *
+ * Der Schluessel ist die Geometrie, der Stand ihrer Punkte und die Lage in der
+ * Welt: Jedes davon aendert die Weltpunkte. Wird eine Geometrie an ihrer
+ * Stelle veraendert, ohne ihren Stand hochzuzaehlen, merkt der Speicher das
+ * nicht - unsere Verformungen bauen aber neue Geometrien.
+ */
+const snapMeshCache = new WeakMap<THREE.Mesh, { key: string; positions: Float64Array; features: SnapFeatures }>();
+
+function snapMeshData(mesh: THREE.Mesh) {
+  const geometry = mesh.geometry as THREE.BufferGeometry;
+  const position = geometry.getAttribute("position");
+  if (!position) return null;
+  mesh.updateMatrixWorld(true);
+  // Verschachtelte Puffer haben keinen eigenen Stand; dann zaehlt der des
+  // Puffers darunter.
+  const version = position instanceof THREE.BufferAttribute ? position.version : position.data.version;
+  const key = `${geometry.id}:${version}:${mesh.matrixWorld.elements.join(",")}`;
+  const cached = snapMeshCache.get(mesh);
+  if (cached && cached.key === key) return cached;
+  const index = geometry.getIndex();
+  const corners = index ? index.count : position.count;
+  const point = new THREE.Vector3();
+  const positions = new Float64Array(corners * 3);
+  for (let corner = 0; corner < corners; corner += 1) {
+    const at = index ? index.getX(corner) : corner;
+    point.fromBufferAttribute(position, at).applyMatrix4(mesh.matrixWorld);
+    positions[corner * 3] = point.x;
+    positions[corner * 3 + 1] = point.y;
+    positions[corner * 3 + 2] = point.z;
+  }
+  const entry = { key, positions, features: meshSnapFeatures(positions) };
+  snapMeshCache.set(mesh, entry);
+  return entry;
+}
+
 const sharedShapeMaterialCache = new Map<string, { material: THREE.MeshStandardMaterial; users: number }>();
 /*
  * Teilen sich alle Koerper: Die Ueberhaenge ein- oder auszuschalten und den
@@ -1861,6 +1902,39 @@ function seesPoint(state: ThreeState, point: THREE.Vector3, shapes: ReadonlyArra
   });
 }
 
+/**
+ * Die Marke fuer einen Fangpunkt: eine Kugel mit einem Achsenkreuz, ohne
+ * Tiefenpruefung - sie soll auch zu sehen sein, wenn der Punkt in einem
+ * Koerper steckt.
+ *
+ * Gesetzt ist sie gruen und voll da; als Vorschau unter dem Zeiger ist sie
+ * kleiner und blasser. Gruen, damit sie nicht mit dem roten Drehpunkt
+ * verwechselt wird.
+ */
+function snapPointMarker(point: { x: number; y: number; z: number }, settled: boolean) {
+  const size = settled ? 2.4 : 1.8;
+  const opacity = settled ? 0.9 : 0.5;
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(size * 0.5, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x1f9d55, depthTest: false, transparent: !settled, opacity: settled ? 1 : 0.55 }),
+  );
+  const arms = new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-size * 2, 0, 0), new THREE.Vector3(size * 2, 0, 0),
+      new THREE.Vector3(0, -size * 2, 0), new THREE.Vector3(0, size * 2, 0),
+      new THREE.Vector3(0, 0, -size * 2), new THREE.Vector3(0, 0, size * 2),
+    ]),
+    new THREE.LineBasicMaterial({ color: 0x1f9d55, depthTest: false, transparent: true, opacity }),
+  );
+  const group = new THREE.Group();
+  group.name = settled ? "SnapPointMarker" : "SnapPointPreview";
+  group.add(marker, arms);
+  group.position.set(point.x, point.y, point.z);
+  group.renderOrder = settled ? 10 : 9;
+  setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
+  return group;
+}
+
 function pickModifierEdgeFromScreen(state: ThreeState, edges: CadModifierEdge[], clientX: number, clientY: number) {
   const rect = state.renderer.domElement.getBoundingClientRect();
   const pointerX = clientX - rect.left;
@@ -3442,6 +3516,11 @@ export function WorkplaneViewport({
   rotationPivotRef.current = rotationPivot;
   const snapModeRef = useRef(snapMode);
   snapModeRef.current = snapMode;
+  /*
+   * Was ein Klick gerade greifen wuerde. Ohne das setzt man den ersten Punkt
+   * blind und sieht erst danach, was man getroffen hat.
+   */
+  const [snapHover, setSnapHover] = useState<SnapPick | null>(null);
   const snapTargetRef = useRef(snapTarget);
   snapTargetRef.current = snapTarget;
   const layFlatModeRef = useRef(layFlatMode);
@@ -4325,6 +4404,14 @@ export function WorkplaneViewport({
       threeRef.current = null;
     };
   }, []);
+
+  /*
+   * Die Vorschau gehoert zum Werkzeug: Wird es beendet, darf kein Kreuz
+   * stehenbleiben.
+   */
+  useEffect(() => {
+    if (!snapMode && !pivotMode) setSnapHover(null);
+  }, [pivotMode, snapMode]);
 
   useEffect(() => {
     const state = threeRef.current;
@@ -5635,63 +5722,38 @@ export function WorkplaneViewport({
       return shape ? !shape.hidden : false;
     });
     if (!hit || hit.faceIndex == null || !(hit.object instanceof THREE.Mesh)) return null;
-    const geometry = hit.object.geometry as THREE.BufferGeometry;
-    const position = geometry.getAttribute("position");
-    if (!position) return null;
-    hit.object.updateMatrixWorld(true);
-    const index = geometry.getIndex();
-    const corners = index ? index.count : position.count;
-    const point = new THREE.Vector3();
-    const world = new Float64Array(corners * 3);
-    for (let corner = 0; corner < corners; corner += 1) {
-      const at = index ? index.getX(corner) : corner;
-      point.fromBufferAttribute(position, at).applyMatrix4(hit.object.matrixWorld);
-      world[corner * 3] = point.x;
-      world[corner * 3 + 1] = point.y;
-      world[corner * 3 + 2] = point.z;
-    }
+    const data = snapMeshData(hit.object);
+    if (!data) return null;
     return {
       shapeId: hit.object.userData.shapeId as string,
-      positions: world,
+      positions: data.positions,
+      features: data.features,
       triangle: hit.faceIndex,
       point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
       rect,
     };
-  }, []);
+  }, [isCutAwayPoint]);
 
   /*
-   * Die Marke fuer den ersten gezeigten Punkt: ein Ring mit einem Kreuz, in
-   * Gruen, damit sie nicht mit dem roten Drehpunkt verwechselt wird. Sie
-   * steht nur, solange der zweite Punkt fehlt.
+   * Zwei Marken: die gesetzte fuer den ersten gezeigten Punkt, und die
+   * Vorschau unter dem Zeiger. Die gesetzte steht nur, solange der zweite
+   * Punkt fehlt.
    */
   useEffect(() => {
     const state = threeRef.current;
     if (!state) return;
     disposeChildren(state.snapLayer);
-    if (snapAnchor) {
-      const size = 2.4;
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(size * 0.5, 16, 12),
-        new THREE.MeshBasicMaterial({ color: 0x1f9d55, depthTest: false }),
-      );
-      const arms = new THREE.LineSegments(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(-size * 2, 0, 0), new THREE.Vector3(size * 2, 0, 0),
-          new THREE.Vector3(0, -size * 2, 0), new THREE.Vector3(0, size * 2, 0),
-          new THREE.Vector3(0, 0, -size * 2), new THREE.Vector3(0, 0, size * 2),
-        ]),
-        new THREE.LineBasicMaterial({ color: 0x1f9d55, depthTest: false, transparent: true, opacity: 0.9 }),
-      );
-      const group = new THREE.Group();
-      group.name = "SnapPointMarker";
-      group.add(marker, arms);
-      group.position.set(snapAnchor.point.x, snapAnchor.point.y, snapAnchor.point.z);
-      group.renderOrder = 10;
-      setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
-      state.snapLayer.add(group);
-    }
+    const onTopOfAnchor = Boolean(snapAnchor && snapHover
+      && Math.hypot(
+        snapAnchor.point.x - snapHover.point.x,
+        snapAnchor.point.y - snapHover.point.y,
+        snapAnchor.point.z - snapHover.point.z,
+      ) < 1e-4);
+    // Die Vorschau zuerst, damit die gesetzte Marke oben liegt.
+    if (snapHover && !onTopOfAnchor) state.snapLayer.add(snapPointMarker(snapHover.point, false));
+    if (snapAnchor) state.snapLayer.add(snapPointMarker(snapAnchor.point, true));
     state.needsRender = true;
-  }, [snapAnchor]);
+  }, [snapAnchor, snapHover]);
 
   /*
    * Die Schnittansicht an die Werkstoffe haengen.
@@ -5786,6 +5848,7 @@ export function WorkplaneViewport({
     if (!state || !picked) return null;
     const hit = snapPointOnMesh({
       positions: picked.positions,
+      features: picked.features,
       triangle: picked.triangle,
       pointer: { x: clientX - picked.rect.left, y: clientY - picked.rect.top },
       hitPoint: picked.point,
@@ -5803,6 +5866,22 @@ export function WorkplaneViewport({
     });
     return hit ? { shapeId: picked.shapeId, kind: hit.kind, point: hit.point } : null;
   }, [isCutAwayPoint, pickShapeTriangles]);
+
+  /*
+   * Die Vorschau nachziehen. Bleibt der Punkt derselbe, wird nichts gesetzt -
+   * sonst baute die Ansicht bei jeder Zeigerbewegung dieselbe Marke neu.
+   */
+  const updateSnapHover = useCallback((clientX: number, clientY: number) => {
+    const picked = resolveSnapPoint(clientX, clientY);
+    setSnapHover((current) => {
+      if (!picked) return current === null ? current : null;
+      if (current && current.kind === picked.kind && current.shapeId === picked.shapeId
+        && Math.hypot(current.point.x - picked.point.x, current.point.y - picked.point.y, current.point.z - picked.point.z) < 1e-4) {
+        return current;
+      }
+      return picked;
+    });
+  }, [resolveSnapPoint]);
 
   const resolveNoteAnchor = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
@@ -6448,6 +6527,15 @@ export function WorkplaneViewport({
         updateRulerHover(event.clientX, event.clientY);
         return;
       }
+      /*
+       * Dieselbe Rechnung wie beim Klick, nur schon beim Zeigen. Sie laeuft
+       * auf den vorgerechneten Ecken und Kanten des Netzes, sonst waere sie
+       * bei einem eingelesenen Koerper zu langsam dafuer.
+       */
+      if (snapModeRef.current || pivotModeRef.current) {
+        updateSnapHover(event.clientX, event.clientY);
+        return;
+      }
       if (rulerMoveModeRef.current) return;
       const transform = transformRef.current;
       if (transform) {
@@ -6540,6 +6628,8 @@ export function WorkplaneViewport({
       syncWorkplaneHoverPreview(threeRef.current, null, workspaceRef.current, resolvedThemeRef.current);
     }
     if (modifierActiveRef.current) clearModifierEdgeHover();
+    // Der Zeiger ist weg, also zeigt er auf nichts mehr.
+    setSnapHover(null);
   }, [clearModifierEdgeHover]);
 
   const finishDrag = useCallback(

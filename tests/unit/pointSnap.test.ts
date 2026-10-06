@@ -405,3 +405,41 @@ describe("Eine Vorgabe gilt auch weit weg", () => {
     expect(ask("surface")).not.toBeNull();
   });
 });
+
+/**
+ * Ecken und Kanten eines Netzes zu finden kostet Zeit - bei 24 000 Dreiecken
+ * gemessen 111 ms. Fuer eine Vorschau, die dem Zeiger folgt, rechnet das
+ * Ansichtsfenster sie darum einmal je Koerper und gibt sie wieder herein.
+ * Dabei muss genau dasselbe herauskommen wie beim Rechnen in einem Zug.
+ */
+describe("Vorgerechnete Ecken und Kanten", () => {
+  const positions = soup(new THREE.BoxGeometry(20, 10, 6));
+  const features = meshSnapFeatures(positions);
+
+  it("ergeben auf jedem Weg dasselbe wie das Rechnen im Zug", () => {
+    const targets: SnapTarget[] = ["auto", "corner", "edge", "edgeMiddle", "face", "surface"];
+    const pointers = [{ x: 0, y: 0 }, { x: 140, y: 95 }, { x: -60, y: 200 }];
+    targets.forEach((target) => {
+      pointers.forEach((pointer) => {
+        const shared = { positions, triangle: 3, pointer, hitPoint: { x: 1, y: 2, z: 3 }, target, project };
+        expect(snapPointOnMesh({ ...shared, features }), `${target} ${pointer.x}/${pointer.y}`)
+          .toEqual(snapPointOnMesh(shared));
+      });
+    });
+  });
+
+  it("werden genommen und nicht noch einmal gesucht", () => {
+    // Ein leerer Satz heisst: keine Ecken, keine Kanten. Wuerde die Rechnung
+    // ihn uebergehen und selbst suchen, kaeme hier eine Ecke heraus.
+    const hit = snapPointOnMesh({
+      positions,
+      triangle: 3,
+      pointer: { x: 0, y: 0 },
+      hitPoint: { x: 1, y: 2, z: 3 },
+      target: "auto",
+      project,
+      features: { corners: [], edges: [], chains: [] },
+    });
+    expect(hit?.kind).toBe("face");
+  });
+});
