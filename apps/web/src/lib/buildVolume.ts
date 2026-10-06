@@ -8,8 +8,6 @@
  * - und das ist der teuerste Zeitpunkt.
  *
  * Nach Layerling 1.21.0.
- *
- * License: MIT
  */
 
 import { shapeWorldBounds } from "@/lib/cutTools";

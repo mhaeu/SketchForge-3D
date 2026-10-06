@@ -7,8 +7,6 @@
  * Die Entscheidung stand bisher zweimal im Programm, in der Startseite und im
  * Editor, samt der beiden Schluessel im Speicher des Browsers. Hier steht sie
  * einmal.
- *
- * License: MIT
  */
 
 export const DOWNLOAD_MODE_STORAGE_KEY = "sketchForge.downloadMode";

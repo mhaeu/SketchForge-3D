@@ -19,8 +19,6 @@
  * dabei fuer sich pruefbar, denn an ihnen haengt die Form.
  *
  * Nach Layerling 1.23.0.
- *
- * License: MIT
  */
 
 import * as THREE from "three";

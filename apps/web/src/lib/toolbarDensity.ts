@@ -11,8 +11,6 @@
  * Nach Layerling, das seine Umschaltbreiten ebenfalls an der gemessenen
  * Breite nachgezogen hat (Issue #54) - nur messen wir sie bei jeder
  * Aenderung neu, statt die Zahlen einmal abzulesen.
- *
- * License: MIT
  */
 
 export type ToolbarDensity = "full" | "medium" | "compact";

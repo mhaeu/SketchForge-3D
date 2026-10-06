@@ -10,8 +10,6 @@
  * und der Druck braucht Stuetzen oder der Koerper muss anders liegen.
  *
  * Nach Layerling 1.33.0.
- *
- * License: MIT
  */
 
 export const DEFAULT_OVERHANG_ANGLE = 45;

@@ -19,8 +19,6 @@
  * Probe, die das merkt.
  *
  * Nach Layerling 1.33.0.
- *
- * License: MIT
  */
 
 /** Alle angefassten Materialien tragen denselben Shader. */

@@ -10,8 +10,6 @@
  * schraege Flaeche unten haben will, muesste zwei Winkel gleichzeitig raten.
  *
  * Nach Layerling 1.19.0.
- *
- * License: MIT
  */
 
 import * as THREE from "three";

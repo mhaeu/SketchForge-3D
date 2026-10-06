@@ -14,8 +14,6 @@
  * beim Blick ins Innere immer wieder die Wand davor.
  *
  * Nach Layerling 1.33.0.
- *
- * License: MIT
  */
 
 export type SectionAxis = "x" | "y" | "z";

@@ -11,8 +11,6 @@
  *
  * Its purpose is the delta readout: every other shape's Position card shows the
  * offset (dX, dY, dZ) to this point in addition to the absolute position.
- *
- * License: MIT
  */
 
 import { createLocalId } from "@/lib/localIds";

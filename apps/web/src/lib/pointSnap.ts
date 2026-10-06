@@ -19,8 +19,6 @@
  * eine Kastenwand ist keine Kante, auf die man zeigen will. Am Mantel eines
  * Rohrs mit 32 Seiten knickt es je Naht nur 11 Grad; erst der Rand zum
  * runden Ende knickt deutlich, und genau der bleibt uebrig.
- *
- * License: MIT
  */
 
 import { planarFaceCentroid } from "@/lib/rotationPivot";

@@ -14,8 +14,6 @@
  *
  * Nach Layerling 1.18.x, samt der beiden Nachbesserungen: scharfe oder runde
  * Innenkanten, und die Wand haengt davon ab, welche Seiten offen bleiben.
- *
- * License: MIT
  */
 
 /** Welche Seiten offen bleiben. */
