@@ -1317,6 +1317,7 @@ export function ShapeInspector({
   canSeparateParts = false,
   onSeparateParts,
   onInteractionActiveChange,
+  onSnapGridAwayChange,
   linkedAxes = NO_LINKED_RESIZE_AXES,
   onLinkedAxesChange,
   regionShape = null,
@@ -1350,6 +1351,11 @@ export function ShapeInspector({
   canSeparateParts?: boolean;
   onSeparateParts?: () => void;
   onInteractionActiveChange?: (active: boolean) => void;
+  /**
+   * Meldet, dass der Fangregler hier gerade nicht zu erreichen ist - dann
+   * zeigt ihn die Arbeitsebene, so wie bei nichts Ausgewaehltem.
+   */
+  onSnapGridAwayChange?: (away: boolean) => void;
 }) {
   // Redraws the panel when the language changes: every label below comes from
   // t(), which reads a module-level store that React does not watch by itself.
@@ -1617,6 +1623,16 @@ export function ShapeInspector({
     input.addEventListener("change", commitCustomColor);
     return () => input.removeEventListener("change", commitCustomColor);
   }, [colorOpen, onUpdate]);
+  /*
+   * Eingeklappt steckt der Fangregler mit allem anderen weg - er gehoert aber
+   * zur Arbeitsebene und nicht zum Koerper. Also sagen wir es nach draussen,
+   * und dort erscheint er wieder. Beim Abbau zurueck auf false, sonst bliebe
+   * er doppelt stehen, wenn die Auswahl wechselt.
+   */
+  useEffect(() => {
+    onSnapGridAwayChange?.(minimized);
+    return () => onSnapGridAwayChange?.(false);
+  }, [minimized, onSnapGridAwayChange]);
   useLayoutEffect(() => {
     inspectorRef.current?.scrollTo({ top: 0, left: 0 });
   }, [isSketchRevolve, shape.id]);

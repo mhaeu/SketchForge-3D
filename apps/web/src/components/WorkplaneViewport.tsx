@@ -3521,6 +3521,8 @@ export function WorkplaneViewport({
    * blind und sieht erst danach, was man getroffen hat.
    */
   const [snapHover, setSnapHover] = useState<SnapPick | null>(null);
+  /** Ob der Fangregler in den Koerpereinstellungen gerade nicht zu erreichen ist. */
+  const [inspectorSnapGridAway, setInspectorSnapGridAway] = useState(false);
   const snapTargetRef = useRef(snapTarget);
   snapTargetRef.current = snapTarget;
   const layFlatModeRef = useRef(layFlatMode);
@@ -7415,10 +7417,16 @@ export function WorkplaneViewport({
           canSeparateParts={canSeparateParts}
           onSeparateParts={onSeparateParts}
           onInteractionActiveChange={onInteractionActiveChange}
+          onSnapGridAwayChange={setInspectorSnapGridAway}
         />
       ) : null}
 
-      {!selectedShape ? (
+      {/*
+        * Der Fangregler gehoert zur Arbeitsebene. Steht ein Koerper in der
+        * Auswahl, sitzt er in dessen Einstellungen; ist die eingeklappt, kaeme
+        * man gar nicht an ihn heran, ohne die Auswahl aufzugeben.
+        */}
+      {!selectedShape || inspectorSnapGridAway ? (
         <div className="grid-settings">
           <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
         </div>
