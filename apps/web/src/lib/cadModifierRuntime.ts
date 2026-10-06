@@ -164,12 +164,22 @@ export function edgeModifierSelectionStatus(prepared: boolean, selectedCount: nu
     : t("edge.preparing");
 }
 
-export function cadModifierPrepareTimeoutMs(meshTriangleCount: number) {
+/**
+ * Wie lange das Vorbereiten dauern darf.
+ *
+ * `exactSourceLength` ist die Laenge der genauen Beschreibung, die mitgeschickt
+ * wird - bei einem STEP-Import die Datei selbst. Gemessen braucht der Kern
+ * dafuer etwa 0,3 ms je Kilobyte (1,2 MB in 375 ms); gerechnet wird mit dem
+ * Dreifachen, damit ein grosser Zusammenbau nicht in die Zeitsperre laeuft,
+ * bevor er fertig gelesen ist.
+ */
+export function cadModifierPrepareTimeoutMs(meshTriangleCount: number, exactSourceLength = 0) {
+  const exactBudget = Number.isFinite(exactSourceLength) ? Math.max(0, Math.ceil(exactSourceLength / 1024)) : 0;
   if (!Number.isFinite(meshTriangleCount) || meshTriangleCount <= 0) {
-    return CAD_MODIFIER_REQUEST_TIMEOUT_MS;
+    return Math.min(CAD_MODIFIER_MAX_PREPARE_TIMEOUT_MS, CAD_MODIFIER_REQUEST_TIMEOUT_MS + exactBudget);
   }
   const normalizedTriangleCount = Math.max(0, Math.floor(meshTriangleCount));
-  const meshPreparationBudget = 45_000 + normalizedTriangleCount * 0.75;
+  const meshPreparationBudget = 45_000 + normalizedTriangleCount * 0.75 + exactBudget;
   return Math.min(
     CAD_MODIFIER_MAX_PREPARE_TIMEOUT_MS,
     Math.max(60_000, Math.ceil(meshPreparationBudget)),

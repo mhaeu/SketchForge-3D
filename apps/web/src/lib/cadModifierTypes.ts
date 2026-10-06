@@ -46,6 +46,13 @@ export type CadModifierMeshPart = {
   positions?: Float32Array;
   indices?: Uint32Array;
   brep?: string;
+  /**
+   * Die genaue Beschreibung, mit der ein Koerper importiert wurde - derselbe
+   * STEP-Text, der beim Einlesen neben dem Netz abgelegt wurde. `brepTransform`
+   * gilt fuer beide: Die Datei liegt in den Grundmassen des Netzes, mittig auf
+   * x und z, Unterseite auf null.
+   */
+  stepText?: string;
   brepTransform?: number[];
   primitive?: CadModifierPrimitivePart;
   hole: boolean;

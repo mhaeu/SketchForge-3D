@@ -130,7 +130,7 @@ import {
   type ResizeAxis,
 } from "@/lib/workplaneShapes";
 import { clampRegionToShape, displayPositions, fullShapeRegion, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
-import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
+import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape, importedStepSourceForShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
   CAD_MODIFIER_MAX_SHARP_ANGLE,
@@ -8831,7 +8831,7 @@ export function SketchForgeEditor({
     const sourceParts = (selectedShape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasShapeDeform(selectedShape)
       ? restoreGroupedChildren(selectedShape)
       : [selectedShape]).flatMap(cadModifierSourceParts);
-    const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((shape) => {
+    const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; stepText?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((shape) => {
       const frame = shape.cadBrepFrame;
       const preserveNeedsRetessellation = preservesFeatureSize(shape) && Boolean(frame) && (
         Math.abs(shapeWidth(shape) - (frame?.width ?? shapeWidth(shape))) > 1e-6 ||
@@ -8841,12 +8841,23 @@ export function SketchForgeEditor({
       if (shapeHasShapeDeform(shape)) return { shape, mesh: meshForShape(shape) };
       const primitive = cadModifierPrimitiveForShape(shape);
       if (primitive) return { shape, primitive };
-      return shape.cadBrep && frame && !preserveNeedsRetessellation
-        ? { shape, brep: shape.cadBrep, brepTransform: cadBrepTransformForShape(shape) }
+      if (shape.cadBrep && frame && !preserveNeedsRetessellation) {
+        return { shape, brep: shape.cadBrep, brepTransform: cadBrepTransformForShape(shape) };
+      }
+      /*
+       * Ein Import bringt seinen genauen Koerper mit - der gehoert vor das
+       * Netz. Das Netz fahrt trotzdem mit: Gibt die Datei keinen geschlossenen
+       * Koerper her, naeht der Dienst wie bisher die Dreiecke zusammen, statt
+       * das Werkzeug zu sperren.
+       */
+      const imported = importedStepSourceForShape(shape);
+      return imported
+        ? { shape, stepText: imported.stepText, brepTransform: imported.transform, mesh: meshForShape(shape) }
         : { shape, mesh: meshForShape(shape) };
     });
     const triangleCount = partInputs.reduce((total, part) => total + (part.mesh?.faces.length ?? 0), 0);
-    if (triangleCount === 0 && partInputs.every((part) => !part.brep && !part.primitive)) {
+    const exactSourceLength = partInputs.reduce((total, part) => total + (part.stepText?.length ?? 0), 0);
+    if (triangleCount === 0 && partInputs.every((part) => !part.brep && !part.stepText && !part.primitive)) {
       setNotice(t("status.noPrintableSurface"));
       return;
     }
@@ -8882,6 +8893,14 @@ export function SketchForgeEditor({
     setNotice(hollow ? t("status.preparingHollow") : t("status.preparingEdges", { kind }));
     const parts: CadModifierMeshPart[] = partInputs.map((part) => {
       if (part.brep) return { brep: part.brep, brepTransform: part.brepTransform, hole: Boolean(part.shape.hole) };
+      if (part.stepText) {
+        return {
+          stepText: part.stepText,
+          brepTransform: part.brepTransform,
+          ...(part.mesh ? meshDataToCadTransfer(part.mesh) : {}),
+          hole: Boolean(part.shape.hole),
+        };
+      }
       if (part.primitive) return { primitive: part.primitive, hole: Boolean(part.shape.hole) };
       return { ...meshDataToCadTransfer(part.mesh as MeshData), hole: Boolean(part.shape.hole) };
     });
@@ -8898,7 +8917,7 @@ export function SketchForgeEditor({
       return;
     }
     cadModifierPrepareRef.current = prepareRequestId;
-    armCadModifierWatchdog(prepareRequestId, "prepare", cadModifierPrepareTimeoutMs(triangleCount));
+    armCadModifierWatchdog(prepareRequestId, "prepare", cadModifierPrepareTimeoutMs(triangleCount, exactSourceLength));
   }, [armCadModifierWatchdog, invalidateCadModifierSession, postCadModifierRequest, selectedShape, selectedShapes.length]);
 
   const prepareCadModifierForMcp = useCallback(async (shape: WorkplaneShape, sharpAngle: number) => {
@@ -8910,7 +8929,7 @@ export function SketchForgeEditor({
     const sourceParts = (shape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasShapeDeform(shape)
       ? restoreGroupedChildren(shape)
       : [shape]).flatMap(cadModifierSourceParts);
-    const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((partShape) => {
+    const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; stepText?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((partShape) => {
       const frame = partShape.cadBrepFrame;
       const preserveNeedsRetessellation = preservesFeatureSize(partShape) && Boolean(frame) && (
         Math.abs(shapeWidth(partShape) - (frame?.width ?? shapeWidth(partShape))) > 1e-6 ||
@@ -8920,12 +8939,17 @@ export function SketchForgeEditor({
       if (shapeHasShapeDeform(partShape)) return { shape: partShape, mesh: meshForShape(partShape) };
       const primitive = cadModifierPrimitiveForShape(partShape);
       if (primitive) return { shape: partShape, primitive };
-      return partShape.cadBrep && frame && !preserveNeedsRetessellation
-        ? { shape: partShape, brep: partShape.cadBrep, brepTransform: cadBrepTransformForShape(partShape) }
+      if (partShape.cadBrep && frame && !preserveNeedsRetessellation) {
+        return { shape: partShape, brep: partShape.cadBrep, brepTransform: cadBrepTransformForShape(partShape) };
+      }
+      const imported = importedStepSourceForShape(partShape);
+      return imported
+        ? { shape: partShape, stepText: imported.stepText, brepTransform: imported.transform, mesh: meshForShape(partShape) }
         : { shape: partShape, mesh: meshForShape(partShape) };
     });
     const triangleCount = partInputs.reduce((total, part) => total + (part.mesh?.faces.length ?? 0), 0);
-    if (triangleCount === 0 && partInputs.every((part) => !part.brep && !part.primitive)) {
+    const exactSourceLength = partInputs.reduce((total, part) => total + (part.stepText?.length ?? 0), 0);
+    if (triangleCount === 0 && partInputs.every((part) => !part.brep && !part.stepText && !part.primitive)) {
       throw new Error(t("status.noPrintableSurface"));
     }
     if (triangleCount > 180_000) {
@@ -8933,6 +8957,14 @@ export function SketchForgeEditor({
     }
     const parts: CadModifierMeshPart[] = partInputs.map((part) => {
       if (part.brep) return { brep: part.brep, brepTransform: part.brepTransform, hole: Boolean(part.shape.hole) };
+      if (part.stepText) {
+        return {
+          stepText: part.stepText,
+          brepTransform: part.brepTransform,
+          ...(part.mesh ? meshDataToCadTransfer(part.mesh) : {}),
+          hole: Boolean(part.shape.hole),
+        };
+      }
       if (part.primitive) return { primitive: part.primitive, hole: Boolean(part.shape.hole) };
       return { ...meshDataToCadTransfer(part.mesh as MeshData), hole: Boolean(part.shape.hole) };
     });
@@ -8942,7 +8974,7 @@ export function SketchForgeEditor({
       parts,
       sharpAngle,
       suppressTreatmentDetailEdges: appliedEdgeTreatmentCount > 0,
-    }, transfer, cadModifierPrepareTimeoutMs(triangleCount));
+    }, transfer, cadModifierPrepareTimeoutMs(triangleCount, exactSourceLength));
     if (response.type !== "ready") {
       throw new Error(t("status.cadNoEdgeList"));
     }

@@ -39,6 +39,20 @@ describe("CAD modifier runtime state", () => {
     expect(cadModifierPrepareTimeoutMs(10_000)).toBe(60_000);
     expect(cadModifierPrepareTimeoutMs(100_000)).toBe(120_000);
     expect(cadModifierPrepareTimeoutMs(180_000)).toBe(CAD_MODIFIER_MAX_PREPARE_TIMEOUT_MS);
+  });
+
+  /**
+   * Ein STEP-Import schickt keine Dreiecke, sondern die Datei - und die muss
+   * der Kern erst lesen. Gemessen 0,3 ms je Kilobyte; eine Datei von einem
+   * Megabyte darf sich also etwas mehr Zeit nehmen als die Grundsperre.
+   */
+  it("gibt einer genauen Beschreibung Zeit zum Einlesen", () => {
+    expect(cadModifierPrepareTimeoutMs(0, 1024 * 1024)).toBe(CAD_MODIFIER_REQUEST_TIMEOUT_MS + 1024);
+    expect(cadModifierPrepareTimeoutMs(0, 0)).toBe(CAD_MODIFIER_REQUEST_TIMEOUT_MS);
+    expect(cadModifierPrepareTimeoutMs(0, Number.NaN)).toBe(CAD_MODIFIER_REQUEST_TIMEOUT_MS);
+    expect(cadModifierPrepareTimeoutMs(0, -5)).toBe(CAD_MODIFIER_REQUEST_TIMEOUT_MS);
+    // Und mehr als die Hoechstdauer wird daraus nie.
+    expect(cadModifierPrepareTimeoutMs(0, 500 * 1024 * 1024)).toBe(CAD_MODIFIER_MAX_PREPARE_TIMEOUT_MS);
     expect(cadModifierTimeoutMessage("prepare")).toContain("lower-detail STL");
     expect(cadModifierTimeoutMessage("prepare")).not.toContain("Firefox");
   });

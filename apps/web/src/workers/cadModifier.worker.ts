@@ -283,30 +283,57 @@ function reconstructPrimitiveSolid(cad: OcctKernel, primitive: CadModifierPrimit
   return transformed;
 }
 
+/**
+ * Place and validate an exactly described body, whether it came from a stored
+ * B-Rep or straight out of the STEP file the object was imported from. Both
+ * arrive as the exact geometry in a recorded local frame and need the same
+ * placement and the same repair attempt.
+ */
+function restoreExactSolid(cad: OcctKernel, loaded: ShapeHandle, transform: number[] | undefined, failureMessage: string) {
+  // Via applyCadTransform, not generalTransform: the latter rebuilds every
+  // face as a B-spline approximation even for a plain move, which drops the
+  // analytic cylinder/torus faces a fillet leaves behind (and shifted the
+  // volume by ~1% in measurement). The next edge treatment then works on an
+  // approximation and fails to restore a valid solid.
+  let exact = transform?.length === 12 ? applyCadTransform(cad, loaded, transform) : loaded;
+  const restoredSolids = cad.getSubShapes(exact, "solid");
+  if (cadShapeIsValid(cad, exact) && (cad.isSolid(exact) || restoredSolids.length > 0)) {
+    return restoredSolids.length === 1 ? restoredSolids[0] : exact;
+  }
+  exact = cad.fixShape(exact);
+  exact = cad.fixFaceOrientations(exact);
+  if (cad.isSolid(exact)) exact = cad.healSolid(exact, 1e-5);
+  const healedSolids = cad.getSubShapes(exact, "solid");
+  if (cadShapeIsValid(cad, exact) && (cad.isSolid(exact) || healedSolids.length > 0)) {
+    return healedSolids.length === 1 ? healedSolids[0] : exact;
+  }
+  throw new Error(failureMessage);
+}
+
 function reconstructSolid(cad: OcctKernel, part: CadModifierMeshPart) {
   if (part.primitive) {
     return reconstructPrimitiveSolid(cad, part.primitive);
   }
   if (part.brep) {
-    let exact = cad.fromBREP(part.brep);
-    // Via applyCadTransform, not generalTransform: the latter rebuilds every
-    // face as a B-spline approximation even for a plain move, which drops the
-    // analytic cylinder/torus faces a fillet leaves behind (and shifted the
-    // volume by ~1% in measurement). The next edge treatment then works on an
-    // approximation and fails to restore a valid solid.
-    if (part.brepTransform?.length === 12) exact = applyCadTransform(cad, exact, part.brepTransform);
-    const restoredSolids = cad.getSubShapes(exact, "solid");
-    if (cadShapeIsValid(cad, exact) && (cad.isSolid(exact) || restoredSolids.length > 0)) {
-      return restoredSolids.length === 1 ? restoredSolids[0] : exact;
+    return restoreExactSolid(cad, cad.fromBREP(part.brep), part.brepTransform, "The stored CAD feature could not be restored as a valid solid");
+  }
+  /*
+   * The exact body an imported object brought with it. Taking the tessellation
+   * instead reaches the kernel as a polyhedron: a cylinder's rim arrives as 42
+   * facet edges where the file describes one circle, and nothing filleted
+   * across them is round.
+   *
+   * A file that yields no closed solid must not block the tool, though: the
+   * tessellation travels alongside, and the sewing rescue below has always
+   * been able to make something of it. Only with no triangles to fall back on
+   * does the failure reach the caller.
+   */
+  if (part.stepText) {
+    try {
+      return restoreExactSolid(cad, cad.importStep(part.stepText), part.brepTransform, "The imported STEP body could not be restored as a valid solid");
+    } catch (error) {
+      if (!part.positions?.length || !part.indices?.length) throw error;
     }
-    exact = cad.fixShape(exact);
-    exact = cad.fixFaceOrientations(exact);
-    if (cad.isSolid(exact)) exact = cad.healSolid(exact, 1e-5);
-    const healedSolids = cad.getSubShapes(exact, "solid");
-    if (cadShapeIsValid(cad, exact) && (cad.isSolid(exact) || healedSolids.length > 0)) {
-      return healedSolids.length === 1 ? healedSolids[0] : exact;
-    }
-    throw new Error("The stored CAD feature could not be restored as a valid solid");
   }
   const imported = cad.importStl(meshPartToAsciiStl(part));
   let shape = cad.fixShape(imported);

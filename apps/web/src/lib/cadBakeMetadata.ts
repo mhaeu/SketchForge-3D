@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import type { WorkplaneShape } from "@/types/sketchforge";
 import type { CadModifierPrimitivePart } from "@/lib/cadModifierTypes";
-import { mirrorSign, resizedImportedCoordinates, shapeDepth, shapeWidth } from "@/lib/workplaneShapes";
+import { cadTransformRequiresGeneralTransform } from "@/lib/cadModifierRuntime";
+import { mirrorSign, preservesFeatureSize, resizedImportedCoordinates, shapeDepth, shapeHasShapeDeform, shapeWidth } from "@/lib/workplaneShapes";
 
 export type BakedCadMetadataFrame = {
   centerX: number;
@@ -261,6 +262,54 @@ export function cadBrepTransformForShape(shape: WorkplaneShape) {
     .multiply(cadTransformToMatrix(frame.sourceTransform));
   const result = cadTransformFromMatrix(matrix);
   return isIdentityCadTransform(result) ? undefined : result;
+}
+
+/**
+ * Der genaue Koerper eines STEP-Imports, dort platziert, wo der Koerper steht.
+ *
+ * Beim Einlesen kommt beides herein: das Netz, das man sieht, und die genaue
+ * Beschreibung, aus der es vernetzt wurde (`importedMesh.brepStep`). Benutzt
+ * wurde die bisher nur beim Ausfuehren - das Kantenwerkzeug arbeitete auf den
+ * Dreiecken. Beim Zylinder heisst das gemessen: 42 Facettenkanten statt eines
+ * Kreises, und schon vor der ersten Verrundung 0,4 Prozent weniger Volumen.
+ *
+ * Null heisst: Fuer diesen Koerper traegt die Datei nicht, nimm das Netz.
+ */
+export function importedStepSourceForShape(shape: WorkplaneShape) {
+  const mesh = shape.kind === "mesh" ? shape.importedMesh : undefined;
+  if (!mesh?.brepStep) return null;
+  /*
+   * Eine fruehere Kantenbearbeitung legt ihr Ergebnis in `cadBrep` ab, und das
+   * ist der neuere Koerper: Die Datei kennt die Verrundung nicht, die schon
+   * daran sitzt.
+   */
+  if (shape.cadBrep || shapeHasShapeDeform(shape)) return null;
+  const stretched = (
+    Math.abs(shapeWidth(shape) - mesh.baseWidth) > 1e-6 ||
+    Math.abs(shapeDepth(shape) - mesh.baseDepth) > 1e-6 ||
+    Math.abs(shape.height - mesh.baseHeight) > 1e-6
+  );
+  /*
+   * Mit starren Raendern gezogen ist das Netz nicht mehr die Datei mal einem
+   * Faktor, sondern in der Mitte gestreckt und an den Enden stehengelassen -
+   * das kann die genaue Beschreibung nicht nachmachen.
+   */
+  if (stretched && preservesFeatureSize(shape)) return null;
+  const transform = cadBrepTransformForShape({
+    ...shape,
+    // Die Datei liegt in demselben Rahmen wie das Netz: auf x und z
+    // mittig, Unterseite auf null, in seinen Grundmassen.
+    cadBrepFrame: { x: 0, z: 0, elevation: 0, width: mesh.baseWidth, depth: mesh.baseDepth, height: mesh.baseHeight },
+  });
+  /*
+   * Ungleichmaessig verzerrt traegt die Datei nichts mehr ein: Der Kern
+   * muesste den Koerper dann mit `generalTransform` umbauen, und das macht aus
+   * jeder Flaeche einen B-Spline - bei einem auf das Doppelte gezogenen
+   * Zylinder gemessen 0,9 Prozent am Volumen daneben. Dann ist das Netz die
+   * ehrlichere Quelle, denn es hat die richtige Groesse.
+   */
+  if (transform && cadTransformRequiresGeneralTransform(transform)) return null;
+  return { stepText: mesh.brepStep, transform };
 }
 
 function bakeCadDisplayEdgesForShape(shape: WorkplaneShape, frame: BakedCadMetadataFrame) {

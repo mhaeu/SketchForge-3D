@@ -152,6 +152,30 @@ describe("STEP import → re-export round-trip (real OCCT kernel)", () => {
     expect(near(imported.importedMesh!.baseHeight, 6)).toBe(true);
     expect(near(imported.importedMesh!.baseDepth, 8)).toBe(true);
 
+    /*
+     * Der gespeicherte genaue Koerper liegt in demselben Rahmen wie das Netz:
+     * auf x und z mittig, Unterseite auf null, Hochachse y. Darauf steht das
+     * Kantenwerkzeug auf Importen - es schickt genau diesen Text an den
+     * CAD-Dienst und setzt ihn mit der Lage, die aus den Grundmassen folgt.
+     * Laege die Datei noch Z-oben oder unverschoben, kaeme der Koerper
+     * liegend oder versetzt im Dienst an.
+     */
+    const stored = await brep.importSTEP(new Blob([imported.importedMesh!.brepStep!]));
+    expect(stored.ok).toBe(true);
+    const storedMesh = brep.mesh((stored as { value: unknown }).value as never);
+    const extent = (axis: number) => {
+      let min = Infinity;
+      let max = -Infinity;
+      for (let index = axis; index < storedMesh.vertices.length; index += 3) {
+        min = Math.min(min, storedMesh.vertices[index]);
+        max = Math.max(max, storedMesh.vertices[index]);
+      }
+      return [min, max];
+    };
+    expect(extent(0).map((value) => Number(value.toFixed(4)) + 0)).toEqual([-6, 6]);
+    expect(extent(1).map((value) => Number(value.toFixed(4)) + 0)).toEqual([0, 6]);
+    expect(extent(2).map((value) => Number(value.toFixed(4)) + 0)).toEqual([-4, 4]);
+
     // Re-export the imported body at native size and confirm volume survives the
     // import-normalize → store → re-emit pipeline.
     const reexport = await exportShapesToStep([imported]);
