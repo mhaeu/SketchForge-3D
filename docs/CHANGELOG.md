@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.1.0
+
+A minor release rather than a patch: everything below has been sitting
+unreleased since 1.0.9, and it adds tools rather than only mending them.
+
+New tools
+
+- Hollow turns a solid into a shell with a chosen wall thickness, with any set of sides left open, built on the CAD kernel's `shell`/`offset` (occt-wasm raised to ^5.4.0 for the join type they need). The wall keeps its thickness when the body is resized afterwards instead of growing with it.
+- Section view cuts the display along a plane so the inside is visible, without changing the bodies. What the plane hides cannot be clicked, measured, snapped to or pinned a note on; the cut face itself stays reachable.
+- Point to point and point to workplane move the first-picked body so the two marked points coincide, or so the marked point lands on the active workplane.
+- A target menu decides what a click grabs - free on a surface, free or centred on an edge, the centre of a face, or a corner - shared by point snapping, the rotation pivot and lay flat.
+- Lay flat rotates a body so the clicked face rests on the workplane.
+- The rotation pivot can be set by clicking a face; the body then turns around that point.
+- Pattern repeats the selection in a row or around a circle.
+- Cutting tools: trim flush against another body, trim at the workplane, and clear out the interior of a tube or any self-drawn hollow body.
+- Three bore shapes join the palette as cutters: counterbore, countersink and teardrop hole.
+- An object list shows every body, with range selection by Shift.
+- A group can be opened to change its parts without taking it apart.
+- Notes sit on the workplane or on a body and travel with the project; they stay out of every export.
+- Region resize works on a box inside the object: only what the box holds is stretched, the rest keeps its shape.
+- Loft morphs between two cross-sections.
+- New shapes: rounded box, honeycomb, ellipse, polygon, thread, spring, ruler, loft, oval, semicircle, pie slice and bolt circle, plus threaded heads (lens head, set screw, Torx).
+- Sketch mode gained real circles and arcs, rounded corners, alignment guides, a free rotation handle, a third mode where the shape follows a path, SVG import, and rotate/mirror/scale.
+- Extrusion with twist and an offset top face; taper and height per side.
+
+Print preparation
+
+- Overhangs are hatched red and white in the view, from a chosen angle (30 to 70 degrees, 45 by default).
+- A warning names the bodies that stand taller than the printer can build.
+- The export window estimates volume, weight and filament length for PLA, PETG, ABS, ASA, TPU or PA - worked out as solid, so it is an upper bound.
+- 190 printers can be chosen by name; each sets plate width, depth and build height together. The numbers come from OrcaSlicer's profiles.
+- The edge tool works on the exact body a STEP import brought with it instead of its triangles, so a round rim is one circle rather than dozens of facet edges.
+- 3MF files can be read.
+- STEP export carries a body whose edges were filleted or chamfered, rounding included.
+
+Interface
+
+- The toolbar measures itself and steps its icon size down, or wraps, instead of running off the edge - no more zooming the browser to 67 per cent to reach the last group.
+- Point tools show a preview of what a click would grab before the click.
+- A click on a corner handle types width and length together; Tab moves between them, Enter applies both in one step.
+- Shift while dragging holds the body to one axis of the workplane; Alt while dragging leaves a copy behind.
+- A box selection with Shift turns each body in it around, as a Shift click does for one.
+- The snap grid stays reachable when the body settings are collapsed.
+- The interface speaks German as well as English, down to the exercises, messages and shape names.
+- Transparency per object, with a slider under the solid/hole choice.
+- The arrow keys move a body the way the camera sees it.
+- Axis chaining as an L/W/H switch in the toolbar.
+- Frame the selection (Shift+F) and an orthographic view button in the camera bar.
+- A saved project can be inserted into the open one, and every project can be backed up at once.
+
+Fixes
+
+- A saved project no longer opens into an empty workspace: the reference point was written into the file as a body kind the reader refused, and the failed read then replaced the stored project with nothing. The read now drops what it cannot use, keeps the file, and a failed read never overwrites anything.
+- "This page couldn't load" is gone: the app has its own error page, which names the error and offers the way back instead of clearing the project.
+- Clicking the gap between two parts of one object no longer selects the object, and neither does dragging a selection box through it. A press that just misses still means the body beside it.
+- The reference point no longer ends up inside a group, no longer takes selection handles, and stays out of copies, exports and frame selection.
+- Hollowing out an interior now also recognises a rotated tube, a baked body that was resized afterwards, and a self-drawn hollow body.
+- Trimming flush now cuts against the body that was clicked last, not the one that was built last.
+- The region box no longer slides through the body, keeps its taper, survives a rotation into the workplane, and stops exactly at its own faces.
+- A rotated body remembers what it is and how it stands, so its rotation angle and its taper fields stay right.
+- Undo brings the workplane back with it.
+- Stored CAD geometry is no longer rebuilt as B-splines by a plain move - a fillet's analytic faces survive the next edit.
+- Mesh density no longer falls back after later fillets, and fine edges stay clickable in the edge tool.
+- Export merges overlapping bodies, so a file no longer holds two shells inside one another.
+
 ## 1.0.9
 
 - Corrected Top and Bottom camera views so they align exactly with the vertical axis in both perspective and orthographic projection.
