@@ -2,6 +2,7 @@ import type { GridSize, HistoryRetentionLimit, MeasurementAccuracy, ShapeCustomi
 import { normalizeScaleForUnits } from "@/lib/measurementUnits";
 import { DEFAULT_WORKPLANE_GRID_COLOR } from "@/lib/workplaneGrid";
 import { clampBuildHeight, DEFAULT_BUILD_HEIGHT_MM } from "@/lib/buildVolume";
+import { DEFAULT_OVERHANG_ANGLE, normalizeOverhangAngle } from "@/lib/overhangLimits";
 import {
   MAX_BORE_SIDES,
   MAX_COUNTERSINK_ANGLE,
@@ -37,6 +38,7 @@ export const DEFAULT_WORKPLANE_WORKSPACE: WorkplaneWorkspaceSettings = {
   width: 200,
   depth: 200,
   buildHeight: DEFAULT_BUILD_HEIGHT_MM,
+  overhangAngle: DEFAULT_OVERHANG_ANGLE,
   sizePreset: "200 x 200 mm",
   gridBlockSize: 5,
   gridBlockPreset: "5 mm",
@@ -241,6 +243,8 @@ export function normalizeWorkspaceSettings(value: unknown, fallback: WorkplaneWo
     depth: numberOrDefault(candidate.depth, fallback.depth),
     // Alte Projekte haben keine Bauhoehe - dann gilt die uebliche.
     buildHeight: clampBuildHeight(numberOrDefault(candidate.buildHeight, fallback.buildHeight)),
+    // Ebenso der Ueberhangwinkel: Alte Projekte kennen ihn nicht.
+    overhangAngle: normalizeOverhangAngle(candidate.overhangAngle, fallback.overhangAngle),
     sizePreset: stringOrDefault(candidate.sizePreset, fallback.sizePreset),
     gridBlockSize: numberOrDefault(candidate.gridBlockSize, fallback.gridBlockSize),
     gridBlockPreset: stringOrDefault(candidate.gridBlockPreset, fallback.gridBlockPreset),

@@ -6970,6 +6970,11 @@ html[data-theme="dark"] .region-card-hint {
   border-color: #91c8d9;
 }
 
+/* Das Warnzeichen im Augenmenue faerbt sich, wenn die Schraffur laeuft. */
+.overhang-menu-icon.active {
+  color: #e8322a;
+}
+
 .workspace-range {
   display: grid;
   grid-template-columns: 145px 1fr;

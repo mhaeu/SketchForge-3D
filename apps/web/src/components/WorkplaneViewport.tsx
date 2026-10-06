@@ -51,6 +51,8 @@ import { viewFaceOrientation, workplaneCameraOrientation, worldCameraOrientation
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
 import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
+import { DEFAULT_OVERHANG_ANGLE, OVERHANG_PLATE_TOLERANCE, overhangDownwardLimit } from "@/lib/overhangLimits";
+import { OVERHANG_PROGRAM_CACHE_KEY, patchOverhangFragmentShader, patchOverhangVertexShader } from "@/lib/overhangShader";
 import { createTransparentSurfaceSort } from "@/lib/transparentSort";
 import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -188,6 +190,17 @@ const transparentSort = createTransparentSurfaceSort();
 const sharedShapeGeometryCache = new Map<string, { geometry: THREE.BufferGeometry; users: number }>();
 const sharedEdgesGeometryCache = new WeakMap<THREE.BufferGeometry, Map<number, THREE.EdgesGeometry>>();
 const sharedShapeMaterialCache = new Map<string, { material: THREE.MeshStandardMaterial; users: number }>();
+/*
+ * Teilen sich alle Koerper: Die Ueberhaenge ein- oder auszuschalten und den
+ * Winkel zu aendern setzt nur diese Werte um - kein Material wird neu gebaut,
+ * und kein Shader neu uebersetzt.
+ */
+const overhangUniforms = {
+  uOverhangOn: { value: 0 },
+  uOverhangLimit: { value: overhangDownwardLimit(DEFAULT_OVERHANG_ANGLE) },
+  uOverhangPlateY: { value: OVERHANG_PLATE_TOLERANCE },
+  uOverhangColor: { value: new THREE.Color("#e8322a") },
+};
 const sharedLineMaterialCache = new Map<string, THREE.LineBasicMaterial>();
 const shapeResourceIds = new WeakMap<object, number>();
 let nextShapeResourceId = 1;
@@ -300,6 +313,8 @@ type WorkplaneViewportProps = {
   onUpdateShape: (id: string, patch: ShapeUpdatePatch) => void;
   notes?: WorkplaneNote[];
   notesVisible?: boolean;
+  /** Ueberhaenge schraffieren, nach `workspace.overhangAngle`. */
+  showOverhangs?: boolean;
   noteMode?: boolean;
   onNoteAdd?: (note: { x: number; y: number; z: number; anchor?: WorkplaneNoteAnchor }) => string | null;
   onNoteUpdate?: (id: string, patch: Partial<WorkplaneNote>, transient?: boolean) => void;
@@ -3376,6 +3391,7 @@ export function WorkplaneViewport({
   onUpdateShape,
   notes = EMPTY_NOTES,
   notesVisible = true,
+  showOverhangs = false,
   noteMode = false,
   onNoteAdd,
   onNoteUpdate,
@@ -4040,6 +4056,16 @@ export function WorkplaneViewport({
       threeRef.current.needsRender = true;
     }
   }, [rulerModel]);
+
+  /*
+   * Umschalten und Winkel aendern setzt nur die geteilten Werte um; die
+   * Materialien bleiben, wie sie sind.
+   */
+  useEffect(() => {
+    overhangUniforms.uOverhangOn.value = showOverhangs ? 1 : 0;
+    overhangUniforms.uOverhangLimit.value = overhangDownwardLimit(workspace.overhangAngle);
+    if (threeRef.current) threeRef.current.needsRender = true;
+  }, [showOverhangs, workspace.overhangAngle]);
 
   useEffect(() => {
     notesRef.current = notes;
@@ -9435,10 +9461,31 @@ function sharedShapeMaterial(shape: WorkplaneShape) {
     // because its own depth values still occlude them.
     depthWrite: opacity >= 1,
   });
+  if (!shape.hole) addOverhangTint(material);
   material.userData.cached = true;
   material.userData.sharedShapeMaterialKey = key;
   sharedShapeMaterialCache.set(key, { material, users: 0 });
   return material;
+}
+
+/**
+ * Ueberhaenge rot-weiss schraffiert, damit sie auch auf einem roten Koerper zu
+ * sehen sind.
+ *
+ * Die Flicken selbst stehen in `overhangShader.ts` - sie haengen an Ankern in
+ * den Quellen von three.js, und daneben steht die Probe, die merkt, wenn einer
+ * davon wegfaellt. Hier bleibt nur das Anhaengen: ohne eigenes Material, denn
+ * sonst wuerde beim Umschalten jeder Koerper neu gebaut.
+ */
+function addOverhangTint(material: THREE.MeshStandardMaterial) {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, overhangUniforms);
+    shader.vertexShader = patchOverhangVertexShader(shader.vertexShader);
+    shader.fragmentShader = patchOverhangFragmentShader(shader.fragmentShader);
+  };
+  // Ohne diesen Schluessel haelt three.js die angefassten Materialien fuer
+  // verschieden und uebersetzt denselben Shader je Koerper neu.
+  material.customProgramCacheKey = () => OVERHANG_PROGRAM_CACHE_KEY;
 }
 
 function trimSharedShapeMaterialCache() {

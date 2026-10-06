@@ -6196,6 +6196,7 @@ export function SketchForgeEditor({
   // Stand, auf den der Verlauf zeigt, ist der Stand, den der Editor zeigt.
   const [notes, setNotes] = useState<WorkplaneNote[]>(() => notesForHistoryIndex(initialHistory, initialHistoryIndex));
   const [notesVisible, setNotesVisible] = useState(true);
+  const [overhangsVisible, setOverhangsVisible] = useState(false);
   const [noteMode, setNoteMode] = useState(false);
   const [projectAssets, setProjectAssets] = useState<ProjectAsset[]>(() => dedupeProjectAssets(initialAssets));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -7250,6 +7251,19 @@ export function SketchForgeEditor({
       const next = !current;
       if (!next) setNoteMode(false);
       setNotice(next ? t("status.notesShown") : t("status.notesHidden"));
+      return next;
+    });
+  }, [setNotice]);
+
+  /*
+   * Der Winkel kommt aus den Einstellungen, nicht aus einem eigenen Regler:
+   * Er gehoert zum Drucker und nicht zum Blick, und es ist derselbe Winkel,
+   * mit dem der Hinweis im Ausgabefenster rechnet.
+   */
+  const toggleOverhangsVisible = useCallback(() => {
+    setOverhangsVisible((current) => {
+      const next = !current;
+      setNotice(next ? t("status.overhangsShown", { angle: workspaceSettingsRef.current.overhangAngle }) : t("status.overhangsHidden"));
       return next;
     });
   }, [setNotice]);
@@ -11683,6 +11697,9 @@ export function SketchForgeEditor({
         noteCount={notes.length}
         onNoteTool={toggleNoteTool}
         onToggleNotes={toggleNotesVisible}
+        overhangsVisible={overhangsVisible}
+        overhangAngle={workspaceSettings.overhangAngle}
+        onToggleOverhangs={toggleOverhangsVisible}
         toolbarMode={toolbarMode}
         projectName={projectName}
         onProjectNameChange={onProjectNameChange}
@@ -11912,6 +11929,7 @@ export function SketchForgeEditor({
           onUpdateShape={updateShape}
           notes={notes}
           notesVisible={notesVisible}
+          showOverhangs={overhangsVisible}
           noteMode={noteMode}
           onNoteAdd={addNote}
           onNoteUpdate={updateNote}
@@ -12312,6 +12330,9 @@ function SecondaryToolbar({
   onShowHidden,
   noteMode,
   notesVisible,
+  overhangsVisible,
+  overhangAngle,
+  onToggleOverhangs,
   noteCount,
   onNoteTool,
   onToggleNotes,
@@ -12418,6 +12439,9 @@ function SecondaryToolbar({
   onShowHidden: () => void;
   noteMode: boolean;
   notesVisible: boolean;
+  overhangsVisible: boolean;
+  overhangAngle: number;
+  onToggleOverhangs: () => void;
   noteCount: number;
   onNoteTool: () => void;
   onToggleNotes: () => void;
@@ -12932,6 +12956,19 @@ function SecondaryToolbar({
               >
                 {notesVisible ? <Eye size={20} aria-hidden="true" /> : <EyeOff size={20} aria-hidden="true" />}
                 <strong>{t("visibility.notes")}{noteCount > 0 ? ` (${noteCount})` : ""}</strong>
+              </button>
+              <button
+                className="visibility-dropdown-action"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={overhangsVisible}
+                onClick={() => {
+                  setVisibilityOpen(false);
+                  onToggleOverhangs();
+                }}
+              >
+                <AlertTriangle size={20} aria-hidden="true" className={overhangsVisible ? "overhang-menu-icon active" : "overhang-menu-icon"} />
+                <strong>{t("visibility.overhangs", { angle: overhangAngle })}</strong>
               </button>
               <div className="visibility-dropdown-help">
                 <span>{t("visibility.eyeAgain")}</span>

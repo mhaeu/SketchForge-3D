@@ -39,6 +39,7 @@ import {
 import { measurementOptionLabel, normalizeScaleForUnits, parseMeasurementInput, scaleOptionsForUnits, WORKSPACE_UNIT_OPTIONS } from "@/lib/measurementUnits";
 import { shapeAssetDefaultDimensions, shapeAssetSpecialDefaults, toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { clampBuildHeight } from "@/lib/buildVolume";
+import { MAX_OVERHANG_ANGLE, MIN_OVERHANG_ANGLE } from "@/lib/overhangLimits";
 import { DEFAULT_WORKPLANE_WORKSPACE, MAX_CUSTOM_SHAPE_DIMENSION, MAX_HIGH_RESOLUTION_SIDES, MIN_CUSTOM_SHAPE_DIMENSION } from "@/lib/workplaneSettings";
 import type { GearType, GridSize, ShapeCustomization, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
@@ -491,6 +492,21 @@ export function WorkspaceSettingsModal({
                     onChange={(selectBeforeMove) => patchWorkspace({ selectBeforeMove })}
                   />
                   <WorkspaceToggle label={t("workspace.showShadows")} checked={workspace.showShadows} onChange={(showShadows) => patchWorkspace({ showShadows })} />
+                  <label className="workspace-range">
+                    <span>{t("workspace.overhangAngle", { angle: workspace.overhangAngle })}</span>
+                    <input
+                      type="range"
+                      min={MIN_OVERHANG_ANGLE}
+                      max={MAX_OVERHANG_ANGLE}
+                      step={5}
+                      value={workspace.overhangAngle}
+                      onChange={(event) => patchWorkspace({ overhangAngle: Number(event.currentTarget.value) })}
+                    />
+                    <small>
+                      <span>{t("workspace.overhangStrict")}</span>
+                      <span>{t("workspace.overhangLoose")}</span>
+                    </small>
+                  </label>
                   <WorkspaceToggle
                     label={t("workspace.cruise")}
                     checked={workspace.cruiseShapes}

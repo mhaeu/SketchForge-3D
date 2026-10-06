@@ -64,6 +64,21 @@ describe("workplane settings helpers", () => {
     expect(normalizeWorkspaceSettings({ gridColor: "not-a-color" }).gridColor).toBe(DEFAULT_WORKPLANE_WORKSPACE.gridColor);
   });
 
+  /**
+   * Der Ueberhangwinkel kam erst dazu - ein Projekt, das vorher gespeichert
+   * wurde, kennt ihn nicht und muss die uebliche Vorgabe bekommen, nicht
+   * `undefined` (sonst rechnet der Schattenrechner in der Ansicht mit NaN und
+   * schraffiert alles oder nichts).
+   */
+  it("gibt einem alten Projekt den ueblichen Ueberhangwinkel", () => {
+    expect(normalizeWorkspaceSettings({}).overhangAngle).toBe(45);
+    expect(normalizeWorkspaceSettings({ overhangAngle: 60 }).overhangAngle).toBe(60);
+    // Und haelt ihn in den Grenzen, die der Regler hergibt.
+    expect(normalizeWorkspaceSettings({ overhangAngle: 10 }).overhangAngle).toBe(30);
+    expect(normalizeWorkspaceSettings({ overhangAngle: 89 }).overhangAngle).toBe(70);
+    expect(normalizeWorkspaceSettings({ overhangAngle: "steil" }).overhangAngle).toBe(45);
+  });
+
   it("keeps app limits until a shape receives an explicit customization", () => {
     const untouched = normalizeWorkspaceSettings({});
     const customized = normalizeWorkspaceSettings({
