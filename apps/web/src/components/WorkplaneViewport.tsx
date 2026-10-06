@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Rotate3d, Ruler, RulerDimensionLine, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cuboid, Focus, Home, Minus, MousePointer2, PanelsTopLeft, Plus, Rotate3d, Ruler, RulerDimensionLine, SquareDashedBottom, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction, type WheelEvent as ReactWheelEvent } from "react";
 import * as THREE from "three";
 import { Brush, Evaluator, HOLLOW_INTERSECTION } from "three-bvh-csg";
@@ -58,6 +58,18 @@ import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/camer
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { snapPointOnMesh, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { planarFace } from "@/lib/rotationPivot";
+import { shapeWorldBounds } from "@/lib/cutTools";
+import {
+  clampSectionOffset,
+  pointIsCutAway,
+  SECTION_AXES,
+  sectionBoundsOf,
+  sectionCentre,
+  sectionOffsetLimits,
+  sectionPlane,
+  type SectionAxis,
+  type SectionView,
+} from "@/lib/sectionView";
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
@@ -392,6 +404,7 @@ type ThreeState = {
   transformGuideLayer: THREE.Group;
   pivotLayer: THREE.Group;
   snapLayer: THREE.Group;
+  sectionLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
   modifierLayer: THREE.Group;
@@ -3422,6 +3435,14 @@ export function WorkplaneViewport({
   const [pinnedRotationWheelView, setPinnedRotationWheelView] = useState<PinnedRotationWheelView | null>(null);
   const [editingDimension, setEditingDimension] = useState<EditingDimension>(null);
   const [editingRotation, setEditingRotation] = useState<EditingRotation>(null);
+  /*
+   * Die Schnittansicht. Sie gehoert zur Ansicht und nicht zur Zeichnung, darum
+   * steht sie hier und nicht im Editor - wie die Parallelansicht auch.
+   */
+  const [sectionView, setSectionView] = useState<SectionView | null>(null);
+  const [sectionOpen, setSectionOpen] = useState(false);
+  const sectionViewRef = useRef<SectionView | null>(null);
+  sectionViewRef.current = sectionView;
   const [rulerMode, setRulerMode] = useState(false);
   const [rulerDeleteMode, setRulerDeleteMode] = useState(false);
   const [rulerMoveMode, setRulerMoveMode] = useState(false);
@@ -4240,6 +4261,7 @@ export function WorkplaneViewport({
       disposeChildren(state.transformGuideLayer);
       disposeChildren(state.pivotLayer);
       disposeChildren(state.snapLayer);
+      disposeChildren(state.sectionLayer);
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
       disposeChildren(state.modifierLayer);
@@ -5383,6 +5405,20 @@ export function WorkplaneViewport({
     setActiveRotationWheel(false);
   }, []);
 
+  /** Ob dieser Punkt in der Schnittansicht weggenommen ist. */
+  const isCutAwayPoint = useCallback((point: THREE.Vector3) => {
+    const view = sectionViewRef.current;
+    return view ? pointIsCutAway({ x: point.x, y: point.y, z: point.z }, view) : false;
+  }, []);
+
+  /** Der Rahmen um alles, was im Bild steht - die Grenzen der Schnittebene. */
+  const sectionBounds = useMemo(() => sectionBoundsOf(
+    shapes.filter((shape) => !shape.hidden).map((shape) => {
+      const box = shapeWorldBounds(shape);
+      return { min: { x: box.min.x, y: box.min.y, z: box.min.z }, max: { x: box.max.x, y: box.max.y, z: box.max.z } };
+    }),
+  ), [shapes]);
+
   const pickShape = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
     if (!state) {
@@ -5399,6 +5435,9 @@ export function WorkplaneViewport({
     const hit = intersections.find((entry) => {
       const shapeId = entry.object.userData.shapeId;
       if (typeof shapeId !== "string") return false;
+      // Was die Schnittansicht wegnimmt, nimmt sie auch dem Zeiger weg - sonst
+      // griffe man beim Blick ins Innere immer wieder die Wand davor.
+      if (isCutAwayPoint(entry.point)) return false;
       const shape = shapesRef.current.find((candidate) => candidate.id === shapeId);
       return shape ? !shape.imagePlate : false;
     });
@@ -5549,6 +5588,7 @@ export function WorkplaneViewport({
       return shape ? !shape.hidden : false;
     });
     if (!hit || hit.faceIndex == null || !(hit.object instanceof THREE.Mesh)) return null;
+    if (isCutAwayPoint(hit.point)) return null;
     const geometry = hit.object.geometry as THREE.BufferGeometry;
     const position = geometry.getAttribute("position");
     if (!position) return null;
@@ -5606,6 +5646,81 @@ export function WorkplaneViewport({
     }
     state.needsRender = true;
   }, [snapAnchor]);
+
+  /*
+   * Die Schnittansicht an die Werkstoffe haengen.
+   *
+   * Gekappt wird je Werkstoff und nicht am Zeichner: Am Zeichner wuerde die
+   * ganze Szene geschnitten, also auch Gitter, Marken und Griffe. Die
+   * Werkstoffe der Koerper sind geteilt - derselbe wird mehrfach gefunden, und
+   * das Setzen ist darum absichtlich einfach gehalten.
+   *
+   * Es laeuft auch an `shapes`: Ein Koerper, der waehrend der Schnittansicht
+   * neu gebaut wird, bringt einen frischen Werkstoff mit und muesste sonst
+   * ungekappt stehen bleiben.
+   */
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    const planes = sectionView
+      ? [(() => {
+          const { normal, constant } = sectionPlane(sectionView);
+          return new THREE.Plane(new THREE.Vector3(normal.x, normal.y, normal.z), constant);
+        })()]
+      : [];
+    state.shapeLayer.traverse((child) => {
+      const material = (child as THREE.Mesh).material;
+      if (!material) return;
+      const list = Array.isArray(material) ? material : [material];
+      list.forEach((entry) => {
+        entry.clippingPlanes = planes.length ? planes : null;
+        entry.needsUpdate = true;
+      });
+    });
+
+    disposeChildren(state.sectionLayer);
+    if (sectionView?.showPlane) {
+      /*
+       * Die Ebene als durchsichtige Scheibe, etwas groesser als alles, was da
+       * steht. Ohne sie sieht man zwar den Schnitt, aber nicht, wo die Ebene
+       * gerade steht - und beim Schieben des Reglers ist genau das die Frage.
+       */
+      const span = Math.max(
+        sectionBounds.max.x - sectionBounds.min.x,
+        sectionBounds.max.y - sectionBounds.min.y,
+        sectionBounds.max.z - sectionBounds.min.z,
+        20,
+      ) * 1.25;
+      const sheet = new THREE.Mesh(
+        new THREE.PlaneGeometry(span, span),
+        new THREE.MeshBasicMaterial({
+          color: 0x00aeea,
+          transparent: true,
+          opacity: 0.12,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      const centre = new THREE.Vector3(
+        (sectionBounds.min.x + sectionBounds.max.x) / 2,
+        (sectionBounds.min.y + sectionBounds.max.y) / 2,
+        (sectionBounds.min.z + sectionBounds.max.z) / 2,
+      );
+      if (sectionView.axis === "x") {
+        sheet.rotation.y = Math.PI / 2;
+        sheet.position.set(sectionView.offset, centre.y, centre.z);
+      } else if (sectionView.axis === "y") {
+        sheet.rotation.x = -Math.PI / 2;
+        sheet.position.set(centre.x, sectionView.offset, centre.z);
+      } else {
+        sheet.position.set(centre.x, centre.y, sectionView.offset);
+      }
+      sheet.renderOrder = 9;
+      setObjectRenderLayer(sheet, RENDER_LAYER_HELPERS);
+      state.sectionLayer.add(sheet);
+    }
+    state.needsRender = true;
+  }, [sectionBounds, sectionView, shapes]);
 
   /**
    * Den gezeigten Punkt aus einem Klick holen.
@@ -6908,6 +7023,100 @@ export function WorkplaneViewport({
             >
               <RulerDimensionLine size={25} strokeWidth={2.1} aria-hidden="true" />
             </button>
+            <div className="section-control-group">
+              <button
+                className={`section-trigger ${sectionView ? "active" : ""}`}
+                aria-label={t("camera.sectionView")}
+                title={t("camera.sectionViewHint")}
+                aria-expanded={sectionOpen}
+                aria-controls="section-view-popover"
+                onClick={() => {
+                  // Beim ersten Oeffnen steht die Ebene in der Mitte dessen,
+                  // was da ist - dort schneidet sie sicher etwas.
+                  if (!sectionView) {
+                    setSectionView({ axis: "y", offset: sectionCentre(sectionBounds, "y"), flipped: false, showPlane: true });
+                  }
+                  setSectionOpen((open) => !open);
+                }}
+              >
+                <SquareDashedBottom size={25} strokeWidth={2.1} aria-hidden="true" />
+              </button>
+              {sectionOpen && sectionView ? (
+                <div id="section-view-popover" className="section-view-popover" aria-label={t("camera.sectionView")}>
+                  <div className="pattern-choice" role="radiogroup" aria-label={t("section.axis")}>
+                    {SECTION_AXES.map((axis) => (
+                      <button
+                        key={axis}
+                        type="button"
+                        role="radio"
+                        aria-checked={sectionView.axis === axis}
+                        className={sectionView.axis === axis ? "active" : ""}
+                        onClick={() => setSectionView({
+                          ...sectionView,
+                          axis,
+                          offset: sectionCentre(sectionBounds, axis),
+                        })}
+                      >
+                        {axis.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="section-view-slider">
+                    <span>{t("section.offset")}</span>
+                    <input
+                      type="range"
+                      min={sectionOffsetLimits(sectionBounds, sectionView.axis).min}
+                      max={sectionOffsetLimits(sectionBounds, sectionView.axis).max}
+                      step={0.1}
+                      value={sectionView.offset}
+                      onChange={(event) => setSectionView({
+                        ...sectionView,
+                        offset: clampSectionOffset(Number(event.currentTarget.value), sectionBounds, sectionView.axis),
+                      })}
+                    />
+                    <input
+                      className="section-view-number"
+                      type="text"
+                      inputMode="decimal"
+                      value={Number(sectionView.offset.toFixed(2))}
+                      onChange={(event) => {
+                        const typed = Number.parseFloat(event.currentTarget.value.replace(",", "."));
+                        if (Number.isFinite(typed)) {
+                          setSectionView({ ...sectionView, offset: clampSectionOffset(typed, sectionBounds, sectionView.axis) });
+                        }
+                      }}
+                    />
+                  </label>
+                  <div className="section-view-switches">
+                    <button
+                      type="button"
+                      className={sectionView.flipped ? "active" : ""}
+                      aria-pressed={sectionView.flipped}
+                      onClick={() => setSectionView({ ...sectionView, flipped: !sectionView.flipped })}
+                    >
+                      {t("section.flip")}
+                    </button>
+                    <button
+                      type="button"
+                      className={sectionView.showPlane ? "active" : ""}
+                      aria-pressed={sectionView.showPlane}
+                      onClick={() => setSectionView({ ...sectionView, showPlane: !sectionView.showPlane })}
+                    >
+                      {t("section.showPlane")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSectionView(null);
+                        setSectionOpen(false);
+                      }}
+                    >
+                      {t("section.off")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
             <div className="ruler-control-group">
               <button
                 className={`ruler-trigger ${rulerToolsOpen ? "active" : ""}`}
@@ -7109,6 +7318,10 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(host.clientWidth, host.clientHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Die Schnittansicht kappt die Koerper, nicht die Szene: Gitter, Marken und
+  // Griffe muessen stehen bleiben, also wird je Werkstoff gekappt und nicht
+  // am Zeichner.
+  renderer.localClippingEnabled = true;
   renderer.shadowMap.enabled = DEFAULT_WORKSPACE.showShadows;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   host.appendChild(renderer.domElement);
@@ -7194,6 +7407,11 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const snapLayer = new THREE.Group();
   snapLayer.name = "SnapPoint";
   snapLayer.layers.set(RENDER_LAYER_HELPERS);
+  // Die Schnittebene selbst: eigene Gruppe, damit sie weder gekappt wird noch
+  // beim Neubauen der Auswahlhelfer verschwindet.
+  const sectionLayer = new THREE.Group();
+  sectionLayer.name = "SectionPlane";
+  sectionLayer.layers.set(RENDER_LAYER_HELPERS);
   const moveDimensionLayer = new THREE.Group();
   moveDimensionLayer.name = "MoveDimensions";
   moveDimensionLayer.layers.set(RENDER_LAYER_HELPERS);
@@ -7203,7 +7421,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -7240,6 +7458,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     shapeLayer,
     pivotLayer,
     snapLayer,
+    sectionLayer,
     helperLayer,
     transformGuideLayer,
     moveDimensionLayer,
