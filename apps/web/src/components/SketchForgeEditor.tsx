@@ -107,7 +107,7 @@ import {
   mirroredAxisCount,
   mirrorSign,
   normalizeDegrees,
-  preservesEdgeTreatmentSize,
+  preservesFeatureSize,
   resizedImportedMeshPositions,
   serializeShapesForSync,
   shapeEdgeTreatmentLimit,
@@ -8798,7 +8798,7 @@ export function SketchForgeEditor({
       : [selectedShape]).flatMap(cadModifierSourceParts);
     const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((shape) => {
       const frame = shape.cadBrepFrame;
-      const preserveNeedsRetessellation = preservesEdgeTreatmentSize(shape) && Boolean(frame) && (
+      const preserveNeedsRetessellation = preservesFeatureSize(shape) && Boolean(frame) && (
         Math.abs(shapeWidth(shape) - (frame?.width ?? shapeWidth(shape))) > 1e-6 ||
         Math.abs(shapeDepth(shape) - (frame?.depth ?? shapeDepth(shape))) > 1e-6 ||
         Math.abs(shape.height - (frame?.height ?? shape.height)) > 1e-6
@@ -8877,7 +8877,7 @@ export function SketchForgeEditor({
       : [shape]).flatMap(cadModifierSourceParts);
     const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((partShape) => {
       const frame = partShape.cadBrepFrame;
-      const preserveNeedsRetessellation = preservesEdgeTreatmentSize(partShape) && Boolean(frame) && (
+      const preserveNeedsRetessellation = preservesFeatureSize(partShape) && Boolean(frame) && (
         Math.abs(shapeWidth(partShape) - (frame?.width ?? shapeWidth(partShape))) > 1e-6 ||
         Math.abs(shapeDepth(partShape) - (frame?.depth ?? shapeDepth(partShape))) > 1e-6 ||
         Math.abs(partShape.height - (frame?.height ?? partShape.height)) > 1e-6
@@ -9118,6 +9118,16 @@ export function SketchForgeEditor({
         name: base.name,
         color: base.color,
         cadDisplayEdgesVersion: 2 as const,
+        /*
+         * Die Wand bleibt die Wand, auch wenn der Koerper gezogen wird.
+         *
+         * Der Hohlkoerper ist ein gebackenes Netz; ohne diese zwei Zeilen
+         * waechst die Wand beim Groesserziehen mit, und aus 2 mm werden 4. Der
+         * starre Streifen an jedem Rand ist genau so breit wie die Wand - die
+         * Vorrichtung dafuer gab es schon fuer Verrundungen.
+         */
+        hollowWall: edgeModifier.hollow.thickness,
+        edgeResizeMode: "preserve" as const,
       });
       commitShapes(
         shapes.map((shape) => (shape.id === base.id ? hollowShape : shape)),

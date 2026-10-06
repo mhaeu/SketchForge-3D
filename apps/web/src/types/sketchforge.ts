@@ -520,6 +520,15 @@ export type WorkplaneShape = {
   cadDisplayEdges?: CadDisplayEdge[];
   cadDisplayEdgesVersion?: 2;
   edgeResizeMode?: "scale" | "preserve";
+  /**
+   * Die Wandstaerke eines ausgehoehlten Koerpers, in Millimetern.
+   *
+   * Sie steht hier, weil der Hohlkoerper ein gebackenes Netz ist: Beim
+   * Groesserziehen wuerde die Wand mitwachsen, und aus 2 mm wuerden 4. Mit
+   * dieser Zahl bleibt der Streifen an jedem Rand starr (siehe
+   * `preservesFeatureSize`), und die Wand bleibt die Wand.
+   */
+  hollowWall?: number;
   cadBrep?: string;
   cadBrepFrame?: CadBrepFrame;
   // Die feinste Vernetzung, die eine Kantenbearbeitung dieses Koerpers bisher

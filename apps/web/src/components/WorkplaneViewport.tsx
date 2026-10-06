@@ -64,7 +64,7 @@ import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
 import { deformShapePoint } from "@/lib/shapeMeshDeform";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
-import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesEdgeTreatmentSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeightScaleAtShare, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
+import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesFeatureSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeightScaleAtShare, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import type { SketchForgeMcpViewFace } from "@/lib/sketchforgeMcpProtocol";
 import {
@@ -1387,7 +1387,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
       taper,
       deform,
       sideHeights,
-      preserve: preservesEdgeTreatmentSize(shape)
+      preserve: preservesFeatureSize(shape)
         ? [shapeWidth(shape), shapeDepth(shape), shape.height, shape.edgeTreatments]
         : false,
     });
@@ -2252,7 +2252,7 @@ function importedShapeProjectionBounds(
     };
   }
 
-  const preserveSize = preservesEdgeTreatmentSize(shape);
+  const preserveSize = preservesFeatureSize(shape);
   const positions = preserveSize ? resizedImportedMeshPositions(shape) : shape.importedMesh.positions;
   const scaleX = preserveSize ? 1 : shapeWidth(shape) / Math.max(0.001, shape.importedMesh.baseWidth);
   const scaleY = preserveSize ? 1 : shape.height / Math.max(0.001, shape.importedMesh.baseHeight);
@@ -7932,7 +7932,7 @@ function syncShapeObjectDimensions(object: THREE.Group, shape: WorkplaneShape) {
   // length (createShapeObject rebuilds it via canonicalizeShape), so stretching
   // the existing object by height/baseHeight would pull the turns apart. Leaving
   // scale null skips this object here and lets the rebuild show the correct mesh.
-  if (!shape.threadParams && shape.importedMesh && !preservesEdgeTreatmentSize(shape)) {
+  if (!shape.threadParams && shape.importedMesh && !preservesFeatureSize(shape)) {
     scale = new THREE.Vector3(
       width / Math.max(0.001, shape.importedMesh.baseWidth),
       shape.height / Math.max(0.001, shape.importedMesh.baseHeight),
@@ -9590,7 +9590,7 @@ function createShapeObject(
       break;
     case "mesh":
       if (shape.importedMesh) {
-        const preserveEdgeSize = preservesEdgeTreatmentSize(shape);
+        const preserveEdgeSize = preservesFeatureSize(shape);
         addMesh(
           group,
           preserveEdgeSize ? getPreservedImportedMeshGeometry(shape) : getImportedMeshGeometry(shape.importedMesh),
@@ -9916,7 +9916,7 @@ function getPreservedImportedMeshGeometry(shape: WorkplaneShape) {
 }
 
 function getEdgesGeometry(shape: WorkplaneShape, geometry: THREE.BufferGeometry, threshold: number) {
-  const importedCache = shape.importedMesh && !preservesEdgeTreatmentSize(shape) && !shapeHasShapeDeform(shape)
+  const importedCache = shape.importedMesh && !preservesFeatureSize(shape) && !shapeHasShapeDeform(shape)
     ? getImportedMeshCache(shape.importedMesh).edges
     : null;
   let cache = importedCache ?? sharedEdgesGeometryCache.get(geometry);

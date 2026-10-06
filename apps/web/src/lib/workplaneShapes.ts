@@ -455,14 +455,31 @@ export function meshYawDegrees(shape: WorkplaneShape) {
   return Math.abs(equivalentYaw) < 1e-9 ? 0 : equivalentYaw;
 }
 
-function edgeTreatmentPreserveZone(shape: WorkplaneShape): number {
-  const own = Math.max(...(shape.edgeTreatments ?? []).map((feature) => feature.amount), 0);
-  const child = Math.max(...(shape.groupedShapes ?? []).map(edgeTreatmentPreserveZone), 0);
-  return Math.max(own, child);
+/**
+ * Der Streifen an jedem Rand, der beim Groesserziehen **nicht** mitgestreckt
+ * wird.
+ *
+ * Zwei Dinge haengen daran, und bei beiden ist das Mass ein echtes Mass und
+ * kein Anteil: Eine Verrundung von 2 mm bleibt 2 mm, auch wenn der Kasten
+ * doppelt so breit wird, und die Wand eines Hohlkoerpers von 2 mm bleibt
+ * ebenso 2 mm. Ohne das waere beides nach dem Ziehen irgendetwas - eine
+ * gebauchte Verrundung und eine Wand, die mit dem Koerper waechst.
+ */
+function rigidResizeZone(shape: WorkplaneShape): number {
+  const treatments = Math.max(...(shape.edgeTreatments ?? []).map((feature) => feature.amount), 0);
+  const child = Math.max(...(shape.groupedShapes ?? []).map(rigidResizeZone), 0);
+  return Math.max(treatments, shape.hollowWall ?? 0, child);
 }
 
-export function preservesEdgeTreatmentSize(shape: WorkplaneShape) {
-  return shape.edgeResizeMode === "preserve" && Boolean(shape.importedMesh && edgeTreatmentPreserveZone(shape) > 0);
+/**
+ * Ob dieser Koerper beim Ziehen seine Masse an den Raendern behaelt.
+ *
+ * Hiess einmal `preservesFeatureSize`, als es nur um Kanten ging. Seit
+ * dem Aushoehlen gilt es auch fuer die Wandstaerke, und der Name sagte sonst
+ * nur noch die halbe Wahrheit.
+ */
+export function preservesFeatureSize(shape: WorkplaneShape) {
+  return shape.edgeResizeMode === "preserve" && Boolean(shape.importedMesh && rigidResizeZone(shape) > 0);
 }
 
 function edgePreservedCoordinate(value: number, baseSize: number, targetSize: number, centered: boolean, requestedZone: number) {
@@ -488,8 +505,8 @@ export function resizedImportedCoordinates(shape: WorkplaneShape, sourcePosition
   const width = shapeWidth(shape);
   const depth = shapeDepth(shape);
   const height = shape.height;
-  const preserve = preservesEdgeTreatmentSize(shape);
-  const zone = preserve ? edgeTreatmentPreserveZone(shape) : 0;
+  const preserve = preservesFeatureSize(shape);
+  const zone = preserve ? rigidResizeZone(shape) : 0;
   const positions = new Array<number>(sourcePositions.length);
   for (let index = 0; index + 2 < sourcePositions.length; index += 3) {
     if (preserve) {

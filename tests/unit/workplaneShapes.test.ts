@@ -18,7 +18,7 @@ import {
   normalizeDegrees,
   proportionalResizeScale,
   resizeAxisIsLinked,
-  preservesEdgeTreatmentSize,
+  preservesFeatureSize,
   resizedImportedCoordinates,
   resizedImportedMeshPositions,
   resizedShapeSize,
@@ -307,7 +307,7 @@ describe("workplane shape helpers", () => {
       },
     });
 
-    expect(preservesEdgeTreatmentSize(modified)).toBe(true);
+    expect(preservesFeatureSize(modified)).toBe(true);
     expect(resizedImportedMeshPositions(modified)).toEqual([
       -20, 0, 0,
       -19, 1, 0,
@@ -317,6 +317,41 @@ describe("workplane shape helpers", () => {
     ]);
     expect(resizedImportedMeshPositions({ ...modified, edgeResizeMode: "scale" })[3]).toBe(-18);
     expect(resizedImportedCoordinates(modified, [-9, 1, 0, 9, 19, 0])).toEqual([-19, 1, 0, 19, 39, 0]);
+  });
+
+  /**
+   * Der Hohlkoerper ist ein gebackenes Netz. Wird er gezogen, darf die Wand
+   * nicht mitwachsen - sonst waeren aus 2 mm nach dem Verdoppeln 4 mm, und
+   * gedruckt wird etwas anderes als gezeichnet.
+   *
+   * Der Kasten hier ist 20 breit mit 2 mm Wand: aussen bei -10 und 10, innen
+   * bei -8 und 8. Nach dem Ziehen auf 40 muss aussen bei -20 und 20 liegen und
+   * innen bei -18 und 18 - die Wand also wieder 2.
+   */
+  it("behaelt die Wandstaerke eines Hohlkoerpers beim Ziehen", () => {
+    const hollow = shape({
+      kind: "mesh",
+      width: 40,
+      depth: 20,
+      height: 20,
+      edgeResizeMode: "preserve",
+      hollowWall: 2,
+      importedMesh: {
+        positions: [-10, 0, 0, -8, 0, 0, 8, 0, 0, 10, 0, 0],
+        baseWidth: 20,
+        baseDepth: 20,
+        baseHeight: 20,
+        triangleCount: 1,
+        sourceFormat: "json",
+      },
+    });
+
+    expect(preservesFeatureSize(hollow)).toBe(true);
+    const stretched = resizedImportedMeshPositions(hollow);
+    expect([stretched[0], stretched[3], stretched[6], stretched[9]]).toEqual([-20, -18, 18, 20]);
+    // Die Gegenprobe: Ohne die Vorrichtung waechst die Wand mit.
+    const scaled = resizedImportedMeshPositions({ ...hollow, edgeResizeMode: "scale" });
+    expect([scaled[0], scaled[3]]).toEqual([-20, -16]);
   });
 
   it("uses child edge features when preserving the size of grouped treatments", () => {
@@ -336,7 +371,7 @@ describe("workplane shape helpers", () => {
       height: 40,
     });
 
-    expect(preservesEdgeTreatmentSize(grouped)).toBe(true);
+    expect(preservesFeatureSize(grouped)).toBe(true);
     expect(resizedImportedMeshPositions(grouped)).toEqual([-20, 0, 0, -18, 2, 0, 18, 38, 0, 20, 40, 0]);
   });
 });
