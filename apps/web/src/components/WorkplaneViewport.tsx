@@ -62,6 +62,7 @@ import { meshSnapFeatures, snapPointOnMesh, type SnapFeatures, type SnapMode, ty
 import { mergedDimensionPatch } from "@/lib/cornerDimensions";
 import { triangleTouchesRect, type ScreenRect } from "@/lib/screenRectHit";
 import { toggledMarqueeSelection } from "@/lib/marqueeSelection";
+import { dragAxisLock } from "@/lib/dragAxisLock";
 import { planarFace } from "@/lib/rotationPivot";
 import { shapeWorldBounds } from "@/lib/cutTools";
 import {
@@ -6774,9 +6775,20 @@ export function WorkplaneViewport({
         return;
       }
 
-      const deltaX = point.x - drag.startPoint.x;
-      const deltaY = point.y - drag.startPoint.y;
-      const deltaZ = point.z - drag.startPoint.z;
+      let deltaX = point.x - drag.startPoint.x;
+      let deltaY = point.y - drag.startPoint.y;
+      let deltaZ = point.z - drag.startPoint.z;
+      /*
+       * Mit Umschalt bleibt der Zug auf einer Achse der Arbeitsebene - der
+       * Richtung, in die er weiter gegangen ist. Beim Einpassen zweier Teile
+       * ist die zweite Richtung genau das, was man nicht will.
+       */
+      if (event.shiftKey) {
+        const locked = dragAxisLock(drag.workplane, deltaX, deltaY, deltaZ);
+        deltaX = locked.delta.x;
+        deltaY = locked.delta.y;
+        deltaZ = locked.delta.z;
+      }
       const moveDimensionSession = moveDimensionSessionRef.current;
       if (moveDimensionSession) {
         // Gemessen wird laengs der Ebenenachsen. Auf der Hauptebene sind das
