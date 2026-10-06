@@ -6791,6 +6791,19 @@ html[data-theme="dark"] .region-card-hint {
   font-weight: 650;
 }
 
+/*
+ * Die Hinweiszeilen unter einem Feld: die Masse des gewaehlten Druckers und
+ * die Erklaerung zur Bauhoehe. Kleiner und blasser als die Felder darueber,
+ * damit sie nicht wie eine eigene Ueberschrift lesen.
+ */
+.workspace-printer-info,
+.workspace-field-hint {
+  margin: -4px 0 0;
+  color: #718697;
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .workspace-row,
 .workspace-toggle,
 .workspace-select {
@@ -8556,6 +8569,11 @@ html[data-theme="dark"] .workspace-settings-nav button.active {
 html[data-theme="dark"] .workspace-section-heading strong,
 html[data-theme="dark"] .workspace-history-custom {
   color: #dceaf3;
+}
+
+html[data-theme="dark"] .workspace-printer-info,
+html[data-theme="dark"] .workspace-field-hint {
+  color: #91a7b7;
 }
 
 html[data-theme="dark"] .workspace-select select,

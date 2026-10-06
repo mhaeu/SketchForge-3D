@@ -79,6 +79,20 @@ describe("workplane settings helpers", () => {
     expect(normalizeWorkspaceSettings({ overhangAngle: "steil" }).overhangAngle).toBe(45);
   });
 
+  /**
+   * Der Drucker steht nur als Kennung im Projekt. Fuehrt eine spaetere Liste
+   * sein Geraet nicht mehr, steht dort wieder nichts - die Masse der
+   * Arbeitsebene sind mitgespeichert und bleiben stehen.
+   */
+  it("behaelt nur einen Drucker, den die Liste kennt", () => {
+    expect(normalizeWorkspaceSettings({}).printer).toBe("");
+    expect(normalizeWorkspaceSettings({ printer: "bambu-lab-p1s" }).printer).toBe("bambu-lab-p1s");
+    expect(normalizeWorkspaceSettings({ printer: "ein-drucker-von-gestern" }).printer).toBe("");
+    expect(normalizeWorkspaceSettings({ printer: 7 }).printer).toBe("");
+    const kept = normalizeWorkspaceSettings({ printer: "weg", width: 180, depth: 170, buildHeight: 160 });
+    expect([kept.width, kept.depth, kept.buildHeight]).toEqual([180, 170, 160]);
+  });
+
   it("keeps app limits until a shape receives an explicit customization", () => {
     const untouched = normalizeWorkspaceSettings({});
     const customized = normalizeWorkspaceSettings({

@@ -3,6 +3,7 @@ import { normalizeScaleForUnits } from "@/lib/measurementUnits";
 import { DEFAULT_WORKPLANE_GRID_COLOR } from "@/lib/workplaneGrid";
 import { clampBuildHeight, DEFAULT_BUILD_HEIGHT_MM } from "@/lib/buildVolume";
 import { DEFAULT_OVERHANG_ANGLE, normalizeOverhangAngle } from "@/lib/overhangLimits";
+import { normalizePrinterId } from "@/lib/printerPresets";
 import {
   MAX_BORE_SIDES,
   MAX_COUNTERSINK_ANGLE,
@@ -39,6 +40,7 @@ export const DEFAULT_WORKPLANE_WORKSPACE: WorkplaneWorkspaceSettings = {
   depth: 200,
   buildHeight: DEFAULT_BUILD_HEIGHT_MM,
   overhangAngle: DEFAULT_OVERHANG_ANGLE,
+  printer: "",
   sizePreset: "200 x 200 mm",
   gridBlockSize: 5,
   gridBlockPreset: "5 mm",
@@ -245,6 +247,7 @@ export function normalizeWorkspaceSettings(value: unknown, fallback: WorkplaneWo
     buildHeight: clampBuildHeight(numberOrDefault(candidate.buildHeight, fallback.buildHeight)),
     // Ebenso der Ueberhangwinkel: Alte Projekte kennen ihn nicht.
     overhangAngle: normalizeOverhangAngle(candidate.overhangAngle, fallback.overhangAngle),
+    printer: normalizePrinterId(candidate.printer),
     sizePreset: stringOrDefault(candidate.sizePreset, fallback.sizePreset),
     gridBlockSize: numberOrDefault(candidate.gridBlockSize, fallback.gridBlockSize),
     gridBlockPreset: stringOrDefault(candidate.gridBlockPreset, fallback.gridBlockPreset),

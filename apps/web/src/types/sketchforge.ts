@@ -126,6 +126,8 @@ export type WorkplaneWorkspaceSettings = {
   buildHeight: number;
   /** Ab welchem Winkel zur Senkrechten eine Flaeche als Ueberhang gilt. */
   overhangAngle: number;
+  /** Die Kennung des gewaehlten Druckers, oder leer fuer eigene Masse. */
+  printer: string;
   sizePreset: string;
   gridBlockSize: number;
   gridBlockPreset: string;

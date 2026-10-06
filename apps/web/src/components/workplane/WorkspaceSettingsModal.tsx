@@ -40,6 +40,7 @@ import { measurementOptionLabel, normalizeScaleForUnits, parseMeasurementInput, 
 import { shapeAssetDefaultDimensions, shapeAssetSpecialDefaults, toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { clampBuildHeight } from "@/lib/buildVolume";
 import { MAX_OVERHANG_ANGLE, MIN_OVERHANG_ANGLE } from "@/lib/overhangLimits";
+import { PRINTER_PRESETS, PRINTER_VENDORS, printerPresetById, workspaceForPrinter } from "@/lib/printerPresets";
 import { DEFAULT_WORKPLANE_WORKSPACE, MAX_CUSTOM_SHAPE_DIMENSION, MAX_HIGH_RESOLUTION_SIDES, MIN_CUSTOM_SHAPE_DIMENSION } from "@/lib/workplaneSettings";
 import type { GearType, GridSize, ShapeCustomization, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
@@ -364,13 +365,14 @@ export function WorkspaceSettingsModal({
     const parsed = parseMeasurementInput(value);
     const next = clamp(Number.isFinite(parsed) ? parsed : workspace[key], MIN_WORKSPACE_SIZE, MAX_WORKSPACE_SIZE);
     setDimensionDrafts((current) => ({ ...current, [key]: next.toFixed(workspace.accuracy) }));
-    patchWorkspace({ [key]: next, sizePreset: "Custom" } as Partial<WorkspaceSettings>);
+    // Ein von Hand eingetragenes Mass ist nicht mehr die Platte des Druckers.
+    patchWorkspace({ [key]: next, sizePreset: "Custom", printer: "" } as Partial<WorkspaceSettings>);
   };
   const setBuildHeight = (value: string) => {
     const parsed = parseMeasurementInput(value);
     const next = clampBuildHeight(Number.isFinite(parsed) ? parsed : workspace.buildHeight);
     setBuildHeightDraft(next.toFixed(workspace.accuracy));
-    patchWorkspace({ buildHeight: next });
+    patchWorkspace({ buildHeight: next, printer: "" });
   };
   const setWorkspaceSizePreset = (sizePreset: string) => {
     const preset = WORKSPACE_SIZE_PRESETS.find((entry) => entry.label === sizePreset);
@@ -378,8 +380,16 @@ export function WorkspaceSettingsModal({
       patchWorkspace({ sizePreset: "Custom" });
       return;
     }
-    patchWorkspace({ sizePreset, width: preset.width, depth: preset.depth });
+    patchWorkspace({ sizePreset, width: preset.width, depth: preset.depth, printer: "" });
   };
+  /*
+   * Ein Drucker setzt alle drei Masse: Platte und Bauhoehe gehoeren zusammen,
+   * und wer sein Geraet auswaehlt, will nicht noch die Hoehe nachtragen.
+   */
+  const setPrinter = (id: string) => {
+    patchWorkspace(workspaceForPrinter(id));
+  };
+  const chosenPrinter = printerPresetById(workspace.printer);
   const setGridBlockPreset = (gridBlockPreset: string) => {
     patchWorkspace({ gridBlockPreset, gridBlockSize: gridBlockSizeForPreset(gridBlockPreset, workspace.gridBlockSize) });
   };
@@ -571,6 +581,24 @@ export function WorkspaceSettingsModal({
                     <strong>{t("aria.workplane")}</strong>
                     <span>{t("workspace.workplaneHint")}</span>
                   </div>
+                  <label className="workspace-select">
+                    <span>{t("workspace.printer")}</span>
+                    <select value={chosenPrinter?.id ?? ""} onChange={(event) => setPrinter(event.currentTarget.value)}>
+                      <option value="">{t("workspace.printerNone")}</option>
+                      {PRINTER_VENDORS.map((vendor) => (
+                        <optgroup key={vendor} label={vendor}>
+                          {PRINTER_PRESETS.filter((preset) => preset.vendor === vendor).map((preset) => (
+                            <option key={preset.id} value={preset.id}>{`${preset.vendor} ${preset.model}`}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="workspace-printer-info">
+                    {chosenPrinter
+                      ? t("workspace.printerInfo", { width: chosenPrinter.width, depth: chosenPrinter.depth, height: chosenPrinter.height })
+                      : t("workspace.printerHint")}
+                  </p>
                   <WorkspaceSelect
                     label={t("workspace.size")}
                     value={workspace.sizePreset}
