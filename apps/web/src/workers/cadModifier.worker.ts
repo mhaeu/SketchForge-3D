@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
 
 import * as THREE from "three";
-import { OcctKernel, type ShapeHandle } from "occt-wasm";
+import { JoinType, OcctKernel, type ShapeHandle } from "occt-wasm";
+import { openingFaceIndexes, type HollowFace } from "@/lib/cadHollow";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import { CAD_MODIFIER_KERNEL_RESTART_MESSAGE, CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierKernelExhausted, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
 
@@ -537,6 +538,61 @@ function isImportStlWasmFault(message: string) {
   return /importStl:.*(WebAssembly\.Exception|failed to read)/i.test(message);
 }
 
+/**
+ * Aus einem Koerper eine Schale machen.
+ *
+ * Welche Flaechen offen bleiben, entscheidet `openingFaceIndexes` an ihrer
+ * Mitte und ihrer Richtung. Zwei Dinge sind dabei nicht offensichtlich:
+ *
+ * Die Normale einer Flaeche zeigt nur dann nach aussen, wenn die Flaeche
+ * vorwaerts im Koerper steht; ist sie umgekehrt eingebaut, zeigt sie nach
+ * innen, und ein Deckel saehe wie ein Boden aus. Darum wird sie an der
+ * Einbaurichtung gedreht.
+ *
+ * Und die Parameterwerte einer Flaeche fangen nicht bei null an.
+ * `surfaceNormal` will einen Punkt im eigenen Bereich der Flaeche; 0,5 waere
+ * bei manchen Flaechen ausserhalb, also wird die Mitte ihres Bereichs
+ * genommen.
+ */
+function hollowSolid(
+  cad: OcctKernel,
+  solid: ShapeHandle,
+  thickness: number,
+  opening: "none" | "top" | "bottom" | "both",
+  join: "round" | "sharp",
+): ShapeHandle {
+  const faces = cad.getSubShapes(solid, "face");
+  try {
+    const described: HollowFace[] = faces.map((face) => {
+      try {
+        const centre = cad.getSurfaceCenterOfMass(face);
+        const bounds = cad.uvBounds(face);
+        const normal = cad.surfaceNormal(face, (bounds.uMin + bounds.uMax) / 2, (bounds.vMin + bounds.vMax) / 2);
+        const outward = cad.shapeOrientation(face) === "reversed" ? -1 : 1;
+        return { up: centre.y, normalUp: normal.y * outward };
+      } catch {
+        // Eine Flaeche, die sich nicht ausmessen laesst, bleibt zu. Lieber ein
+        // geschlossener Koerper als ein Abbruch.
+        return { up: 0, normalUp: 0 };
+      }
+    });
+    const open = openingFaceIndexes(described, opening).map((index) => faces[index]);
+    if (opening !== "none" && open.length === 0) {
+      throw new Error("No face found to leave open on that side");
+    }
+    /*
+     * Die Toleranz der Schalenrechnung. 1e-6 ist der genaue Wert; der groebere
+     * 1e-3 ueberlebt mehr Eingaben, erzeugt aber eine andere Topologie.
+     * JoinType.Arc rundet die Innenkanten mit dem Radius der Wandstaerke,
+     * JoinType.Intersection zieht die Flaechen bis zum Schnitt und laesst sie
+     * scharf - das ist die Wahl, die es erst seit occt-wasm 5.4.0 gibt.
+     */
+    return cad.shell(solid, open, thickness, 1e-6, join === "sharp" ? JoinType.Intersection : JoinType.Arc);
+  } finally {
+    releaseHandles(cad, faces);
+  }
+}
+
 function isMissingValidatorFault(message: string) {
   return /isValid/i.test(message) && /null|not a function|undefined/i.test(message);
 }
@@ -587,6 +643,41 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
         selectableEdgeIds: collected.selectableEdgeIds,
         sourceType: activeCad.getShapeType(baseShape),
       });
+      return;
+    }
+    if (request.type === "hollow") {
+      if (baseShape === null) throw new Error("Prepare an object before hollowing");
+      const shells: ShapeHandle[] = [];
+      let hollowed: ShapeHandle | null = null;
+      try {
+        for (const solid of baseSolids) {
+          shells.push(hollowSolid(activeCad, solid, request.thickness, request.opening, request.join));
+        }
+        hollowed = shells.length === 1 ? shells[0] : activeCad.makeCompound(shells);
+        if (!cadShapeIsUsableSolid(activeCad, hollowed)) throw new Error("The chosen wall leaves no hollow body");
+        const options = tessellationOptions(request.quality, request.thickness, request.minDeflection);
+        const deflection: CadModifierDeflection = { linear: options.linearDeflection, angular: options.angularDeflection };
+        const mesh = copyCadMesh(activeCad.tessellate(hollowed, options));
+        const displayEdges = collectEdges(activeCad, hollowed, 0).displayEdges;
+        const brep = activeCad.toBREP(hollowed);
+        post(
+          {
+            type: "preview",
+            requestId: request.requestId,
+            positions: mesh.positions,
+            normals: mesh.normals,
+            indices: mesh.indices,
+            triangleCount: mesh.triangleCount,
+            brep,
+            displayEdges,
+            deflection,
+          },
+          [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer],
+        );
+      } finally {
+        shells.forEach((shell) => activeCad.release(shell));
+        if (hollowed !== null && shells.length > 1) activeCad.release(hollowed);
+      }
       return;
     }
     if (baseShape === null) throw new Error("Prepare an object before previewing the modifier");

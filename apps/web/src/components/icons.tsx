@@ -429,6 +429,24 @@ export function ToolbarPivotIcon(props: IconProps) {
 }
 
 /**
+ * Aushoehlen: ein Koerper im Schnitt, aussen die Wand, innen hohl - und oben
+ * offen, damit man an den Hohlraum kommt.
+ */
+export function ToolbarHollowIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path
+        d="M8 8 H40 V42 H8 Z M14 14 V36 H34 V14 Z"
+        fill="currentColor"
+        fillRule="evenodd"
+        opacity="0.82"
+      />
+      <path d="M8 8 H40" fill="none" stroke="currentColor" strokeWidth="2.4" strokeDasharray="4 3.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
  * Objektliste: drei Zeilen mit je einem Feld davor - die Liste der Koerper.
  */
 export function ToolbarObjectListIcon(props: IconProps) {

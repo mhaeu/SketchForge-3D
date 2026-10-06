@@ -83,6 +83,7 @@ import {
   ToolbarUndoIcon,
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
+  ToolbarHollowIcon,
   ToolbarLayFlatIcon,
   ToolbarObjectListIcon,
   ToolbarOpenGroupIcon,
@@ -195,10 +196,12 @@ import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
 import { bodiesTooTall } from "@/lib/buildVolume";
+import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
+import { HollowPanel } from "./workplane/HollowPanel";
 import { ObjectListPanel } from "./workplane/ObjectListPanel";
 import {
   clampPatternCount,
@@ -266,6 +269,14 @@ type EdgeModifierSession = {
   error: string | null;
   preview: WorkplaneShape | null;
   componentPreviews: EdgeModifierComponentPreview[];
+  /*
+   * Gesetzt, wenn ausgehoehlt wird. Dann geht es nicht um Kanten: Der Arbeiter
+   * bekommt gleich nach dem Vorbereiten seinen Auftrag, und die Flaechen, die
+   * offen bleiben, sucht er selbst. Die ganze Strecke davor - Vorbereiten,
+   * Vorschau, Fehlerbehandlung, Escape und Eingabe - ist dieselbe, darum liegt
+   * es in derselben Sitzung.
+   */
+  hollow: { thickness: number; opening: CadHollowOpening; join: CadHollowJoin } | null;
 };
 
 type EdgeModifierComponentPreview = {
@@ -6283,6 +6294,14 @@ export function SketchForgeEditor({
   const [editingSketchShapeId, setEditingSketchShapeId] = useState<string | null>(null);
   const [edgeModifier, setEdgeModifier] = useState<EdgeModifierSession | null>(null);
   const edgeModifierRef = useRef<EdgeModifierSession | null>(null);
+  /*
+   * Der Absender des Aushoehlauftrags, in einem Fach.
+   *
+   * Die Antwortbehandlung steht im Programm vor ihm, und sie braucht ihn genau
+   * einmal: wenn das Vorbereiten fertig ist. Ein Fach ist hier ehrlicher, als
+   * die halbe Datei umzustellen.
+   */
+  const sendCadHollowRef = useRef<((hollow: NonNullable<EdgeModifierSession["hollow"]>) => void) | null>(null);
   const cadModifierWorkerRef = useRef<Worker | null>(null);
   const cadModifierPendingRef = useRef(new Map<number, {
     resolve: (message: CadModifierWorkerResponse) => void;
@@ -6411,8 +6430,14 @@ export function SketchForgeEditor({
           prepared: true,
           preview: null,
           componentPreviews: [],
-          error: message.selectableEdgeIds.length || rescuedAngle ? null : t("status.noManifoldEdges"),
+          error: current.hollow || message.selectableEdgeIds.length || rescuedAngle ? null : t("status.noManifoldEdges"),
         } : current);
+        const hollowRequest = edgeModifierRef.current?.hollow;
+        if (hollowRequest) {
+          // Aushoehlen wartet auf keine Auswahl - der Auftrag geht sofort raus.
+          sendCadHollowRef.current?.(hollowRequest);
+          return;
+        }
         if (message.selectableEdgeIds.length) setNotice(t("status.selectHighlightedEdges"));
         else if (rescuedAngle) setNotice(t("status.sharpAngleLowered", { angle: rescuedAngle }));
         return;
@@ -6441,7 +6466,9 @@ export function SketchForgeEditor({
         // Waehrend gerechnet wurde, kann ein neuerer Wert eingetroffen sein -
         // der geht jetzt raus, und die Meldung wartet auf dessen Ergebnis.
         const queuedNext = cadPreviewQueueRef.current.settle(message.requestId);
-        if (preview && queuedNext.status !== "sent") setNotice(t("status.edgePreviewReady"));
+        if (preview && queuedNext.status !== "sent") {
+          setNotice(edgeModifierRef.current?.hollow ? t("status.hollowReady") : t("status.edgePreviewReady"));
+        }
         return;
       }
       if (message.type === "error") {
@@ -8755,7 +8782,10 @@ export function SketchForgeEditor({
     setNotice(t("status.edgeCancelled"));
   }, [invalidateCadModifierSession]);
 
-  const startEdgeModifier = useCallback((kind: CadModifierKind) => {
+  const startEdgeModifier = useCallback((
+    kind: CadModifierKind,
+    hollow: EdgeModifierSession["hollow"] = null,
+  ) => {
     if (selectedShapes.length !== 1 || !selectedShape || selectedShape.locked || selectedShape.hole) {
       setNotice(t("status.selectOneUnlocked", { kind }));
       return;
@@ -8812,8 +8842,9 @@ export function SketchForgeEditor({
       error: null,
       preview: null,
       componentPreviews: [],
+      hollow,
     });
-    setNotice(t("status.preparingEdges", { kind }));
+    setNotice(hollow ? t("status.preparingHollow") : t("status.preparingEdges", { kind }));
     const parts: CadModifierMeshPart[] = partInputs.map((part) => {
       if (part.brep) return { brep: part.brep, brepTransform: part.brepTransform, hole: Boolean(part.shape.hole) };
       if (part.primitive) return { primitive: part.primitive, hole: Boolean(part.shape.hole) };
@@ -8960,6 +8991,7 @@ export function SketchForgeEditor({
       error: null,
       preview,
       componentPreviews: cadModifierComponentPreviews(sourceParts, previewResponse.components, previewResponse.deflection),
+      hollow: null,
     };
     const createdAt = Date.now();
     const groupedModifiedShape = groupedShapeWithComponentEdgeTreatment(shape, preview, sourceParts, session, feature, createdAt);
@@ -8999,10 +9031,100 @@ export function SketchForgeEditor({
     setNotice(t("status.edgeCancelledChanged"));
   }, [edgeModifier, invalidateCadModifierSession, shapes]);
 
+  /**
+   * Den Aushoehlauftrag abschicken.
+   *
+   * Dieselbe Strecke wie eine Kantenvorschau: Die Antwort kommt als "preview"
+   * zurueck, und die Behandlung dort baut daraus den Koerper.
+   */
+  const sendCadHollow = useCallback((hollow: NonNullable<EdgeModifierSession["hollow"]>) => {
+    if (!cadModifierBaseShapeRef.current) return;
+    const requestId = postCadModifierRequest({
+      type: "hollow",
+      thickness: hollow.thickness,
+      opening: hollow.opening,
+      join: hollow.join,
+      quality: edgeModifierRef.current?.quality ?? "standard",
+    });
+    if (requestId === null) {
+      const message = cadModifierWorkerFailureMessage();
+      setEdgeModifier((current) => current ? { ...current, busy: false, preview: null, error: message } : current);
+      setNotice(message);
+      return;
+    }
+    cadModifierLatestPreviewRef.current = requestId;
+    armCadModifierWatchdog(requestId, "preview");
+    setEdgeModifier((current) => current ? { ...current, hollow, busy: true, preview: null, error: null } : current);
+    setNotice(t("status.hollowRunning", { wall: Number(hollow.thickness.toFixed(2)) }));
+  }, [armCadModifierWatchdog]);
+
+  useEffect(() => {
+    sendCadHollowRef.current = sendCadHollow;
+  }, [sendCadHollow]);
+
+  /*
+   * Die Masse, an denen die Wandstaerke ihre Grenzen findet: die des Koerpers,
+   * der ausgehoehlt wird.
+   */
+  const hollowDimensions = useMemo(() => {
+    const base = cadModifierBaseShapeRef.current ?? selectedShape;
+    return base
+      ? { width: shapeWidth(base), depth: shapeDepth(base), height: base.height }
+      : { width: 20, depth: 20, height: 20 };
+  }, [selectedShape, edgeModifier?.hollow]);
+
+  /**
+   * Aushoehlen anfangen. Dieselbe Vorbereitung wie bei einer
+   * Kantenbearbeitung - der Koerper muss ein exakter sein -, nur dass der
+   * Auftrag danach von selbst losgeht.
+   */
+  const startHollow = useCallback(() => {
+    if (!selectedShape) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    const dimensions = { width: shapeWidth(selectedShape), depth: shapeDepth(selectedShape), height: selectedShape.height };
+    startEdgeModifier("fillet", {
+      thickness: normalizeHollowWall(undefined, dimensions, "top"),
+      opening: "top",
+      join: "round",
+    });
+  }, [selectedShape, startEdgeModifier]);
+
+  const changeHollow = useCallback((next: { wall?: number; opening?: CadHollowOpening; join?: CadHollowJoin }) => {
+    const current = edgeModifierRef.current?.hollow;
+    if (!current) return;
+    const opening = next.opening ?? current.opening;
+    // Die offene Seite verschiebt die Grenzen der Wand: Bei geschlossenem
+    // Deckel zaehlt die Hoehe mit.
+    const thickness = normalizeHollowWall(next.wall ?? current.thickness, hollowDimensions, opening);
+    sendCadHollowRef.current?.({ thickness, opening, join: next.join ?? current.join });
+  }, [hollowDimensions]);
+
   const applyEdgeModifier = useCallback(() => {
     const base = cadModifierBaseShapeRef.current;
     if (!edgeModifier?.preview || !base) {
       setNotice(t("status.waitForPreview"));
+      return;
+    }
+    /*
+     * Aushoehlen hinterlaesst keinen Kanteneintrag: Es ist keine Bearbeitung
+     * *einer Kante*, die man einzeln zuruecknehmen koennte, sondern eine neue
+     * Form. Zurueck geht es ueber den Verlauf wie bei jedem anderen Schritt.
+     */
+    if (edgeModifier.hollow) {
+      const hollowShape = canonicalizeShape({
+        ...bakedEdgeTreatmentPreview(edgeModifier.preview, base),
+        name: base.name,
+        color: base.color,
+        cadDisplayEdgesVersion: 2 as const,
+      });
+      commitShapes(
+        shapes.map((shape) => (shape.id === base.id ? hollowShape : shape)),
+        base.id,
+        t("status.hollowDone", { wall: Number(edgeModifier.hollow.thickness.toFixed(2)) }),
+      );
+      invalidateCadModifierSession();
       return;
     }
     const label = edgeModifier.kind === "fillet" ? "Filleted" : "Chamfered";
@@ -9050,7 +9172,7 @@ export function SketchForgeEditor({
       if (event.key === "Escape") {
         event.preventDefault();
         cancelEdgeModifier();
-      } else if (event.key === "Enter" && edgeModifier.preview && edgeModifier.selectedEdgeIds.length > 0 && !edgeModifier.busy && !edgeModifier.error) {
+      } else if (event.key === "Enter" && edgeModifier.preview && (edgeModifier.hollow || edgeModifier.selectedEdgeIds.length > 0) && !edgeModifier.busy && !edgeModifier.error) {
         const target = event.target instanceof HTMLElement ? event.target : null;
         if (target?.closest("input, select, textarea, button, [contenteditable='true']")) return;
         event.preventDefault();
@@ -11581,6 +11703,8 @@ export function SketchForgeEditor({
         patternActive={Boolean(patternTool)}
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
+        onHollow={startHollow}
+        hollowActive={Boolean(edgeModifier?.hollow)}
         onLayFlat={toggleLayFlatTool}
         layFlatActive={layFlatMode}
         onSnapPoints={() => toggleSnapTool("point")}
@@ -11776,7 +11900,22 @@ export function SketchForgeEditor({
           onCancel={() => setPatternTool(null)}
         />
       ) : null}
-      {edgeModifier ? (
+      {edgeModifier?.hollow ? (
+        <HollowPanel
+          wall={edgeModifier.hollow.thickness}
+          opening={edgeModifier.hollow.opening}
+          join={edgeModifier.hollow.join}
+          dimensions={hollowDimensions}
+          workspace={workspaceSettings}
+          busy={edgeModifier.busy}
+          error={edgeModifier.error}
+          ready={Boolean(edgeModifier.preview) && !edgeModifier.busy && !edgeModifier.error}
+          onChange={changeHollow}
+          onApply={applyEdgeModifier}
+          onCancel={cancelEdgeModifier}
+        />
+      ) : null}
+      {edgeModifier && !edgeModifier.hollow ? (
         <EdgeModifierPanel
           kind={edgeModifier.kind}
           amount={edgeModifier.amount}
@@ -12081,6 +12220,8 @@ function SecondaryToolbar({
   patternActive,
   onPivot,
   pivotActive,
+  onHollow,
+  hollowActive,
   onLayFlat,
   layFlatActive,
   onSnapPoints,
@@ -12185,6 +12326,8 @@ function SecondaryToolbar({
   patternActive: boolean;
   onPivot: () => void;
   pivotActive: boolean;
+  onHollow: () => void;
+  hollowActive: boolean;
   onLayFlat: () => void;
   layFlatActive: boolean;
   onSnapPoints: () => void;
@@ -12479,6 +12622,8 @@ function SecondaryToolbar({
     { label: t("editor.tool.chamfer"), icon: ToolbarChamferIcon, action: onChamfer, enabled: canEdgeModify, active: edgeModifierKind === "chamfer" },
     { id: "fillet", label: t("editor.tool.fillet"), icon: ToolbarFilletIcon, action: onFillet, enabled: canEdgeModify, active: edgeModifierKind === "fillet" },
     { label: t("editor.tool.variableFillet"), icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
+    // Aushoehlen braucht denselben exakten Koerper wie die Kantenwerkzeuge.
+    { label: t("editor.tool.hollow"), icon: ToolbarHollowIcon, action: onHollow, enabled: canEdgeModify, active: hollowActive },
   ];
   const arrangeTools = [
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },

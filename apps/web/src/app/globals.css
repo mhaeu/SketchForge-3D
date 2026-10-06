@@ -1850,6 +1850,23 @@ html[data-theme="dark"] .object-list-toggle:hover {
   color: #e6eef6;
 }
 
+/* Das Aushoehlfeld: vier Knoepfe fuer die offene Seite passen nicht in eine
+   Reihe, also zwei Spalten wie bei der Punktvorgabe. */
+.hollow-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.hollow-panel .edge-modifier-header span {
+  line-height: 1.35;
+}
+
+.hollow-panel .edge-modifier-footer button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* Das Feld der geoeffneten Gruppe steht unter den anderen Werkzeugfeldern und
    soll auffallen: Solange es da ist, ist die Zeichnung in einem Zwischenstand. */
 .open-group-panel {

@@ -1,3 +1,5 @@
+import type { CadHollowJoin, CadHollowOpening } from "@/lib/cadHollow";
+
 /**
  * "variableFillet" ist eine Verrundung, deren Radius sich entlang der Kante
  * aendert: `amount` am Kantenanfang, `endAmount` am Kantenende. Der Kernel
@@ -85,6 +87,23 @@ export type CadModifierWorkerRequest =
        * Schalter sie.
        */
       flipTaper: boolean;
+    }
+  | {
+      /**
+       * Aushoehlen: aus dem vorbereiteten Koerper eine Schale machen.
+       *
+       * Keine Kanten, keine Auswahl - welche Seiten offen bleiben, sagt
+       * `opening`, und welche Flaechen das sind, sucht der Arbeiter selbst.
+       * Die Antwort ist dieselbe wie bei einer Kantenbearbeitung, damit der
+       * Editor sie auf demselben Weg uebernimmt.
+       */
+      type: "hollow";
+      requestId: number;
+      thickness: number;
+      opening: CadHollowOpening;
+      join: CadHollowJoin;
+      quality: CadModifierQuality;
+      minDeflection?: CadModifierDeflection;
     }
   | { type: "dispose"; requestId: number };
 
