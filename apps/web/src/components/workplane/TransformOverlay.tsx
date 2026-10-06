@@ -23,6 +23,7 @@ export {
   ROTATION_WHEEL_SHIFT_SNAP_DEGREES,
   ROTATION_WHEEL_SNAP_DEGREES,
   type DimensionMark,
+  type EditingCorner,
   type EditingDimension,
   type EditingRotation,
   type PinnedRotationWheelView,
@@ -40,6 +41,7 @@ export function TransformOverlay({
   measureKey,
   alwaysVisibleDimensions = true,
   editingDimension,
+  editingCorner,
   editingRotation,
   rotationReadout,
   showRotationWheel,
@@ -55,6 +57,10 @@ export function TransformOverlay({
   onHoverMeasure,
   onPinMeasure,
   onBeginDimensionEdit,
+  onBeginCornerEdit,
+  onEditingCornerChange,
+  onCommitCornerEdit,
+  onCancelCornerEdit,
   onBeginLiftEdit,
   onEditingDimensionChange,
   onCommitDimensionEdit,
@@ -67,7 +73,9 @@ export function TransformOverlay({
   // Ohne ueberfahrenen oder angehefteten Griff zeigt eine einzelne Auswahl
   // trotzdem ihre drei Masse - lesbar und anklickbar, ohne vorher zu suchen.
   const marks = visibleDimensionMarks(box, measureKey, alwaysVisibleDimensions);
-  const visibleMarks = (hideDimensionMarks ? [] : marks).filter((mark) => mark.key !== editingDimension?.key);
+  const visibleMarks = (hideDimensionMarks ? [] : marks).filter((mark) => (
+    mark.key !== editingDimension?.key && !editingCorner?.entries.some((entry) => entry.key === mark.key)
+  ));
   const handleMeasureKey = (handle: TransformOverlayState["handles"][number]) => measureKeyForHandle(handle.kind, handle.key, box);
   const protractorTicks = Array.from({ length: 16 }, (_, index) => {
     const degrees = index * 22.5 - 90;
@@ -197,6 +205,30 @@ export function TransformOverlay({
           }}
         />
       ) : null}
+      {editingCorner?.entries.map((entry, index) => (
+        <input
+          key={entry.key}
+          className="dimension-input"
+          data-corner-input="true"
+          style={{ "--overlay-x": `${entry.x}px`, "--overlay-y": `${entry.y}px` } as CSSProperties}
+          value={entry.value}
+          autoFocus={index === 0}
+          inputMode="decimal"
+          aria-label={entry.axis === "width" ? t("transform.cornerWidth") : t("transform.cornerDepth")}
+          onPointerDown={(event) => event.stopPropagation()}
+          onFocus={(event) => selectWholeValue(event.currentTarget)}
+          onChange={(event) => onEditingCornerChange(entry.axis, event.target.value)}
+          onBlur={(event) => {
+            // Mit Tab oder einem Klick in das andere Feld bleibt das Paar auf.
+            if ((event.relatedTarget as HTMLElement | null)?.dataset?.cornerInput) return;
+            onCommitCornerEdit();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onCommitCornerEdit();
+            if (event.key === "Escape") onCancelCornerEdit();
+          }}
+        />
+      ))}
       {editingRotation ? (
         <label className="rotation-edit" style={{ "--overlay-x": `${editingRotation.x}px`, "--overlay-y": `${editingRotation.y}px` } as CSSProperties}>
           <input
@@ -251,6 +283,9 @@ export function TransformOverlay({
             if (handle.kind === "lift") {
               event.stopPropagation();
               onBeginLiftEdit(handle.key, handle.x + 42, handle.y - 32);
+            } else if (handle.kind === "scale" && handle.className.startsWith("corner")) {
+              event.stopPropagation();
+              onBeginCornerEdit(handle.key);
             }
           }}
         />

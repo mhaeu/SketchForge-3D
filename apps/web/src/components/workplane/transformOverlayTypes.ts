@@ -213,6 +213,21 @@ export type EditingDimension = {
   value: string;
 } | null;
 
+/**
+ * Der Klick auf eine Ecke: Breite und Laenge gehen zusammen auf, wie bei
+ * Tinkercad. `original` haelt fest, was dastand - unveraendert gelassene
+ * Felder sollen den Koerper nicht anruehren.
+ */
+export type EditingCorner = {
+  /**
+   * Zu welchem Koerper die Felder gehoeren. Beim Uebernehmen zaehlt dieser und
+   * nicht die Auswahl von dann: Sonst bekaeme ein inzwischen anderer Koerper
+   * die eingetippten Masse.
+   */
+  shapeId: string;
+  entries: Array<{ key: string; axis: "width" | "depth"; x: number; y: number; value: string; original: string }>;
+} | null;
+
 export type EditingRotation = {
   axis: RotationAxis;
   handleKey: string;
@@ -227,6 +242,7 @@ export type TransformOverlayProps = {
   /** Ob die Masse einer einzelnen Auswahl ohne Ueberfahren stehen bleiben. */
   alwaysVisibleDimensions?: boolean;
   editingDimension: EditingDimension;
+  editingCorner: EditingCorner;
   editingRotation: EditingRotation;
   rotationReadout: RotationReadout;
   showRotationWheel: boolean;
@@ -242,6 +258,10 @@ export type TransformOverlayProps = {
   onHoverMeasure: (key: string | null) => void;
   onPinMeasure: (key: string | null) => void;
   onBeginDimensionEdit: (mark: DimensionMark) => void;
+  onBeginCornerEdit: (handleKey: string) => void;
+  onEditingCornerChange: (axis: "width" | "depth", value: string) => void;
+  onCommitCornerEdit: () => void;
+  onCancelCornerEdit: () => void;
   onBeginLiftEdit: (handleKey: string, x: number, y: number) => void;
   onEditingDimensionChange: (value: string) => void;
   onCommitDimensionEdit: () => void;

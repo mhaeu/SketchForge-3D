@@ -1143,6 +1143,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "note.detach": "Vom Objekt lösen",
   "note.free": "Auf der Arbeitsebene",
   "visibility.notes": "Notizen anzeigen",
+  "transform.cornerWidth": "Breite",
+  "transform.cornerDepth": "Länge",
   "visibility.overhangs": "Überhänge zeigen (ab {angle}°)",
   "visibility.eyeAgain": "Auge erneut: Auswahl",
   "visibility.allShortcut": ": alle",

@@ -59,6 +59,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { orthographicFramingZoom, perspectiveFramingDistance } from "@/lib/cameraFraming";
 import { regionResizedShape, regionsEqual, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
 import { meshSnapFeatures, snapPointOnMesh, type SnapFeatures, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
+import { mergedDimensionPatch } from "@/lib/cornerDimensions";
 import { planarFace } from "@/lib/rotationPivot";
 import { shapeWorldBounds } from "@/lib/cutTools";
 import {
@@ -96,6 +97,7 @@ import {
   snappedRotationDelta,
   snappedWheelRotation,
   type DimensionMark,
+  type EditingCorner,
   type EditingDimension,
   type EditingRotation,
   type PinnedRotationWheelView,
@@ -3523,6 +3525,9 @@ export function WorkplaneViewport({
   const [snapHover, setSnapHover] = useState<SnapPick | null>(null);
   /** Ob der Fangregler in den Koerpereinstellungen gerade nicht zu erreichen ist. */
   const [inspectorSnapGridAway, setInspectorSnapGridAway] = useState(false);
+  /** Breite und Laenge, die ein Klick auf eine Ecke zusammen aufschlaegt. */
+  const [editingCorner, setEditingCorner] = useState<EditingCorner>(null);
+  const suppressNextCornerEditRef = useRef(false);
   const snapTargetRef = useRef(snapTarget);
   snapTargetRef.current = snapTarget;
   const layFlatModeRef = useRef(layFlatMode);
@@ -5289,6 +5294,17 @@ export function WorkplaneViewport({
     }, 250);
   }, []);
 
+  /*
+   * Nach dem Ziehen an einer Ecke kommt noch ein Klick - der soll nicht auch
+   * noch die Felder aufschlagen. Dasselbe Mittel wie beim Anheben.
+   */
+  const suppressCornerEditAfterDrag = useCallback(() => {
+    suppressNextCornerEditRef.current = true;
+    window.setTimeout(() => {
+      suppressNextCornerEditRef.current = false;
+    }, 250);
+  }, []);
+
   const finishTransform = useCallback((event: ReactPointerEvent<Element>) => {
     const transform = transformRef.current;
     if (!transform) {
@@ -5303,6 +5319,9 @@ export function WorkplaneViewport({
     }
     if (transform.kind === "lift" && transform.hasMoved) {
       suppressLiftEditAfterDrag();
+    }
+    if (transform.kind === "scale" && transform.hasMoved) {
+      suppressCornerEditAfterDrag();
     }
     if (transform.kind === "rotate" && transform.hasMoved) {
       suppressNextRotationEditRef.current = true;
@@ -5331,7 +5350,7 @@ export function WorkplaneViewport({
     }
     onInteractionActiveChange?.(false);
     bakeRotatedShapes.forEach((id) => onUpdateShape(id, { bakeTransform: true }));
-  }, [onInteractionActiveChange, onUpdateShape, suppressLiftEditAfterDrag]);
+  }, [onInteractionActiveChange, onUpdateShape, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag]);
 
   const beginDimensionEdit = useCallback((mark: DimensionMark) => {
     const id = selectedIdsRef.current[0];
@@ -5368,6 +5387,64 @@ export function WorkplaneViewport({
       y: clamp(editY, 34, Math.max(34, (transformOverlayRef.current?.height ?? 600) - 34)),
       value: formatMeasure(elevation, workspaceRef.current.accuracy),
     });
+  }, []);
+
+  /**
+   * Was ein eingetipptes Mass am Koerper aendert, als Flicken statt als Tat.
+   *
+   * Als Flicken, weil der Ecken-Klick zwei Masse auf einmal setzt: Zwei
+   * einzelne Aenderungen wuerden zwei Schritte in den Verlauf schreiben, und
+   * die zweite rechnete auf dem Koerper von vorher. So wird die zweite auf dem
+   * Ergebnis der ersten gerechnet und beide gehen zusammen hinaus.
+   */
+  const dimensionPatchFor = useCallback((
+    shape: WorkplaneShape,
+    axis: "width" | "depth" | "height",
+    text: string,
+  ): Partial<WorkplaneShape> | null => {
+    const value = parseMeasurementInput(text);
+    if (!(Number.isFinite(value) && value > 0)) return null;
+    const customLimit = workspaceRef.current.shapeCustomizations[shape.kind]?.maxDimension;
+    const nextValue = Math.min(customLimit ?? Number.POSITIVE_INFINITY, Math.max(MIN_SHAPE_SIZE, value));
+    const anchor = lastResizeAnchorRef.current;
+    const frame = selectionFrameForShapes([shape], [shape.id]);
+    if (axis === "width") {
+      if (shapeHasTaper(shape) && frame) {
+        const scaleX = nextValue / Math.max(MIN_SHAPE_SIZE, frame.width);
+        const signs = anchor?.shapeId === shape.id ? resizeSignsForDimension(anchor.signs, "width") : { x: 0, z: 0 };
+        const nextCenter = signs.x
+          ? resizeCenterFromAnchor(frame, resizeAnchorPointForFrame(frame, signs), signs, nextValue, frame.depth)
+          : frame.center.clone();
+        return {
+          ...scaledHorizontalShapePatch(shape, scaleX, 1),
+          x: cleanNearZero(nextCenter.x, 0.0005),
+          z: cleanNearZero(nextCenter.z, 0.0005),
+          elevation: cleanNearZero(nextCenter.y - shape.height / 2, 0.0005),
+        };
+      }
+      const patch: Partial<WorkplaneShape> = { width: nextValue, size: resizedShapeSize(nextValue, shapeDepth(shape)) };
+      if (shape.kind === "cone") {
+        patch.baseRadius = nextValue / 2;
+      }
+      return patchWithResizeAnchor(shape, patch, axis, anchor);
+    }
+    if (axis === "depth") {
+      if (shapeHasTaper(shape) && frame) {
+        const scaleZ = nextValue / Math.max(MIN_SHAPE_SIZE, frame.depth);
+        const signs = anchor?.shapeId === shape.id ? resizeSignsForDimension(anchor.signs, "depth") : { x: 0, z: 0 };
+        const nextCenter = signs.z
+          ? resizeCenterFromAnchor(frame, resizeAnchorPointForFrame(frame, signs), signs, frame.width, nextValue)
+          : frame.center.clone();
+        return {
+          ...scaledHorizontalShapePatch(shape, 1, scaleZ),
+          x: cleanNearZero(nextCenter.x, 0.0005),
+          z: cleanNearZero(nextCenter.z, 0.0005),
+          elevation: cleanNearZero(nextCenter.y - shape.height / 2, 0.0005),
+        };
+      }
+      return patchWithResizeAnchor(shape, { depth: nextValue, size: resizedShapeSize(shapeWidth(shape), nextValue) }, axis, anchor);
+    }
+    return patchWithResizeAnchor(shape, { height: nextValue }, axis, anchor);
   }, []);
 
   const commitDimensionEdit = useCallback(() => {
@@ -5407,12 +5484,12 @@ export function WorkplaneViewport({
       return;
     }
     if (Number.isFinite(value) && value > 0) {
-      const customLimit = workspaceRef.current.shapeCustomizations[shape.kind]?.maxDimension;
-      const nextValue = Math.min(customLimit ?? Number.POSITIVE_INFINITY, Math.max(MIN_SHAPE_SIZE, value));
       const region = resizeRegionRef.current;
       if (region && region.shapeId === shape.id && (edit.axis === "width" || edit.axis === "depth" || edit.axis === "height")) {
         // A typed size for the region box: the face opposite the handle that
         // was last used stays put, like a drag from that handle would.
+        const customLimit = workspaceRef.current.shapeCustomizations[shape.kind]?.maxDimension;
+        const nextValue = Math.min(customLimit ?? Number.POSITIVE_INFINITY, Math.max(MIN_SHAPE_SIZE, value));
         const from = region.region;
         const to = { ...from };
         const anchor = lastResizeAnchorRef.current?.shapeId === shape.id ? lastResizeAnchorRef.current : null;
@@ -5441,52 +5518,11 @@ export function WorkplaneViewport({
         setPinnedMeasureKey(null);
         return;
       }
-      if (edit.axis === "width") {
-        const frame = selectionFrameForShapes([shape], [shape.id]);
-        if (shapeHasTaper(shape) && frame) {
-          const scaleX = nextValue / Math.max(MIN_SHAPE_SIZE, frame.width);
-          const anchor = lastResizeAnchorRef.current;
-          const signs = anchor?.shapeId === shape.id ? resizeSignsForDimension(anchor.signs, "width") : { x: 0, z: 0 };
-          const nextCenter = signs.x
-            ? resizeCenterFromAnchor(frame, resizeAnchorPointForFrame(frame, signs), signs, nextValue, frame.depth)
-            : frame.center.clone();
-          onUpdateShape(id, {
-            ...scaledHorizontalShapePatch(shape, scaleX, 1),
-            x: cleanNearZero(nextCenter.x, 0.0005),
-            z: cleanNearZero(nextCenter.z, 0.0005),
-            elevation: cleanNearZero(nextCenter.y - shape.height / 2, 0.0005),
-          });
-        } else {
-          const patch: Partial<WorkplaneShape> = { width: nextValue, size: resizedShapeSize(nextValue, shapeDepth(shape)) };
-          if (shape.kind === "cone") {
-            patch.baseRadius = nextValue / 2;
-          }
-          onUpdateShape(id, patchWithResizeAnchor(shape, patch, edit.axis, lastResizeAnchorRef.current));
-        }
-      } else if (edit.axis === "depth") {
-        const frame = selectionFrameForShapes([shape], [shape.id]);
-        if (shapeHasTaper(shape) && frame) {
-          const scaleZ = nextValue / Math.max(MIN_SHAPE_SIZE, frame.depth);
-          const anchor = lastResizeAnchorRef.current;
-          const signs = anchor?.shapeId === shape.id ? resizeSignsForDimension(anchor.signs, "depth") : { x: 0, z: 0 };
-          const nextCenter = signs.z
-            ? resizeCenterFromAnchor(frame, resizeAnchorPointForFrame(frame, signs), signs, frame.width, nextValue)
-            : frame.center.clone();
-          onUpdateShape(id, {
-            ...scaledHorizontalShapePatch(shape, 1, scaleZ),
-            x: cleanNearZero(nextCenter.x, 0.0005),
-            z: cleanNearZero(nextCenter.z, 0.0005),
-            elevation: cleanNearZero(nextCenter.y - shape.height / 2, 0.0005),
-          });
-        } else {
-          onUpdateShape(id, patchWithResizeAnchor(shape, { depth: nextValue, size: resizedShapeSize(shapeWidth(shape), nextValue) }, edit.axis, lastResizeAnchorRef.current));
-        }
-      } else {
-        onUpdateShape(id, patchWithResizeAnchor(shape, { height: nextValue }, edit.axis, lastResizeAnchorRef.current));
-      }
+      const patch = dimensionPatchFor(shape, edit.axis, edit.value);
+      if (patch) onUpdateShape(id, patch);
     }
     setEditingDimension(null);
-  }, [editingDimension, onUpdateShape]);
+  }, [dimensionPatchFor, editingDimension, onUpdateShape]);
 
   const cancelDimensionEdit = useCallback(() => {
     setEditingDimension(null);
@@ -5494,6 +5530,89 @@ export function WorkplaneViewport({
     // anderen Masse waeren wieder verschwunden.
     setPinnedMeasureKey(null);
   }, []);
+
+  /*
+   * Ein Klick auf eine Ecke - ohne Ziehen - schlaegt Breite und Laenge
+   * zusammen auf, wie bei Tinkercad. Tab geht ins andere Feld, Enter uebernimmt
+   * beide in einem Schritt, Esc laesst alles, wie es war.
+   */
+  const beginCornerEdit = useCallback((handleKey: string) => {
+    if (suppressNextCornerEditRef.current) {
+      suppressNextCornerEditRef.current = false;
+      return;
+    }
+    const id = selectedIdsRef.current[0];
+    const marks = (transformOverlayRef.current?.dimensions[handleKey] ?? [])
+      .filter((mark) => mark.axis === "width" || mark.axis === "depth");
+    if (!id || marks.length === 0) return;
+    // Eine runde Form hat nur ihr eines Mass - dann das gewohnte Feld.
+    if (marks.length === 1) {
+      beginDimensionEdit(marks[0]);
+      return;
+    }
+    rememberResizeAnchor(id, "scale", handleKey);
+    setPinnedMeasureKey(handleKey);
+    setEditingDimension(null);
+    setEditingCorner({
+      shapeId: id,
+      entries: marks.slice(0, 2).map((mark) => ({
+        key: mark.key,
+        axis: mark.axis as "width" | "depth",
+        x: mark.labelX,
+        y: mark.labelY,
+        value: mark.label,
+        original: mark.label,
+      })),
+    });
+  }, [beginDimensionEdit, rememberResizeAnchor]);
+
+  const commitCornerEdit = useCallback(() => {
+    const edit = editingCorner;
+    const shape = edit ? shapesRef.current.find((entry) => entry.id === edit.shapeId) : undefined;
+    setEditingCorner(null);
+    setPinnedMeasureKey(null);
+    if (!edit || !shape) return;
+    // Beide Masse gehen als ein Flicken hinaus, das zweite auf dem Ergebnis
+    // des ersten gerechnet - siehe cornerDimensions.ts.
+    const merged = mergedDimensionPatch(shape, edit.entries, dimensionPatchFor);
+    if (Object.keys(merged).length > 0) onUpdateShape(shape.id, merged);
+  }, [dimensionPatchFor, editingCorner, onUpdateShape]);
+
+  const cancelCornerEdit = useCallback(() => {
+    setEditingCorner(null);
+    setPinnedMeasureKey(null);
+  }, []);
+
+  /*
+   * Wechselt die Auswahl, ohne dass irgendwo gedrueckt wurde (ueber die
+   * Objektliste oder die Tastatur), gehoeren die Felder niemandem mehr - ein
+   * Klick daneben haette sie schon vorher uebernommen.
+   */
+  useEffect(() => {
+    setEditingCorner((current) => (current && !selectedIds.includes(current.shapeId) ? null : current));
+  }, [selectedIds]);
+
+  const editingCornerChange = useCallback((axis: "width" | "depth", value: string) => {
+    setEditingCorner((current) => current
+      ? { ...current, entries: current.entries.map((entry) => (entry.axis === axis ? { ...entry, value } : entry)) }
+      : current);
+  }, []);
+
+  /*
+   * Die Ansicht behaelt beim Druecken den Tastenhalt, also verliert ein Klick
+   * daneben die Felder nicht von selbst. Jeder Druck ausserhalb uebernimmt
+   * darum, so wie das Verlassen eines Feldes - sonst blieben die Felder
+   * stehen, und beim naechsten Ecken-Klick kaeme ein zweites Paar dazu.
+   */
+  useEffect(() => {
+    if (!editingCorner) return;
+    const applyOnOutsidePress = (event: PointerEvent) => {
+      if ((event.target as HTMLElement | null)?.dataset?.cornerInput) return;
+      commitCornerEdit();
+    };
+    window.addEventListener("pointerdown", applyOnOutsidePress, true);
+    return () => window.removeEventListener("pointerdown", applyOnOutsidePress, true);
+  }, [commitCornerEdit, editingCorner]);
 
   const beginRotationEdit = useCallback((handleKey: string, x: number, y: number) => {
     if (suppressNextRotationEditRef.current) {
@@ -6655,6 +6774,9 @@ export function WorkplaneViewport({
         if (transform.kind === "lift" && transform.hasMoved) {
           suppressLiftEditAfterDrag();
         }
+        if (transform.kind === "scale" && transform.hasMoved) {
+          suppressCornerEditAfterDrag();
+        }
         transformRef.current = null;
         setActiveRotationWheel(false);
         setActiveTransformKind(null);
@@ -6752,7 +6874,7 @@ export function WorkplaneViewport({
       }
       onInteractionActiveChange?.(false);
     },
-    [clearMoveDimensions, onInteractionActiveChange, onSelectShape, onUpdateShape, rememberResizeAnchor, setMarqueeFromState, shapesInMarquee, suppressLiftEditAfterDrag],
+    [clearMoveDimensions, onInteractionActiveChange, onSelectShape, onUpdateShape, rememberResizeAnchor, setMarqueeFromState, shapesInMarquee, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag],
   );
 
   const handleDrop = useCallback(
@@ -7328,6 +7450,7 @@ export function WorkplaneViewport({
               measureKey={pinnedMeasureKey ?? hoverMeasureKey}
               alwaysVisibleDimensions={sizeDimensionsEnabled}
               editingDimension={editingDimension}
+          editingCorner={editingCorner}
               editingRotation={editingRotation}
               rotationReadout={rotationReadout}
               showRotationWheel={activeRotationWheel}
@@ -7343,6 +7466,10 @@ export function WorkplaneViewport({
               onHoverMeasure={setHoverMeasureKey}
               onPinMeasure={setPinnedMeasureKey}
               onBeginDimensionEdit={beginDimensionEdit}
+          onBeginCornerEdit={beginCornerEdit}
+          onEditingCornerChange={editingCornerChange}
+          onCommitCornerEdit={commitCornerEdit}
+          onCancelCornerEdit={cancelCornerEdit}
               onBeginLiftEdit={beginLiftEdit}
               onEditingDimensionChange={(value) => setEditingDimension((current) => (current ? { ...current, value } : current))}
               onCommitDimensionEdit={commitDimensionEdit}

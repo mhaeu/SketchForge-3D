@@ -1091,6 +1091,8 @@ export const MESSAGES_EN = {
   "note.detach": "Release from object",
   "note.free": "On the workplane",
   "visibility.notes": "Show notes",
+  "transform.cornerWidth": "Width",
+  "transform.cornerDepth": "Length",
   "visibility.overhangs": "Show overhangs (from {angle}°)",
   "visibility.eyeAgain": "Eye again: selected",
   "visibility.allShortcut": ": all",
