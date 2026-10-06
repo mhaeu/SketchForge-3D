@@ -361,6 +361,8 @@ type WorkplaneViewportProps = {
   onSeparateParts?: () => void;
   onUpdateShape: (id: string, patch: ShapeUpdatePatch) => void;
   notes?: WorkplaneNote[];
+  /** Mit Alt gezogen: Kopien der Koerper an der neuen Stelle. */
+  onDuplicateShapesMoved?: (ids: string[], delta: { dx: number; dz: number; delevation: number }) => void;
   notesVisible?: boolean;
   /** Ueberhaenge schraffieren, nach `workspace.overhangAngle`. */
   showOverhangs?: boolean;
@@ -520,6 +522,13 @@ type DragState = {
   primaryStartX: number;
   primaryStartZ: number;
   items: DragItem[];
+  /**
+   * Mit Alt gezogen entsteht am Ende eine Kopie. Waehrend des Ziehens
+   * wandert der Koerper selbst mit dem Zeiger und an seiner alten Stelle
+   * steht ein Platzhalter - so sieht man beide, ohne dass schon eine Form
+   * entstanden waere, die man wieder zuruecknehmen muesste.
+   */
+  duplicate: { standIns: THREE.Object3D[] } | null;
 };
 
 type MoveDimensionSession = {
@@ -3547,6 +3556,7 @@ export function WorkplaneViewport({
   onSeparateParts,
   onUpdateShape,
   notes = EMPTY_NOTES,
+  onDuplicateShapesMoved,
   notesVisible = true,
   showOverhangs = false,
   noteMode = false,
@@ -6637,6 +6647,26 @@ export function WorkplaneViewport({
         primaryStartX: shape.x,
         primaryStartZ: shape.z,
         items,
+        duplicate: event.altKey && onDuplicateShapesMoved
+          ? {
+              standIns: items.flatMap((item) => {
+                if (!item.visual?.parent) return [];
+                /*
+                 * Der Platzhalter teilt Geometrie und Werkstoff mit dem
+                 * Koerper - hier gehoert ihm nichts, was aufzuraeumen waere.
+                 * Seine Kennungen werden geleert, damit ihn kein Zeigerweg
+                 * fuer den Koerper haelt.
+                 */
+                const standIn = item.visual.clone();
+                standIn.traverse((child) => {
+                  child.userData = {};
+                });
+                standIn.name = "DuplicateDragStandIn";
+                item.visual.parent.add(standIn);
+                return [standIn];
+              }),
+            }
+          : null,
       };
       if (moveDimensionsEnabledRef.current) {
         const dragFrame = selectionFrameForShapes(shapesRef.current, items.map((item) => item.id));
@@ -6928,7 +6958,30 @@ export function WorkplaneViewport({
       }
 
       let movedShape = false;
-      drag.items.forEach((item) => {
+      if (drag.duplicate) {
+        // Die Platzhalter haben ihren Dienst getan.
+        drag.duplicate.standIns.forEach((standIn) => standIn.parent?.remove(standIn));
+        const first = drag.items[0];
+        const delta = {
+          dx: first.nextX - first.startX,
+          dz: first.nextZ - first.startZ,
+          delevation: first.nextElevation - first.startElevation,
+        };
+        // Die Koerper standen fuer ihre Kopien ein; jetzt zurueck an ihren Platz.
+        drag.items.forEach((item) => {
+          if (item.visual && item.hadPreviewSimplified) {
+            setComplexEdgeVisibility(item.visual, true);
+          }
+          item.nextX = item.startX;
+          item.nextZ = item.startZ;
+          item.nextElevation = item.startElevation;
+          if (state) applyDragItemPreview(state, item);
+        });
+        if (delta.dx !== 0 || delta.dz !== 0 || delta.delevation !== 0) {
+          movedShape = true;
+          onDuplicateShapesMoved?.(drag.items.map((item) => item.id), delta);
+        }
+      } else drag.items.forEach((item) => {
         if (item.visual && item.hadPreviewSimplified) {
           setComplexEdgeVisibility(item.visual, true);
         }
@@ -6965,7 +7018,7 @@ export function WorkplaneViewport({
       }
       onInteractionActiveChange?.(false);
     },
-    [clearMoveDimensions, onInteractionActiveChange, onSelectShape, onUpdateShape, rememberResizeAnchor, setMarqueeFromState, shapesInMarquee, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag],
+    [clearMoveDimensions, onDuplicateShapesMoved, onInteractionActiveChange, onSelectShape, onUpdateShape, rememberResizeAnchor, setMarqueeFromState, shapesInMarquee, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag],
   );
 
   const handleDrop = useCallback(
