@@ -472,6 +472,16 @@ export type SnapRequest = {
   /** Ein Weltpunkt auf die Leinwand; `null` fuer alles hinter der Kamera. */
   project: Project;
   visible?: (point: SnapPoint) => boolean;
+  /**
+   * Ob es diesen Punkt ueberhaupt zu greifen gibt.
+   *
+   * Anders als `visible` ist das eine harte Absage und kein Vorzug: Die
+   * Schnittansicht *nimmt* die halbe Zeichnung weg, und was sie wegnimmt,
+   * nimmt sie auch dem Zeiger weg - sonst griffe man beim Blick ins Innere
+   * immer wieder die Wand davor. Verdecktes dagegen ist nur schwer zu sehen;
+   * es bleibt greifbar, wenn man es ausdruecklich verlangt.
+   */
+  available?: (point: SnapPoint) => boolean;
 };
 
 /**
@@ -494,40 +504,50 @@ export type SnapRequest = {
  * Die Flaechenmitte wird nicht auf Sicht geprueft: Der Strahl hat diese
  * Flaeche getroffen, also ist sie gemeint, auch wenn ihre Mitte hinter etwas
  * anderem liegt. Dasselbe gilt fuer die freie Stelle auf der Flaeche.
+ *
+ * `available` ist die andere Frage und die haertere: Was die Schnittansicht
+ * weggenommen hat, gibt es nicht - weder als Ecke noch als Kante noch als
+ * Flaechenmitte, und auch dann nicht, wenn man es ausdruecklich verlangt.
+ * Gefragt wird am Punkt selbst und nicht an der Stelle, auf die gezeigt wurde:
+ * Es geht darum, wohin der Koerper angesetzt wuerde, nicht um die Sichtlinie.
  */
 export function snapPointOnMesh(request: SnapRequest): SnapHit | null {
   const { positions, triangle, pointer, hitPoint, target, project } = request;
   const visible = request.visible ?? (() => true);
+  const available = request.available ?? (() => true);
+  const offered = (candidates: Candidate[]) => candidates.filter((candidate) => available(candidate.point));
   const triangleCount = Math.floor(positions.length / 9);
   if (triangle < 0 || triangle >= triangleCount) return null;
 
+  // Die getroffene Stelle hat der Aufrufer schon geprueft - der Strahl ist
+  // dort auf den Koerper gestossen.
   if (target === "surface") return { kind: "surface", point: hitPoint };
   if (target === "face") {
     const centre = planarFaceCentroid(positions, triangle);
-    return centre ? { kind: "face", point: centre } : null;
+    return centre && available(centre) ? { kind: "face", point: centre } : null;
   }
 
   const features = meshSnapFeatures(positions);
 
   if (target === "corner") {
-    const point = nearestPreferablyVisible(cornerCandidates(features, pointer, project, Infinity), visible);
+    const point = nearestPreferablyVisible(offered(cornerCandidates(features, pointer, project, Infinity)), visible);
     return point ? { kind: "corner", point } : null;
   }
   if (target === "edge") {
-    const point = nearestPreferablyVisible(edgeCandidates(features, pointer, project, Infinity), visible);
+    const point = nearestPreferablyVisible(offered(edgeCandidates(features, pointer, project, Infinity)), visible);
     return point ? { kind: "edge", point } : null;
   }
   if (target === "edgeMiddle") {
-    const point = nearestPreferablyVisible(middleCandidates(features, pointer, project), visible);
+    const point = nearestPreferablyVisible(offered(middleCandidates(features, pointer, project)), visible);
     return point ? { kind: "edgeMiddle", point } : null;
   }
 
-  const corner = nearestVisible(cornerCandidates(features, pointer, project, SNAP_CORNER_RADIUS_PX), visible);
+  const corner = nearestVisible(offered(cornerCandidates(features, pointer, project, SNAP_CORNER_RADIUS_PX)), visible);
   if (corner) return { kind: "corner", point: corner };
-  const onEdge = nearestVisible(edgeCandidates(features, pointer, project, SNAP_EDGE_RADIUS_PX), visible);
+  const onEdge = nearestVisible(offered(edgeCandidates(features, pointer, project, SNAP_EDGE_RADIUS_PX)), visible);
   if (onEdge) return { kind: "edge", point: onEdge };
   const centre = planarFaceCentroid(positions, triangle);
-  return centre ? { kind: "face", point: centre } : null;
+  return centre && available(centre) ? { kind: "face", point: centre } : null;
 }
 
 /** Die Verschiebung, die `from` auf `to` legt. */

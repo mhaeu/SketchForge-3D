@@ -1682,7 +1682,19 @@ function rulerEdgeMatchesTopology(state: ThreeState, edge: RulerEdgeAttachment) 
   });
 }
 
-function pickModelRulerCandidate(state: ThreeState, shapeIds: string[], clientX: number, clientY: number): RulerCandidate | null {
+/**
+ * `isCutAway` haelt das Bandmass an dieselbe Zusage wie den Zeiger: Was die
+ * Schnittansicht wegnimmt, nimmt sie auch dem Messen weg. Eine Kante, die die
+ * Schnittebene kreuzt, bleibt dabei zur Haelfte greifbar - geprueft wird die
+ * Stelle, auf die gezeigt wird, nicht die ganze Kante.
+ */
+function pickModelRulerCandidate(
+  state: ThreeState,
+  shapeIds: string[],
+  clientX: number,
+  clientY: number,
+  isCutAway: (point: THREE.Vector3) => boolean = () => false,
+): RulerCandidate | null {
   const rect = state.renderer.domElement.getBoundingClientRect();
   const pointerX = clientX - rect.left;
   const pointerY = clientY - rect.top;
@@ -1735,7 +1747,7 @@ function pickModelRulerCandidate(state: ThreeState, shapeIds: string[], clientX:
         endpointIndexes.forEach((index) => {
           const screen = projectToScreen(worldPoints[index], state);
           const distance = Math.hypot(pointerX - screen.x, pointerY - screen.y);
-          if (distance <= 9) {
+          if (distance <= 9 && !isCutAway(worldPoints[index])) {
             vertexCandidates.push({
               distance,
               candidate: {
@@ -1755,8 +1767,8 @@ function pickModelRulerCandidate(state: ThreeState, shapeIds: string[], clientX:
           const dy = bScreen.y - aScreen.y;
           const amount = dx * dx + dy * dy > 0.001 ? clamp(((pointerX - aScreen.x) * dx + (pointerY - aScreen.y) * dy) / (dx * dx + dy * dy), 0, 1) : 0;
           const distance = Math.hypot(pointerX - (aScreen.x + dx * amount), pointerY - (aScreen.y + dy * amount));
-          if (distance <= 12) {
-            const world = worldPoints[index].clone().lerp(worldPoints[index + 1], amount);
+          const world = distance <= 12 ? worldPoints[index].clone().lerp(worldPoints[index + 1], amount) : null;
+          if (world && !isCutAway(world)) {
             const normalizedA = normalizedPoints[index];
             const normalizedB = normalizedPoints[index + 1];
             edgeCandidates.push({
@@ -1793,7 +1805,8 @@ function pickModelRulerCandidate(state: ThreeState, shapeIds: string[], clientX:
   state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   state.raycaster.setFromCamera(state.pointer, state.camera);
   state.raycaster.layers.set(RENDER_LAYER_SHAPES);
-  const surfaceHit = state.raycaster.intersectObjects(targets, true).find((entry) => entry.object instanceof THREE.Mesh);
+  const surfaceHit = state.raycaster.intersectObjects(targets, true)
+    .find((entry) => entry.object instanceof THREE.Mesh && !isCutAway(entry.point));
   if (!surfaceHit) return null;
   const shapeId = surfaceHit.object.userData.shapeId as string;
   const attachment = rulerAttachmentFromWorld(state, shapeId, surfaceHit.point);
@@ -3459,6 +3472,13 @@ export function WorkplaneViewport({
   const [sectionOpen, setSectionOpen] = useState(false);
   const sectionViewRef = useRef<SectionView | null>(null);
   sectionViewRef.current = sectionView;
+
+  /** Ob dieser Punkt in der Schnittansicht weggenommen ist. */
+  const isCutAwayPoint = useCallback((point: THREE.Vector3) => {
+    const view = sectionViewRef.current;
+    return view ? pointIsCutAway({ x: point.x, y: point.y, z: point.z }, view) : false;
+  }, []);
+
   const [rulerMode, setRulerMode] = useState(false);
   const [rulerDeleteMode, setRulerDeleteMode] = useState(false);
   const [rulerMoveMode, setRulerMoveMode] = useState(false);
@@ -4528,7 +4548,7 @@ export function WorkplaneViewport({
 
       const selectedShapeIds = selectedIdsRef.current.filter((id) => shapesRef.current.some((shape) => shape.id === id && !shape.hidden));
       const targetShapeIds = selectedShapeIds.length > 0 ? selectedShapeIds : shapesRef.current.filter((shape) => !shape.hidden).map((shape) => shape.id);
-      const modelCandidate = pickModelRulerCandidate(state, targetShapeIds, clientX, clientY);
+      const modelCandidate = pickModelRulerCandidate(state, targetShapeIds, clientX, clientY, isCutAwayPoint);
       if (modelCandidate) return modelCandidate;
 
       const raw = toRawPlanePoint(clientX, clientY, state.dragPlane);
@@ -4543,7 +4563,7 @@ export function WorkplaneViewport({
       const existing = model.points.find((point) => Math.hypot(point.x - snapped.x, point.y, point.z - snapped.z) < 0.001 && !point.attachment);
       return { ...snapped, pointId: existing?.id };
     },
-    [toRawPlanePoint],
+    [isCutAwayPoint, toRawPlanePoint],
   );
 
   const selectRulerCandidate = useCallback(
@@ -5431,12 +5451,6 @@ export function WorkplaneViewport({
     setActiveRotationWheel(false);
   }, []);
 
-  /** Ob dieser Punkt in der Schnittansicht weggenommen ist. */
-  const isCutAwayPoint = useCallback((point: THREE.Vector3) => {
-    const view = sectionViewRef.current;
-    return view ? pointIsCutAway({ x: point.x, y: point.y, z: point.z }, view) : false;
-  }, []);
-
   /** Der Rahmen um alles, was im Bild steht - die Grenzen der Schnittebene. */
   const sectionBounds = useMemo(() => sectionBoundsOf(
     shapes.filter((shape) => !shape.hidden).map((shape) => {
@@ -5610,11 +5624,17 @@ export function WorkplaneViewport({
     const hit = state.raycaster.intersectObjects(state.shapeLayer.children, true).find((entry) => {
       const shapeId = entry.object.userData.shapeId;
       if (typeof shapeId !== "string" || !(entry.object instanceof THREE.Mesh)) return false;
+      /*
+       * Die Pruefung gehoert in die Auswahl und nicht dahinter: Sonst findet
+       * der Zeiger die weggeschnittene Wand davor, verwirft sie - und gibt
+       * nichts zurueck, statt die Flaeche dahinter zu nehmen, auf die man
+       * gerade zeigt.
+       */
+      if (isCutAwayPoint(entry.point)) return false;
       const shape = shapesRef.current.find((candidate) => candidate.id === shapeId);
       return shape ? !shape.hidden : false;
     });
     if (!hit || hit.faceIndex == null || !(hit.object instanceof THREE.Mesh)) return null;
-    if (isCutAwayPoint(hit.point)) return null;
     const geometry = hit.object.geometry as THREE.BufferGeometry;
     const position = geometry.getAttribute("position");
     if (!position) return null;
@@ -5772,9 +5792,17 @@ export function WorkplaneViewport({
       target: snapTargetRef.current,
       project: (point) => projectCadPointToCanvas(new THREE.Vector3(point.x, point.y, point.z), state, picked.rect),
       visible: (point) => seesPoint(state, new THREE.Vector3(point.x, point.y, point.z), shapesRef.current),
+      /*
+       * Was die Schnittansicht weggenommen hat, gibt es nicht zu greifen -
+       * auch dann nicht, wenn ausdruecklich eine Ecke verlangt wurde. Der
+       * Strahl allein merkt das nicht: three.js rechnet beim Zeigen ohne die
+       * Schnittebenen, ein Eck in der verborgenen Haelfte ist fuer ihn voll
+       * da.
+       */
+      available: (point) => !isCutAwayPoint(new THREE.Vector3(point.x, point.y, point.z)),
     });
     return hit ? { shapeId: picked.shapeId, kind: hit.kind, point: hit.point } : null;
-  }, [pickShapeTriangles]);
+  }, [isCutAwayPoint, pickShapeTriangles]);
 
   const resolveNoteAnchor = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
@@ -5787,6 +5815,9 @@ export function WorkplaneViewport({
     const hit = state.raycaster.intersectObjects(state.shapeLayer.children, true).find((entry) => {
       const shapeId = entry.object.userData.shapeId;
       if (typeof shapeId !== "string") return false;
+      // Eine Notiz haengt sich an die Flaeche, die man sieht - nicht an die
+      // Wand, die die Schnittansicht gerade weggenommen hat.
+      if (isCutAwayPoint(entry.point)) return false;
       const shape = shapesRef.current.find((candidate) => candidate.id === shapeId);
       return shape ? !shape.hidden : false;
     });

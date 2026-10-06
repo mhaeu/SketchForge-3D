@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { snapPointOnMesh, snapTranslation, type SnapPoint, type SnapTarget } from "@/lib/pointSnap";
+import { pointIsCutAway } from "@/lib/sectionView";
 
 /**
  * Der ganze Weg vom Klick bis zum verschobenen Koerper, an gedrehten Netzen.
@@ -114,5 +115,98 @@ describe("Zwei Koerper aufeinandersetzen", () => {
     expect(onPipeLid.point.x + translation.x).toBeCloseTo(-18, 3);
     expect(onPipeLid.point.y + translation.y).toBeCloseTo(10, 3);
     expect(onPipeLid.point.z + translation.z).toBeCloseTo(20, 3);
+  });
+});
+
+/**
+ * Die Schnittansicht und das Ansetzen zusammen.
+ *
+ * Beim Zeigen rechnet three.js ohne die Schnittebenen - ein Eck in der
+ * weggenommenen Haelfte ist fuer den Strahl also voll da. Darum bekommt
+ * `snapPointOnMesh` im Ansichtsfenster eine Sichtpruefung, die beides
+ * abfragt: was ein anderer Koerper verdeckt *und* was die Schnittansicht
+ * weggenommen hat. Hier laufen die beiden echten Teile gegeneinander.
+ */
+describe("Ansetzen in der Schnittansicht", () => {
+  const view = { axis: "x" as const, offset: 0, flipped: false };
+  const box = worldSoup(new THREE.BoxGeometry(20, 10, 6), placement(0, 5, 0, 0));
+  // Stehen bleibt, was unter dem Schnitt liegt: hier alles mit x <= 0.
+  const available = (point: SnapPoint) => !pointIsCutAway(point, view);
+  const hidden = { x: 10, y: 10, z: 3 };
+
+  /** Dieselbe Frage einmal ohne und einmal mit Schnitt. */
+  function both(target: SnapTarget, pointer: SnapPoint) {
+    const shared = { positions: box, triangle: 0, pointer: project(pointer), hitPoint: pointer, target, project };
+    return {
+      whole: snapPointOnMesh(shared),
+      cut: snapPointOnMesh({ ...shared, available }),
+    };
+  }
+
+  /**
+   * Die drei Wege durch die Rechnung, die vor dieser Pruefung alle drei einen
+   * weggenommenen Punkt zurueckgaben.
+   *
+   * Eine *Ansage* bekommt weiter eine Antwort, nur eben eine stehengebliebene:
+   * "Eckpunkt" hat mit Absicht keinen Umkreis - wer ihn waehlt, will eine Ecke
+   * und keine Absage. "Automatisch" dagegen fragt nur im Umkreis von elf bis
+   * dreizehn Bildpunkten und faellt sonst auf die Flaechenmitte zurueck; ist
+   * die weggenommen, gibt es hier nichts zu greifen.
+   */
+  it("gibt in der weggenommenen Haelfte nichts Weggenommenes her", () => {
+    const corner = both("corner", hidden);
+    expect(corner.whole?.point.x).toBeCloseTo(10, 6);
+    expect(corner.cut?.kind).toBe("corner");
+    expect(corner.cut?.point.x).toBeLessThanOrEqual(0);
+
+    const edge = both("edge", hidden);
+    expect(edge.whole?.point.x).toBeCloseTo(10, 6);
+    expect(edge.cut?.kind).toBe("edge");
+    expect(edge.cut?.point.x).toBeLessThanOrEqual(0);
+
+    // Ohne Schnitt liegt der Zeiger genau auf dem Eck und bekommt es.
+    const auto = both("auto", hidden);
+    expect(auto.whole?.kind).toBe("corner");
+    expect(auto.whole?.point.x).toBeCloseTo(10, 6);
+    // Mit Schnitt ist im Umkreis nichts uebrig und die Flaechenmitte weg.
+    expect(auto.cut).toBeNull();
+  });
+
+  /** Und die Flaechenmitte auf Ansage: dieselbe Absage. */
+  it("gibt auch die Mitte einer weggenommenen Flaeche nicht her", () => {
+    expect(both("face", hidden).whole?.point.x).toBeCloseTo(10, 6);
+    expect(both("face", hidden).cut).toBeNull();
+  });
+
+  it("gibt auf der stehengebliebenen Seite dasselbe her wie ohne Schnitt", () => {
+    const standing = { x: -10, y: 10, z: 3 };
+    const corner = both("corner", standing);
+    expect(corner.cut).toEqual(corner.whole);
+    expect(corner.cut?.kind).toBe("corner");
+    expect(corner.cut?.point.x).toBeCloseTo(-10, 6);
+
+    const auto = both("auto", standing);
+    expect(auto.cut).toEqual(auto.whole);
+  });
+
+  /**
+   * Und die Schnittflaeche selbst bleibt greifbar: Genau dort liegt das
+   * Innere, das man sich ansehen will. Ihre Ecken liegen auf der Ebene.
+   */
+  it("laesst die Schnittflaeche selbst greifen", () => {
+    expect(available({ x: 0, y: 5, z: 0 })).toBe(true);
+  });
+
+  /**
+   * Verdeckt ist nicht weggenommen: Wer ausdruecklich eine Ecke verlangt,
+   * bekommt sie auch hinter einem anderen Koerper. Nur der Schnitt sagt
+   * wirklich ab.
+   */
+  it("haelt an der weichen Sichtpruefung fest", () => {
+    const hit = snapPointOnMesh({
+      positions: box, triangle: 0, pointer: project(hidden), hitPoint: hidden,
+      target: "corner", project, visible: () => false,
+    });
+    expect(hit?.point.x).toBeCloseTo(10, 6);
   });
 });
