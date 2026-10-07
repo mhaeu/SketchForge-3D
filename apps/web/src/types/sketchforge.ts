@@ -62,7 +62,19 @@ export type ProjectAsset = {
   sha256: string;
 };
 
-export type GridSize = "Off" | "0.1 mm" | "0.25 mm" | "0.5 mm" | "1.0 mm" | "2.0 mm" | "5.0 mm" | "Brick";
+/**
+ * Ein eigenes Rastermass: ein Name und seine Groesse in Millimetern - etwa
+ * 2,54 mm fuer das Lochraster von Platinen und Steckerleisten.
+ */
+export type CustomSnapGrid = { name: string; size: number };
+
+/**
+ * Wie ein eigenes Rastermass im Fangmenue steht: `custom:<mm>:<teiler>`. Der
+ * Teiler ist 1, 2 oder 4 - ganz, halb, viertel.
+ */
+export type CustomSnapGridSize = `custom:${number}:${number}`;
+
+export type GridSize = "Off" | "0.1 mm" | "0.25 mm" | "0.5 mm" | "1.0 mm" | "2.0 mm" | "5.0 mm" | "Brick" | CustomSnapGridSize;
 export type MeasurementAccuracy = 1 | 2 | 3;
 export type HistoryRetentionLimit = "unlimited" | number;
 
@@ -128,6 +140,8 @@ export type WorkplaneWorkspaceSettings = {
   overhangAngle: number;
   /** Die Kennung des gewaehlten Druckers, oder leer fuer eigene Masse. */
   printer: string;
+  /** Eigene Rastermasse, die das Fangmenue zusaetzlich anbietet. */
+  customSnapGrids: CustomSnapGrid[];
   sizePreset: string;
   gridBlockSize: number;
   gridBlockPreset: string;

@@ -49,7 +49,7 @@ import { createPyramidGeometry, normalizePyramidTop } from "@/lib/pyramidGeometr
 import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { viewFaceOrientation, workplaneCameraOrientation, worldCameraOrientation, type ViewCubeFace } from "@/lib/viewCubeOrientation";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
-import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
+import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, snapGridStep, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { DEFAULT_OVERHANG_ANGLE, OVERHANG_PLATE_TOLERANCE, overhangDownwardLimit } from "@/lib/overhangLimits";
 import { OVERHANG_PROGRAM_CACHE_KEY, patchOverhangFragmentShader, patchOverhangVertexShader } from "@/lib/overhangShader";
@@ -787,15 +787,13 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function snapStep(size: GridSize) {
-  if (size === "Off") {
-    return 0;
-  }
-  if (size === "Brick") {
-    return 8;
-  }
-  return Number.parseFloat(size) || 1;
-}
+/*
+ * Der Fangschritt steht jetzt bei den Einstellungen: Ein eigenes Rastermass
+ * traegt seine Millimeter in seiner Kennung (`custom:2.54:2`), und
+ * `Number.parseFloat` hat daran nichts zu lesen - es waere still bei einem
+ * Millimeter gelandet.
+ */
+const snapStep = snapGridStep;
 
 function snapValue(value: number, step: number) {
   return step > 0 ? Math.round(value / step) * step : value;
@@ -7823,7 +7821,7 @@ export function WorkplaneViewport({
         */}
       {!selectedShape || inspectorSnapGridAway ? (
         <div className="grid-settings">
-          <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
+          <SnapGridControl snap={snap} snapOpen={snapOpen} customGrids={workspace.customSnapGrids} onSnapChange={setSnap} onSnapOpenChange={setSnapOpen} />
         </div>
       ) : null}
 

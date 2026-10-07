@@ -60,7 +60,7 @@ import {
 } from "@/lib/honeycombGeometry";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
-import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS } from "@/lib/workplaneSettings";
+import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS, customSnapGridLabel, snapGridOptions } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
 import {
   MAX_THREAD_CLEARANCE,
@@ -121,9 +121,8 @@ import {
   isPolygonLoftShape,
   loftSettings,
 } from "@/lib/loftGeometry";
-import type { GearType, GridSize, LoftProfileShape, MeasurementAccuracy, ThreadDrive, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { CustomSnapGrid, GearType, GridSize, LoftProfileShape, MeasurementAccuracy, ThreadDrive, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
-const GRID_SIZES: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 mm", "2.0 mm", "5.0 mm", "Brick"];
 const MIN_SHAPE_SIZE = 0.01;
 const SOLID_COLORS = [
   "#d41721",
@@ -1982,7 +1981,7 @@ export function ShapeInspector({
         </div>
       ) : null}
       <div className="inspector-snap-dock">
-        <SnapGridControl snap={snap} snapOpen={snapOpen} onSnapChange={onSnapChange} onSnapOpenChange={onSnapOpenChange} />
+        <SnapGridControl snap={snap} snapOpen={snapOpen} customGrids={workspace.customSnapGrids} onSnapChange={onSnapChange} onSnapOpenChange={onSnapOpenChange} />
       </div>
         </>
       ) : null}
@@ -2100,14 +2099,24 @@ function ShapePropertyRows({
   });
 }
 
+/**
+ * Wie ein Fangschritt im Menue heisst: ein eigenes Rastermass mit seinem
+ * Namen, alles andere wie bisher.
+ */
+export function snapGridOptionLabel(size: GridSize, customGrids: ReadonlyArray<CustomSnapGrid> = []) {
+  return customSnapGridLabel(size, customGrids) ?? measurementOptionLabel(size);
+}
+
 export function SnapGridControl({
   snap,
   snapOpen,
+  customGrids = [],
   onSnapChange,
   onSnapOpenChange,
 }: {
   snap: GridSize;
   snapOpen: boolean;
+  customGrids?: ReadonlyArray<CustomSnapGrid>;
   onSnapChange: Dispatch<SetStateAction<GridSize>>;
   onSnapOpenChange: Dispatch<SetStateAction<boolean>>;
 }) {
@@ -2115,12 +2124,12 @@ export function SnapGridControl({
     <div className="snap-row">
       <span>{t("inspector.snapGrid")}</span>
       <button className="snap-select" onClick={() => onSnapOpenChange((value) => !value)}>
-        {measurementOptionLabel(snap)}
+        {snapGridOptionLabel(snap, customGrids)}
         <ChevronDown size={12} fill="currentColor" />
       </button>
       {snapOpen ? (
         <div className="snap-menu">
-          {GRID_SIZES.map((size) => (
+          {snapGridOptions(customGrids).map((size) => (
             <button
               key={size}
               className={size === snap ? "selected" : ""}
@@ -2129,7 +2138,7 @@ export function SnapGridControl({
                 onSnapOpenChange(false);
               }}
             >
-              {measurementOptionLabel(size)}
+              {snapGridOptionLabel(size, customGrids)}
             </button>
           ))}
         </div>

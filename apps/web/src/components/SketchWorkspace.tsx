@@ -18,7 +18,7 @@ import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } f
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
 import { hasMarkedSweepPath, sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
-import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSettings";
+import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, snapGridStep } from "@/lib/workplaneSettings";
 import type { GridSize, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchSegment, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -113,11 +113,9 @@ type PointerAction =
   | { kind: "resize-image"; pointerId: number; imageId: string; handle: ResizeHandle; current: { x: number; z: number }; start: SketchImage };
 
 
-function snapStep(size: GridSize) {
-  if (size === "Off") return 0;
-  if (size === "Brick") return 8;
-  return Number.parseFloat(size) || 1;
-}
+// Dieselbe Rechnung wie im Koerpermodus - ein eigenes Rastermass traegt seine
+// Millimeter in seiner Kennung, und daran hatte `parseFloat` nichts zu lesen.
+const snapStep = snapGridStep;
 
 function snapValue(value: number, step: number) {
   return step > 0 ? Math.round(value / step) * step : value;

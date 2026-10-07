@@ -1,4 +1,4 @@
-import type { GridSize, HistoryRetentionLimit, MeasurementAccuracy, ShapeCustomization, ShapeCustomizationMap, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { CustomSnapGrid, CustomSnapGridSize, GridSize, HistoryRetentionLimit, MeasurementAccuracy, ShapeCustomization, ShapeCustomizationMap, ShapeKind, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { normalizeScaleForUnits } from "@/lib/measurementUnits";
 import { DEFAULT_WORKPLANE_GRID_COLOR } from "@/lib/workplaneGrid";
 import { clampBuildHeight, DEFAULT_BUILD_HEIGHT_MM } from "@/lib/buildVolume";
@@ -41,6 +41,7 @@ export const DEFAULT_WORKPLANE_WORKSPACE: WorkplaneWorkspaceSettings = {
   buildHeight: DEFAULT_BUILD_HEIGHT_MM,
   overhangAngle: DEFAULT_OVERHANG_ANGLE,
   printer: "",
+  customSnapGrids: [],
   sizePreset: "200 x 200 mm",
   gridBlockSize: 5,
   gridBlockPreset: "5 mm",
@@ -58,7 +59,90 @@ export const DEFAULT_WORKPLANE_WORKSPACE: WorkplaneWorkspaceSettings = {
   shapeCustomizations: {},
 };
 
-const snapGridOptions: GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 mm", "2.0 mm", "5.0 mm", "Brick"];
+/** Die festen Stufen des Fangmenues, in dieser Reihenfolge. */
+export const FIXED_SNAP_GRIDS: readonly GridSize[] = ["Off", "0.1 mm", "0.25 mm", "0.5 mm", "1.0 mm", "2.0 mm", "5.0 mm", "Brick"];
+
+export const MIN_CUSTOM_SNAP_GRID = 0.01;
+export const MAX_CUSTOM_SNAP_GRID = 1000;
+export const MAX_CUSTOM_SNAP_GRIDS = 12;
+export const MAX_CUSTOM_SNAP_GRID_NAME = 32;
+
+/**
+ * Ein eigenes Mass faengt ganz, halb und geviertelt. Das Viertel bringt das
+ * Dreiviertelmass mit, und damit ist alles erreichbar, was man an einem Raster
+ * ueblicherweise braucht.
+ */
+export const CUSTOM_SNAP_GRID_DIVISORS = [1, 2, 4] as const;
+const CUSTOM_SNAP_GRID_FRACTIONS: Record<number, string> = { 1: "1", 2: "½", 4: "¼" };
+
+function cleanCustomSnapSize(value: number) {
+  return Number(Math.min(MAX_CUSTOM_SNAP_GRID, Math.max(MIN_CUSTOM_SNAP_GRID, value)).toFixed(4));
+}
+
+export function customSnapGridSize(size: number, divisor: number): CustomSnapGridSize {
+  return `custom:${cleanCustomSnapSize(size)}:${divisor}`;
+}
+
+/**
+ * Das Mass und der Teiler, fuer die ein eigener Fangschritt steht - oder
+ * `null` fuer alles andere. Ein Mass, das nicht mehr in der Liste steht,
+ * laesst sich daran trotzdem noch lesen: Der Schritt selbst traegt seine
+ * Millimeter.
+ */
+export function parseCustomSnapGrid(value: unknown): { size: number; divisor: number } | null {
+  if (typeof value !== "string") return null;
+  const match = /^custom:(\d+(?:\.\d+)?):(\d+)$/.exec(value);
+  if (!match) return null;
+  const size = Number(match[1]);
+  const divisor = Number(match[2]);
+  if (!(CUSTOM_SNAP_GRID_DIVISORS as readonly number[]).includes(divisor)) return null;
+  if (!Number.isFinite(size) || size < MIN_CUSTOM_SNAP_GRID || size > MAX_CUSTOM_SNAP_GRID) return null;
+  return { size, divisor };
+}
+
+export function normalizeCustomSnapGrids(value: unknown, fallback: CustomSnapGrid[] = []): CustomSnapGrid[] {
+  if (!Array.isArray(value)) return fallback;
+  const grids: CustomSnapGrid[] = [];
+  for (const entry of value) {
+    if (grids.length >= MAX_CUSTOM_SNAP_GRIDS) break;
+    if (!entry || typeof entry !== "object") continue;
+    const { name, size } = entry as { name?: unknown; size?: unknown };
+    if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) continue;
+    grids.push({
+      name: typeof name === "string" ? name.trim().slice(0, MAX_CUSTOM_SNAP_GRID_NAME) : "",
+      size: cleanCustomSnapSize(size),
+    });
+  }
+  return grids;
+}
+
+/** Das Fangmenue: die festen Stufen, dann jedes eigene Mass ganz, halb, viertel. */
+export function snapGridOptions(customGrids: ReadonlyArray<CustomSnapGrid> = []): GridSize[] {
+  const custom = customGrids.flatMap((grid) => CUSTOM_SNAP_GRID_DIVISORS.map((divisor) => customSnapGridSize(grid.size, divisor)));
+  return [...FIXED_SNAP_GRIDS, ...new Set(custom)];
+}
+
+/**
+ * Wie ein eigener Fangschritt im Menue heisst: "½ x Lochraster". Ein Schritt,
+ * dessen Mass nicht mehr in der Liste steht, behaelt seine Millimeter.
+ */
+export function customSnapGridLabel(value: unknown, customGrids: ReadonlyArray<CustomSnapGrid> = []): string | null {
+  const parsed = parseCustomSnapGrid(value);
+  if (!parsed) return null;
+  const name = customGrids.find((grid) => grid.size === parsed.size)?.name.trim() || `${parsed.size} mm`;
+  return `${CUSTOM_SNAP_GRID_FRACTIONS[parsed.divisor] ?? `1/${parsed.divisor}`} × ${name}`;
+}
+
+/** Der Fangschritt in Millimetern. Null heisst: kein Fangen. */
+export function snapGridStep(size: GridSize) {
+  if (size === "Off") return 0;
+  if (size === "Brick") return 8;
+  const custom = parseCustomSnapGrid(size);
+  // Ein eigenes Mass steht in Millimetern, gleichgueltig, worin die Platte
+  // gerastert ist.
+  if (custom) return custom.size / custom.divisor;
+  return Number.parseFloat(size) || 1;
+}
 // Jede Art, deren Vorgaben sich in den Einstellungen setzen lassen. Fehlt eine
 // hier, wirft das Normalisieren ihre gespeicherten Vorgaben beim naechsten
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
@@ -234,7 +318,11 @@ export function shapeDimensionLimit(workspace: WorkplaneWorkspaceSettings, kind:
 export const MAX_HIGH_RESOLUTION_STEPS = 256;
 
 export function normalizeSnapGrid(value: unknown, fallback: GridSize = DEFAULT_SNAP_GRID): GridSize {
-  return snapGridOptions.includes(value as GridSize) ? (value as GridSize) : fallback;
+  // Ein eigener Schritt bleibt stehen, auch wenn sein Mass nicht mehr in der
+  // Liste steht: Er traegt seine Millimeter selbst, und ein Projekt soll nicht
+  // still auf ein anderes Raster springen.
+  if (parseCustomSnapGrid(value)) return value as GridSize;
+  return FIXED_SNAP_GRIDS.includes(value as GridSize) ? (value as GridSize) : fallback;
 }
 
 export function normalizeWorkspaceSettings(value: unknown, fallback: WorkplaneWorkspaceSettings = DEFAULT_WORKPLANE_WORKSPACE): WorkplaneWorkspaceSettings {
@@ -248,6 +336,7 @@ export function normalizeWorkspaceSettings(value: unknown, fallback: WorkplaneWo
     // Ebenso der Ueberhangwinkel: Alte Projekte kennen ihn nicht.
     overhangAngle: normalizeOverhangAngle(candidate.overhangAngle, fallback.overhangAngle),
     printer: normalizePrinterId(candidate.printer),
+    customSnapGrids: normalizeCustomSnapGrids(candidate.customSnapGrids, fallback.customSnapGrids),
     sizePreset: stringOrDefault(candidate.sizePreset, fallback.sizePreset),
     gridBlockSize: numberOrDefault(candidate.gridBlockSize, fallback.gridBlockSize),
     gridBlockPreset: stringOrDefault(candidate.gridBlockPreset, fallback.gridBlockPreset),
