@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A group resized after grouping is exported, aligned and snapped at the size it shows. Its mesh put the parts together at the size they were grouped at, so STL, OBJ and 3MF got the old size and the filament estimate reported the wrong volume. From layerling, contributed by @gogades (#127).
+- "Lay flat on face" lights up the flat face under the pointer before the click, so you can see which side goes down and turn the view to look at the others. On a mesh denser than 20,000 triangles only the facet under the pointer lights up: searching the whole face costs 22 ms at 24,000 triangles, and the click still searches it. From layerling, asked for by @Jeff-Haas (#130).
+- A fingertip reaches 16 pixels beside the edge of a body instead of 6, because it covers more than a mouse pointer. The mouse is unchanged. From layerling, contributed by @rmpel (#123).
+- Snap grids of your own: in the workspace settings, add a measure with a name and a size in millimetres - the 2.54 mm of perfboard, say - and the snap menu offers it whole, halved and quartered. A step keeps its millimetres, so a design still snaps right after its measure has been removed from the settings. From layerling, contributed by @rmpel (#118).
+
 ## 1.1.0
 
 A minor release rather than a patch: everything below has been sitting
