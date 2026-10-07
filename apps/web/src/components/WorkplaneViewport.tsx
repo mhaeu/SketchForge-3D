@@ -470,6 +470,8 @@ type ThreeState = {
   transformGuideLayer: THREE.Group;
   pivotLayer: THREE.Group;
   snapLayer: THREE.Group;
+  /** Die Flaeche, die "Auf Flaeche legen" nach unten drehen wuerde. */
+  layFlatHoverLayer: THREE.Group;
   sectionLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
@@ -1950,6 +1952,111 @@ function snapPointMarker(point: { x: number; y: number; z: number }, settled: bo
   group.renderOrder = settled ? 10 : 9;
   setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
   return group;
+}
+
+/**
+ * Oberhalb dieser Dreieckszahl wird nur das getroffene Dreieck hervorgehoben.
+ *
+ * Die zusammenhaengende ebene Flaeche zu suchen kostet gemessen 22 ms bei
+ * 24 000 Dreiecken und 38 ms bei 143 000 - je neuem Dreieck unter dem Zeiger,
+ * nicht je Bewegung, aber ueber eine Bildfolge hinaus. Bei einem so dichten
+ * Netz gibt es ohnehin kaum echte ebene Flaechen; das eine Facettchen zeigt
+ * dann wenigstens, wohin man zeigt. Der Klick selbst sucht weiter die ganze
+ * Flaeche - dort darf es 22 ms kosten.
+ */
+const LAY_FLAT_HOVER_TRIANGLE_LIMIT = 20_000;
+
+/**
+ * Waehrend "Auf Flaeche legen" auf den Klick wartet: die Flaeche zeigen, die
+ * der Klick nach unten drehen wuerde.
+ *
+ * Nachgesehen wird nur, wenn der Zeiger auf ein anderes Dreieck wandert -
+ * sonst baut die Ansicht bei jeder Bewegung dieselbe Hervorhebung neu.
+ */
+function syncLayFlatHover(
+  state: ThreeState | null,
+  theme: ResolvedAppTheme,
+  isCutAway: (point: THREE.Vector3) => boolean,
+  shapes: ReadonlyArray<WorkplaneShape>,
+  clientX: number | null,
+  clientY: number | null,
+) {
+  if (!state) return;
+  const layer = state.layFlatHoverLayer;
+  const clear = () => {
+    if (layer.userData.key === undefined) return;
+    disposeChildren(layer);
+    layer.userData.key = undefined;
+    state.needsRender = true;
+  };
+  if (clientX === null || clientY === null) {
+    clear();
+    return;
+  }
+
+  const rect = state.renderer.domElement.getBoundingClientRect();
+  state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  state.raycaster.setFromCamera(state.pointer, state.camera);
+  state.raycaster.layers.set(RENDER_LAYER_SHAPES);
+  const hit = state.raycaster.intersectObjects(state.shapeLayer.children, true).find((entry) => {
+    if (!(entry.object instanceof THREE.Mesh) || entry.faceIndex == null) return false;
+    const shapeId = entry.object.userData.shapeId;
+    if (typeof shapeId !== "string") return false;
+    if (isCutAway(entry.point)) return false;
+    const shape = shapes.find((candidate) => candidate.id === shapeId);
+    return shape ? !shape.hidden : false;
+  });
+  const mesh = hit?.object;
+  if (!hit || hit.faceIndex == null || !(mesh instanceof THREE.Mesh)) {
+    clear();
+    return;
+  }
+
+  const key = `${mesh.uuid}:${hit.faceIndex}:${theme}`;
+  if (layer.userData.key === key) return;
+
+  // Die Weltpunkte liegen schon da: derselbe Speicher, aus dem die
+  // Fangpunkte kommen.
+  const data = snapMeshData(mesh);
+  if (!data) {
+    clear();
+    return;
+  }
+  const triangleCount = Math.floor(data.positions.length / 9);
+  const triangles = triangleCount <= LAY_FLAT_HOVER_TRIANGLE_LIMIT
+    ? planarFace(data.positions, hit.faceIndex)?.triangles ?? [hit.faceIndex]
+    : [hit.faceIndex];
+
+  const vertices = new Float32Array(triangles.length * 9);
+  triangles.forEach((triangle, slot) => {
+    for (let offset = 0; offset < 9; offset += 1) vertices[slot * 9 + offset] = data.positions[triangle * 9 + offset];
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+  const highlight = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      color: theme === "dark" ? "#69d9ff" : "#0098c7",
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      // Die Hervorhebung liegt genau auf der Flaeche. Ohne diesen Versatz
+      // kaempfen beide um dieselben Bildpunkte und es flimmert.
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    }),
+  );
+  highlight.renderOrder = 960;
+  // Sie ist eine Anzeige und nichts, was der Zeiger treffen soll.
+  highlight.raycast = () => undefined;
+  setObjectRenderLayer(highlight, RENDER_LAYER_PREVIEWS);
+  disposeChildren(layer);
+  layer.add(highlight);
+  layer.userData.key = key;
+  state.needsRender = true;
 }
 
 function pickModifierEdgeFromScreen(state: ThreeState, edges: CadModifierEdge[], clientX: number, clientY: number) {
@@ -4471,6 +4578,7 @@ export function WorkplaneViewport({
       disposeChildren(state.transformGuideLayer);
       disposeChildren(state.pivotLayer);
       disposeChildren(state.snapLayer);
+      disposeChildren(state.layFlatHoverLayer);
       disposeChildren(state.sectionLayer);
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
@@ -4497,6 +4605,10 @@ export function WorkplaneViewport({
   useEffect(() => {
     if (!snapMode && !pivotMode) setSnapHover(null);
   }, [pivotMode, snapMode]);
+
+  useEffect(() => {
+    if (!layFlatMode) syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
+  }, [isCutAwayPoint, layFlatMode]);
 
   useEffect(() => {
     const state = threeRef.current;
@@ -6771,6 +6883,10 @@ export function WorkplaneViewport({
         updateSnapHover(event.clientX, event.clientY);
         return;
       }
+      if (layFlatModeRef.current) {
+        syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, event.clientX, event.clientY);
+        return;
+      }
       if (rulerMoveModeRef.current) return;
       const transform = transformRef.current;
       if (transform) {
@@ -6876,7 +6992,8 @@ export function WorkplaneViewport({
     if (modifierActiveRef.current) clearModifierEdgeHover();
     // Der Zeiger ist weg, also zeigt er auf nichts mehr.
     setSnapHover(null);
-  }, [clearModifierEdgeHover]);
+    syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
+  }, [clearModifierEdgeHover, isCutAwayPoint]);
 
   const finishDrag = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -7833,6 +7950,11 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const snapLayer = new THREE.Group();
   snapLayer.name = "SnapPoint";
   snapLayer.layers.set(RENDER_LAYER_HELPERS);
+  // Die hervorgehobene Flaeche beim Flachlegen: eigene Gruppe, damit das
+  // Hervorheben die Punktmarken nicht ausraeumt und umgekehrt.
+  const layFlatHoverLayer = new THREE.Group();
+  layFlatHoverLayer.name = "LayFlatHover";
+  layFlatHoverLayer.layers.set(RENDER_LAYER_PREVIEWS);
   // Die Schnittebene selbst: eigene Gruppe, damit sie weder gekappt wird noch
   // beim Neubauen der Auswahlhelfer verschwindet.
   const sectionLayer = new THREE.Group();
@@ -7847,7 +7969,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -7884,6 +8006,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     shapeLayer,
     pivotLayer,
     snapLayer,
+    layFlatHoverLayer,
     sectionLayer,
     helperLayer,
     transformGuideLayer,

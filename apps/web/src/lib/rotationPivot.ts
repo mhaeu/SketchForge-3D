@@ -43,7 +43,10 @@ export function planarFaceCentroid(positions: ArrayLike<number>, hitTriangle: nu
  * Gebraucht wird sie zum Flachlegen: Der Koerper dreht sich so, dass diese
  * Richtung nach unten zeigt.
  */
-export function planarFace(positions: ArrayLike<number>, hitTriangle: number): { centre: PivotPoint; normal: PivotPoint } | null {
+export function planarFace(
+  positions: ArrayLike<number>,
+  hitTriangle: number,
+): { centre: PivotPoint; normal: PivotPoint; triangles: number[] } | null {
   const triangleCount = Math.floor(positions.length / 9);
   if (hitTriangle < 0 || hitTriangle >= triangleCount) return null;
 
@@ -135,12 +138,16 @@ export function planarFace(positions: ArrayLike<number>, hitTriangle: number): {
 
   const visited = new Set<number>([hitTriangle]);
   const queue = [hitTriangle];
+  // Die Dreiecke selbst, damit die Flaeche sich auch zeichnen laesst - das
+  // Hervorheben unter dem Zeiger braucht genau diese Liste.
+  const triangles: number[] = [];
   let weight = 0;
   let cx = 0;
   let cy = 0;
   let cz = 0;
   while (queue.length > 0) {
     const triangle = queue.pop() as number;
+    triangles.push(triangle);
     const at = triangle * 9;
     const area = areas[triangle];
     weight += area;
@@ -160,5 +167,6 @@ export function planarFace(positions: ArrayLike<number>, hitTriangle: number): {
   return {
     centre: { x: cx / weight, y: cy / weight, z: cz / weight },
     normal: { x: hx, y: hy, z: hz },
+    triangles,
   };
 }

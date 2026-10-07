@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planarFaceCentroid } from "@/lib/rotationPivot";
+import { planarFace, planarFaceCentroid } from "@/lib/rotationPivot";
 
 /** Ein Rechteck in der Ebene y = `height`, als zwei Dreiecke. */
 function quad(x0: number, z0: number, x1: number, z1: number, height: number) {
@@ -96,5 +96,60 @@ describe("Die Mitte der angeklickten Flaeche", () => {
     // Drei Punkte auf einer Linie spannen keine Flaeche auf, also auch keine
     // Ebene, in der man suchen koennte.
     expect(planarFaceCentroid([0, 0, 0, 5, 0, 0, 10, 0, 0], 0)).toBeNull();
+  });
+});
+
+/**
+ * Die Dreiecke der Flaeche selbst - ohne sie liesse sie sich nicht zeichnen.
+ * Das Hervorheben unter dem Zeiger beim Flachlegen braucht genau diese Liste.
+ */
+describe("Die Dreiecke der angeklickten Flaeche", () => {
+  it("nennt beide Dreiecke eines Rechtecks, von jedem aus", () => {
+    const positions = quad(0, 0, 20, 10, 4);
+    for (const triangle of [0, 1]) {
+      expect(planarFace(positions, triangle)?.triangles.slice().sort()).toEqual([0, 1]);
+    }
+  });
+
+  it("nennt alle Dreiecke einer Scheibe", () => {
+    const positions = disc(0, 0, 6, 10, 24);
+    const face = planarFace(positions, 5);
+    expect(face?.triangles.length).toBe(24);
+    expect(new Set(face?.triangles).size).toBe(24);
+  });
+
+  it("nennt das getroffene Dreieck immer mit", () => {
+    const positions = disc(0, 0, 6, 10, 12);
+    for (const triangle of [0, 4, 11]) {
+      expect(planarFace(positions, triangle)?.triangles).toContain(triangle);
+    }
+  });
+
+  /**
+   * Was in einer anderen Ebene liegt, gehoert nicht dazu - sonst waere das
+   * Hervorheben beim Flachlegen das halbe Objekt.
+   */
+  it("laesst eine zweite Ebene aussen vor", () => {
+    const positions = [...quad(0, 0, 20, 10, 4), ...quad(0, 0, 20, 10, 9)];
+    const lower = planarFace(positions, 0);
+    expect(lower?.triangles.slice().sort()).toEqual([0, 1]);
+    const upper = planarFace(positions, 2);
+    expect(upper?.triangles.slice().sort()).toEqual([2, 3]);
+  });
+
+  /**
+   * Und was in derselben Ebene liegt, aber nicht zusammenhaengt, auch nicht:
+   * zwei Rechtecke auf gleicher Hoehe, weit auseinander.
+   */
+  it("laesst eine getrennte Flaeche derselben Ebene aussen vor", () => {
+    const positions = [...quad(0, 0, 10, 10, 4), ...quad(50, 0, 60, 10, 4)];
+    expect(planarFace(positions, 0)?.triangles.slice().sort()).toEqual([0, 1]);
+    expect(planarFace(positions, 3)?.triangles.slice().sort()).toEqual([2, 3]);
+  });
+
+  it("gibt nichts her, wo es kein solches Dreieck gibt", () => {
+    const positions = quad(0, 0, 20, 10, 4);
+    expect(planarFace(positions, -1)).toBeNull();
+    expect(planarFace(positions, 2)).toBeNull();
   });
 });
