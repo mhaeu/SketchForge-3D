@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Split:** A new tool in the Modify group cuts the selection in two with a plane. It starts flat - the cut that brings a part too tall for the printer onto the plate - and can be set to any of the three axes, turned about the other two and moved along its normal; a translucent plane shows where it stands. "Pick a face" lays it on the next face you click, tilt included. Every selected body the plane crosses becomes two closed bodies, a hole becomes two holes, and a hollowed body keeps its cavity. The halves are meshes, so their shape settings are gone. From layerling, which took it from a SketchForge fork by WC3D.
 - A group resized after grouping is exported, aligned and snapped at the size it shows. Its mesh put the parts together at the size they were grouped at, so STL, OBJ and 3MF got the old size and the filament estimate reported the wrong volume. From layerling, contributed by @gogades (#127).
 - "Lay flat on face" lights up the flat face under the pointer before the click, so you can see which side goes down and turn the view to look at the others. On a mesh denser than 20,000 triangles only the facet under the pointer lights up: searching the whole face costs 22 ms at 24,000 triangles, and the click still searches it. From layerling, asked for by @Jeff-Haas (#130).
 - A fingertip reaches 16 pixels beside the edge of a body instead of 6, because it covers more than a mouse pointer. The mouse is unchanged. From layerling, contributed by @rmpel (#123).
