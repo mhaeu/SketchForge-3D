@@ -139,8 +139,14 @@ const CAMERA_MAX_TARGET_Y = 120;
 const ROTATION_PROTRACTOR_OUTER_RADIUS = 94;
 const RENDER_LAYER_WORKPLANE = 0;
 const RENDER_LAYER_SHAPES = 1;
-/** Wie weit neben einem Koerper ein Druck landen darf und ihn noch meint, in Bildpunkten. */
+/**
+ * Wie weit neben einem Koerper ein Druck landen darf und ihn noch meint, in
+ * Bildpunkten. Eine Fingerspitze deckt mehr als ein Mauszeiger, darum fuer
+ * Beruehrung mehr - und nur dafuer, damit die Maus so genau bleibt, wie sie
+ * ist.
+ */
 const PICK_TOLERANCE_PIXELS = 6;
+const PICK_TOLERANCE_PIXELS_TOUCH = 16;
 const PICK_TOLERANCE_RAYS = 8;
 const RENDER_LAYER_HELPERS = 2;
 const RENDER_LAYER_MODIFIERS = 3;
@@ -5863,7 +5869,8 @@ export function WorkplaneViewport({
     }),
   ), [shapes]);
 
-  const pickShape = useCallback((clientX: number, clientY: number) => {
+  const pickShape = useCallback((clientX: number, clientY: number, pointerType = "mouse") => {
+    const tolerance = pointerType === "touch" ? PICK_TOLERANCE_PIXELS_TOUCH : PICK_TOLERANCE_PIXELS;
     const state = threeRef.current;
     if (!state) {
       return null;
@@ -5904,8 +5911,8 @@ export function WorkplaneViewport({
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (let step = 0; step < PICK_TOLERANCE_RAYS; step += 1) {
       const angle = (step / PICK_TOLERANCE_RAYS) * Math.PI * 2;
-      state.pointer.x = ((clientX + Math.cos(angle) * PICK_TOLERANCE_PIXELS - rect.left) / rect.width) * 2 - 1;
-      state.pointer.y = -((clientY + Math.sin(angle) * PICK_TOLERANCE_PIXELS - rect.top) / rect.height) * 2 + 1;
+      state.pointer.x = ((clientX + Math.cos(angle) * tolerance - rect.left) / rect.width) * 2 - 1;
+      state.pointer.y = -((clientY + Math.sin(angle) * tolerance - rect.top) / rect.height) * 2 + 1;
       state.raycaster.setFromCamera(state.pointer, state.camera);
       const near = state.raycaster.intersectObjects(state.shapeLayer.children, true).find(pickable);
       if (near && near.distance < nearestDistance) {
@@ -6668,7 +6675,7 @@ export function WorkplaneViewport({
         return;
       }
 
-      const id = pickShape(event.clientX, event.clientY);
+      const id = pickShape(event.clientX, event.clientY, event.pointerType);
       const additive = event.shiftKey;
       if (!id) {
         const startX = event.clientX - rect.left;
