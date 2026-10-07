@@ -2176,6 +2176,56 @@ html[data-theme="dark"] .app-error-actions a {
   accent-color: #139ed0;
 }
 
+/* Die Erklaerzeile in einem Werkzeugfeld - beim Teilen die Regel fuers Kreuzen. */
+.edge-modifier-hint {
+  margin: 10px 0 0;
+  color: #718494;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* Der Knopf "Flaeche nehmen" sitzt im Zahlenfeld der Lage. */
+.split-pick-face {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  color: #42607a;
+  background: #f0f4f7;
+  border: 1px solid #d9e2e9;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.split-pick-face:hover {
+  background: #e4ebf1;
+}
+
+.split-pick-face.active {
+  color: #fff;
+  background: #139ed0;
+  border-color: #0f8bb7;
+}
+
+html[data-theme="dark"] .edge-modifier-hint {
+  color: #91a7b7;
+}
+
+html[data-theme="dark"] .split-pick-face {
+  color: #c4d7e4;
+  background: #16222c;
+  border-color: #3c505d;
+}
+
+html[data-theme="dark"] .split-pick-face.active {
+  color: #06212c;
+  background: #4ec3e8;
+  border-color: #4ec3e8;
+}
+
 .edge-modifier-error {
   margin-top: 12px;
   padding: 8px 9px;

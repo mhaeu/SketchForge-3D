@@ -331,6 +331,11 @@ type WorkplaneViewportProps = {
   /** Der naechste Klick sagt, welche Flaeche unten liegen soll. */
   layFlatMode?: boolean;
   onLayFlatPick?: (picked: { shapeId: string; centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
+  /** Dasselbe Zeigen auf eine Flaeche, aber fuer die Schnittebene des Teilens. */
+  splitPickMode?: boolean;
+  onSplitFacePick?: (picked: { centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
+  /** Die Ebene, die das Teilen gerade vorschlaegt. */
+  splitPreview?: { normal: [number, number, number]; origin: [number, number, number]; size: number } | null;
   /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
   snapAnchor?: SnapPick | null;
   onSnapPick?: (picked: SnapPick) => void;
@@ -478,6 +483,8 @@ type ThreeState = {
   snapLayer: THREE.Group;
   /** Die Flaeche, die "Auf Flaeche legen" nach unten drehen wuerde. */
   layFlatHoverLayer: THREE.Group;
+  /** Die Ebene, an der das Teilen schneiden wuerde. */
+  splitPreviewLayer: THREE.Group;
   sectionLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
@@ -3638,6 +3645,9 @@ export function WorkplaneViewport({
   snapTarget = "auto",
   layFlatMode = false,
   onLayFlatPick,
+  splitPickMode = false,
+  onSplitFacePick,
+  splitPreview = null,
   snapAnchor = null,
   onSnapPick,
   onSnapMiss,
@@ -3721,6 +3731,8 @@ export function WorkplaneViewport({
   snapTargetRef.current = snapTarget;
   const layFlatModeRef = useRef(layFlatMode);
   layFlatModeRef.current = layFlatMode;
+  const splitPickModeRef = useRef(splitPickMode);
+  splitPickModeRef.current = splitPickMode;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4583,6 +4595,7 @@ export function WorkplaneViewport({
       disposeChildren(state.pivotLayer);
       disposeChildren(state.snapLayer);
       disposeChildren(state.layFlatHoverLayer);
+      disposeChildren(state.splitPreviewLayer);
       disposeChildren(state.sectionLayer);
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
@@ -4611,8 +4624,8 @@ export function WorkplaneViewport({
   }, [pivotMode, snapMode]);
 
   useEffect(() => {
-    if (!layFlatMode) syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
-  }, [isCutAwayPoint, layFlatMode]);
+    if (!layFlatMode && !splitPickMode) syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
+  }, [isCutAwayPoint, layFlatMode, splitPickMode]);
 
   useEffect(() => {
     const state = threeRef.current;
@@ -6088,6 +6101,42 @@ export function WorkplaneViewport({
   }, [snapAnchor, snapHover]);
 
   /*
+   * Die Ebene, an der das Teilen schneiden wuerde: eine durchsichtige Scheibe
+   * mit einem Rand, gross genug, um ueber die Auswahl hinauszureichen. Ohne
+   * sie stellt man die Zahlen blind ein.
+   */
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    disposeChildren(state.splitPreviewLayer);
+    if (splitPreview) {
+      const normal = new THREE.Vector3(...splitPreview.normal);
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal.clone().normalize());
+      const group = new THREE.Group();
+      group.name = "SplitPlane";
+      const sheet = new THREE.Mesh(
+        new THREE.PlaneGeometry(splitPreview.size, splitPreview.size),
+        new THREE.MeshBasicMaterial({ color: 0x00aeea, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      const half = splitPreview.size / 2;
+      const border = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-half, -half, 0), new THREE.Vector3(half, -half, 0),
+          new THREE.Vector3(half, half, 0), new THREE.Vector3(-half, half, 0),
+        ]),
+        new THREE.LineBasicMaterial({ color: 0x00aeea, transparent: true, opacity: 0.75 }),
+      );
+      group.add(sheet, border);
+      group.position.set(...splitPreview.origin);
+      group.quaternion.copy(quaternion);
+      group.renderOrder = 8;
+      setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
+      state.splitPreviewLayer.add(group);
+    }
+    state.needsRender = true;
+  }, [splitPreview]);
+
+  /*
    * Die Schnittansicht an die Werkstoffe haengen.
    *
    * Gekappt wird je Werkstoff und nicht am Zeichner: Am Zeichner wuerde die
@@ -6490,12 +6539,16 @@ export function WorkplaneViewport({
         return;
       }
 
-      if (layFlatModeRef.current) {
+      if (layFlatModeRef.current || splitPickModeRef.current) {
         event.preventDefault();
         const picked = pickShapeTriangles(event.clientX, event.clientY);
         const face = picked ? planarFace(picked.positions, picked.triangle) : null;
-        if (picked && face) onLayFlatPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
-        else onSnapMiss?.(picked ? "target" : "nothing");
+        if (picked && face) {
+          // Dieselbe Frage, zwei Antworten: flachlegen oder die Schnittebene
+          // auf diese Flaeche legen.
+          if (splitPickModeRef.current) onSplitFacePick?.({ centre: face.centre, normal: face.normal });
+          else onLayFlatPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
+        } else onSnapMiss?.(picked ? "target" : "nothing");
         return;
       }
 
@@ -6888,7 +6941,7 @@ export function WorkplaneViewport({
         updateSnapHover(event.clientX, event.clientY);
         return;
       }
-      if (layFlatModeRef.current) {
+      if (layFlatModeRef.current || splitPickModeRef.current) {
         syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, event.clientX, event.clientY);
         return;
       }
@@ -7960,6 +8013,11 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const layFlatHoverLayer = new THREE.Group();
   layFlatHoverLayer.name = "LayFlatHover";
   layFlatHoverLayer.layers.set(RENDER_LAYER_PREVIEWS);
+  // Die Ebene des Teilens: eigene Gruppe, damit sie neben der Schnittansicht
+  // stehen kann und keine der beiden die andere ausraeumt.
+  const splitPreviewLayer = new THREE.Group();
+  splitPreviewLayer.name = "SplitPreview";
+  splitPreviewLayer.layers.set(RENDER_LAYER_HELPERS);
   // Die Schnittebene selbst: eigene Gruppe, damit sie weder gekappt wird noch
   // beim Neubauen der Auswahlhelfer verschwindet.
   const sectionLayer = new THREE.Group();
@@ -7974,7 +8032,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, splitPreviewLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -8012,6 +8070,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     pivotLayer,
     snapLayer,
     layFlatHoverLayer,
+    splitPreviewLayer,
     sectionLayer,
     helperLayer,
     transformGuideLayer,

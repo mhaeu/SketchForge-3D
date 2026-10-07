@@ -432,6 +432,20 @@ export function ToolbarPivotIcon(props: IconProps) {
  * Aushoehlen: ein Koerper im Schnitt, aussen die Wand, innen hohl - und oben
  * offen, damit man an den Hohlraum kommt.
  */
+/**
+ * Teilen: zwei Haelften eines Koerpers, zwischen ihnen die Schnittebene als
+ * gestrichelte Linie. Die Haelften stehen auseinander - beide bleiben.
+ */
+export function ToolbarSplitIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M10 6 H38 V21 H10 Z" fill="currentColor" opacity="0.82" />
+      <path d="M10 27 H38 V42 H10 Z" fill="currentColor" opacity="0.52" />
+      <path d="M4 24 H44" fill="none" stroke="currentColor" strokeWidth="2.6" strokeDasharray="5 3.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function ToolbarHollowIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>

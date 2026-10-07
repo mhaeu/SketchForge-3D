@@ -22,6 +22,8 @@ import { manifoldWasmBase64 } from "@/generated/manifoldWasmBase64";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import { createGearGeometry } from "@/lib/gearGeometry";
 import { groupedContentScale, scaleGroupedVertices } from "@/lib/groupScale";
+import { dropSplitSlivers, unionSplitManifoldComponents } from "@/lib/manifoldSplit";
+import { modelSplitPlane, snapSplitPositionToVertices, splitAxisLabel, splitOrientationForNormal, splitPlaneIntersectsPoints, splitShapeFromWorldPositions, NO_SPLIT_ROTATION, type ModelSplitPlane, type SplitRotation } from "@/lib/modelSplit";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { sketchPrimitiveGeometry } from "@/lib/sketchPrimitives";
@@ -85,6 +87,7 @@ import {
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
   ToolbarHollowIcon,
+  ToolbarSplitIcon,
   ToolbarLayFlatIcon,
   ToolbarObjectListIcon,
   ToolbarOpenGroupIcon,
@@ -203,6 +206,7 @@ import { toolbarDensityFor, TOOLBAR_BASE_ICON_SIZE } from "@/lib/toolbarDensity"
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
+import { SplitPanel } from "./workplane/SplitPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
 import { HollowPanel } from "./workplane/HollowPanel";
@@ -4904,6 +4908,104 @@ async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: Me
   return { meshes: result, merged, failed };
 }
 
+/**
+ * Einen Koerper an einer Ebene in zwei schneiden.
+ *
+ * Gerechnet wird im Manifold-Kern, derselbe, der auch beim Verschneiden und
+ * beim Vereinigen fuer die Ausfuhr arbeitet. Die Haelften kommen als Netze
+ * zurueck: Was die Form einmal war, laesst sich nicht halbieren.
+ */
+async function splitShapeByPlane(shape: WorkplaneShape, plane: Pick<ModelSplitPlane, "axis" | "normal" | "position">) {
+  const created: ManifoldSolid[] = [];
+  try {
+    const runtime = await getManifoldRuntime();
+    let solid = shapeToManifoldSolid(runtime, shape, created);
+    if (!solid || solid.status() !== "NoError" || solid.numTri() < 1) {
+      return { parts: null, error: t("split.error.notClosed", { status: solid?.status() ?? "empty" }) };
+    }
+    created.push(solid);
+    const normalized = unionSplitManifoldComponents(runtime, solid);
+    created.push(...normalized.created);
+    if (!normalized.solid) {
+      return { parts: null, error: t("split.error.overlapping") };
+    }
+    solid = normalized.solid;
+    const [rawPositive, rawNegative] = solid.splitByPlane(plane.normal, plane.position);
+    created.push(rawPositive, rawNegative);
+    const trimmedPositive = dropSplitSlivers(runtime, rawPositive);
+    const trimmedNegative = dropSplitSlivers(runtime, rawNegative);
+    created.push(...trimmedPositive.created, ...trimmedNegative.created);
+    const positive = trimmedPositive.solid;
+    const negative = trimmedNegative.solid;
+    if (
+      !positive || !negative
+      || positive.status() !== "NoError" || negative.status() !== "NoError"
+      || positive.numTri() < 1 || negative.numTri() < 1
+    ) {
+      return { parts: null, error: t("split.error.emptyHalf") };
+    }
+
+    const positiveMesh = positive.getMesh();
+    const negativeMesh = negative.getMesh();
+    try {
+      const label = splitAxisLabel(plane.axis);
+      const positiveShape = splitShapeFromWorldPositions(
+        shape,
+        manifoldMeshToPositions(positiveMesh),
+        createLocalId(`${shape.id}-split-positive`),
+        `${shape.name} (${label}+)`,
+      );
+      const negativeShape = splitShapeFromWorldPositions(
+        shape,
+        manifoldMeshToPositions(negativeMesh),
+        createLocalId(`${shape.id}-split-negative`),
+        `${shape.name} (${label}-)`,
+      );
+      return positiveShape && negativeShape
+        ? { parts: [canonicalizeShape(positiveShape), canonicalizeShape(negativeShape)] as [WorkplaneShape, WorkplaneShape] }
+        : { parts: null, error: t("split.error.store") };
+    } finally {
+      disposeManifold(positiveMesh);
+      disposeManifold(negativeMesh);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return { parts: null, error: message ? t("split.error.kernel", { message }) : t("split.error.kernelUnknown") };
+  } finally {
+    Array.from(new Set(created)).forEach(disposeManifold);
+  }
+}
+
+type SplitShapesOutcome =
+  | { status: "stale" }
+  | { status: "failed"; shape: WorkplaneShape; error: string }
+  | { status: "done"; replacements: Map<string, WorkplaneShape[]>; splitCount: number };
+
+/**
+ * Teilt jeden Koerper, den die Ebene kreuzt.
+ *
+ * `stillCurrent` wird nach jedem gefragt: Der Kern rechnet im Vordergrund,
+ * und wer waehrenddessen die Ebene verschiebt oder das Werkzeug schliesst,
+ * soll kein Ergebnis von vorhin bekommen.
+ */
+async function splitShapesByPlane(
+  targets: readonly WorkplaneShape[],
+  plane: Pick<ModelSplitPlane, "axis" | "normal" | "position">,
+  stillCurrent: () => boolean,
+): Promise<SplitShapesOutcome> {
+  const replacements = new Map<string, WorkplaneShape[]>();
+  let splitCount = 0;
+  for (const shape of targets) {
+    if (!splitPlaneIntersectsPoints(meshForShape(shape).vertices, plane.normal, plane.position)) continue;
+    const result = await splitShapeByPlane(shape, plane);
+    if (!stillCurrent()) return { status: "stale" };
+    if (!result.parts) return { status: "failed", shape, error: result.error ?? t("split.error.failedDefault") };
+    replacements.set(shape.id, result.parts);
+    splitCount += 1;
+  }
+  return { status: "done", replacements, splitCount };
+}
+
 function disposeManifold(value: unknown) {
   (value as { delete?: () => void } | null)?.delete?.();
 }
@@ -6257,6 +6359,19 @@ export function SketchForgeEditor({
   const [alignPreview, setAlignPreview] = useState<{ axis: AlignAxis; target: AlignTarget } | null>(null);
   const [mirrorMode, setMirrorMode] = useState(false);
   const [patternTool, setPatternTool] = useState<PatternSettings | null>(null);
+  /**
+   * Das Teilen-Werkzeug: die Ausrichtung der Ebene, ihre Kippung und ihre
+   * Lage. `position` ist null, solange sie noch nicht angefasst wurde - dann
+   * steht sie in der Mitte der Auswahl.
+   */
+  const [splitTool, setSplitTool] = useState<{
+    axis: AlignAxis;
+    rotation: SplitRotation;
+    position: number | null;
+    busy: boolean;
+    error: string | null;
+    picking: boolean;
+  } | null>(null);
   const [pivotMode, setPivotMode] = useState(false);
   const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
   const [snapMode, setSnapMode] = useState<SnapMode | null>(null);
@@ -8588,6 +8703,112 @@ export function SketchForgeEditor({
     setNotice(t(reason === "target" ? "status.snapNoTarget" : "status.snapNothingThere"));
   }, []);
 
+  /*
+   * Der Kern rechnet im Vordergrund und braucht einen Augenblick. Diese
+   * Verweise sagen danach, ob noch dieselbe Frage gestellt ist - der Zustand
+   * im Abschluss waere der von vorhin.
+   */
+  const splitToolRef = useRef(splitTool);
+  splitToolRef.current = splitTool;
+
+  /** Die Koerper, die das Teilen nimmt: ausgewaehlt, nicht gesperrt, mit Flaeche. */
+  const splitTargets = useMemo(
+    () => selectedShapes.filter((shape) => !shape.locked && !isReferencePoint(shape) && isSolidShape(shape)),
+    [selectedShapes],
+  );
+
+  /**
+   * Die Ebene zur gegenwaertigen Einstellung.
+   *
+   * Die Punkte kommen aus den Netzen der Auswahl - an ihnen haengen die
+   * Grenzen, innerhalb derer die Ebene wandern darf. Neu gerechnet wird nur,
+   * wenn sich Auswahl oder Einstellung aendern; die Netze sind teuer.
+   */
+  const splitPlane = useMemo(() => {
+    if (!splitTool || splitTargets.length === 0) return null;
+    const points = splitTargets.flatMap((shape) => meshForShape(shape).vertices);
+    return modelSplitPlane(points, splitTool.axis, splitTool.position ?? undefined, splitTool.rotation);
+  }, [splitTargets, splitTool]);
+
+  const splitTargetsRef = useRef(splitTargets);
+  splitTargetsRef.current = splitTargets;
+  const splitPlaneRef = useRef(splitPlane);
+  splitPlaneRef.current = splitPlane;
+
+  const toggleSplitTool = useCallback(() => {
+    if (splitTool) {
+      setSplitTool(null);
+      setNotice(t("status.splitCancelled"));
+      return;
+    }
+    if (selectedShapes.filter((shape) => !shape.locked && !isReferencePoint(shape) && isSolidShape(shape)).length === 0) {
+      setNotice(t("status.splitNeedsSolid"));
+      return;
+    }
+    // Ein Werkzeugfeld zur Zeit: zwei stehen uebereinander in derselben Ecke.
+    setPatternTool(null);
+    setAlignMode(false);
+    setMirrorMode(false);
+    invalidateCadModifierSession();
+    // Zuerst waagerecht: der Schnitt, mit dem man ein zu hohes Teil auf die
+    // Platte bringt.
+    setSplitTool({ axis: "y", rotation: NO_SPLIT_ROTATION, position: null, busy: false, error: null, picking: false });
+  }, [invalidateCadModifierSession, selectedShapes, splitTool]);
+
+  /**
+   * Die Ebene auf eine angeklickte Flaeche legen.
+   *
+   * Erst die Ausrichtung aus der Normale, dann die Lage aus dem Punkt - und
+   * die Lage rastet auf eine Ecke der Auswahl, wenn eine nah genug liegt.
+   * Sonst liegt die Ebene ein Haar neben der Flaeche und schneidet eine
+   * keilduenne Haut ab.
+   */
+  const laySplitPlaneOnFace = useCallback((pick: { centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => {
+    const laid = splitOrientationForNormal([pick.normal.x, pick.normal.y, pick.normal.z]);
+    if (!laid) return;
+    const points = splitTargets.flatMap((shape) => meshForShape(shape).vertices);
+    const probe = modelSplitPlane(points, laid.axis, undefined, laid.rotation);
+    if (!probe) return;
+    const centre: [number, number, number] = [pick.centre.x, pick.centre.y, pick.centre.z];
+    const raw = centre[0] * probe.normal[0] + centre[1] * probe.normal[1] + centre[2] * probe.normal[2];
+    const position = snapSplitPositionToVertices(points, probe.normal, raw);
+    setSplitTool((current) => current ? { ...current, axis: laid.axis, rotation: laid.rotation, position, picking: false, error: null } : current);
+  }, [splitTargets]);
+
+  const applySplit = useCallback(async () => {
+    const plane = splitPlane;
+    if (!splitTool || !plane || splitTargets.length === 0) return;
+    const targets = splitTargets;
+    const planeKey = JSON.stringify([plane.axis, plane.rotation, plane.position, targets.map((shape) => shape.id)]);
+    setSplitTool((current) => current ? { ...current, busy: true, error: null, picking: false } : current);
+    const stillCurrent = () => {
+      const current = splitToolRef.current;
+      const live = splitPlaneRef.current;
+      if (!current || !live) return false;
+      return JSON.stringify([live.axis, live.rotation, live.position, splitTargetsRef.current.map((shape) => shape.id)]) === planeKey;
+    };
+    const outcome = await splitShapesByPlane(targets, plane, stillCurrent);
+    if (outcome.status === "stale") return;
+    if (outcome.status === "failed") {
+      setSplitTool((current) => current ? { ...current, busy: false, error: outcome.error } : current);
+      setNotice(outcome.error);
+      return;
+    }
+    if (outcome.splitCount === 0) {
+      setSplitTool((current) => current ? { ...current, busy: false, error: t("status.splitNoCrossing") } : current);
+      setNotice(t("status.splitNoCrossing"));
+      return;
+    }
+    const halves = [...outcome.replacements.values()].flat();
+    const next = shapesRef.current.flatMap((shape) => outcome.replacements.get(shape.id) ?? [shape]);
+    setSplitTool(null);
+    commitShapes(
+      next,
+      halves.map((shape) => shape.id),
+      outcome.splitCount === 1 ? t("status.splitDoneOne") : t("status.splitDoneMany", { count: outcome.splitCount }),
+    );
+  }, [commitShapes, splitPlane, splitTargets, splitTool]);
+
   const togglePatternTool = useCallback(() => {
     if (patternTool) {
       setPatternTool(null);
@@ -8603,6 +8824,7 @@ export function SketchForgeEditor({
      * zu muessen.
      */
     const anchor = selectedShapes[0];
+    setSplitTool(null);
     setPatternTool({ ...defaultPatternSettings(), centreX: anchor?.x ?? 0, centreZ: anchor?.z ?? 0 });
   }, [hasSelection, patternTool, selectedShapes]);
 
@@ -8939,6 +9161,7 @@ export function SketchForgeEditor({
     cadModifierSourcePartsRef.current = sourceParts;
     setAlignMode(false);
     setMirrorMode(false);
+    setSplitTool(null);
     setEdgeModifier({
       kind,
       edges: [],
@@ -11563,6 +11786,22 @@ export function SketchForgeEditor({
           setNotice(t("status.snapCancelled"));
           return;
         }
+        if (splitTool) {
+          /*
+           * Zeigt das Teilen gerade auf eine Flaeche, nimmt Escape nur das
+           * Zeigen zurueck - die eingestellte Ebene soll nicht mit
+           * verschwinden.
+           */
+          if (splitTool.picking) {
+            setSplitTool({ ...splitTool, picking: false });
+            setNotice("");
+            return;
+          }
+          if (splitTool.busy) return;
+          setSplitTool(null);
+          setNotice(t("status.splitCancelled"));
+          return;
+        }
         setSelectedIds([]);
         setNotice(t("status.selectionCleared"));
         return;
@@ -11742,6 +11981,7 @@ export function SketchForgeEditor({
     // legte das Zeigewerkzeug nie ab.
     layFlatMode,
     snapMode,
+    splitTool,
     toggleHidden,
     toggleMirrorMode,
     toggleLocked,
@@ -11856,7 +12096,9 @@ export function SketchForgeEditor({
         onVariableFillet={() => edgeModifier?.kind === "variableFillet" ? cancelEdgeModifier() : startEdgeModifier("variableFillet")}
         onMirror={toggleMirrorMode}
         onPattern={togglePatternTool}
+        onSplit={toggleSplitTool}
         patternActive={Boolean(patternTool)}
+        splitActive={Boolean(splitTool)}
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
         onHollow={startHollow}
@@ -11993,6 +12235,9 @@ export function SketchForgeEditor({
           notes={notes}
           notesVisible={notesVisible}
           showOverhangs={overhangsVisible}
+          splitPickMode={Boolean(splitTool?.picking)}
+          onSplitFacePick={laySplitPlaneOnFace}
+          splitPreview={splitTool && splitPlane ? { normal: splitPlane.normal, origin: splitPlane.origin, size: splitPlane.size } : null}
           noteMode={noteMode}
           onNoteAdd={addNote}
           onNoteUpdate={updateNote}
@@ -12056,6 +12301,35 @@ export function SketchForgeEditor({
           onChange={setPatternTool}
           onCreate={createPattern}
           onCancel={() => setPatternTool(null)}
+        />
+      ) : null}
+      {splitTool && splitPlane ? (
+        <SplitPanel
+          axis={splitTool.axis}
+          rotation={splitTool.rotation}
+          position={splitPlane.position}
+          min={splitPlane.min}
+          max={splitPlane.max}
+          targetCount={splitTargets.length}
+          workspace={workspaceSettings}
+          busy={splitTool.busy}
+          error={splitTool.error}
+          picking={splitTool.picking}
+          onPickToggle={() => setSplitTool((current) => current ? { ...current, picking: !current.picking } : current)}
+          onAxisChange={(axis) => setSplitTool((current) => current ? { ...current, axis, rotation: NO_SPLIT_ROTATION, position: null, error: null } : current)}
+          onRotationChange={(index, value) => setSplitTool((current) => {
+            if (!current) return current;
+            const rotation: SplitRotation = index === 0 ? [value, current.rotation[1]] : [current.rotation[0], value];
+            // Die Lage gilt laengs der Normale; kippt die Ebene, bedeutet die
+            // alte Zahl etwas anderes. Darum zurueck in die Mitte.
+            return { ...current, rotation, position: null, error: null };
+          })}
+          onPositionChange={(position) => setSplitTool((current) => current ? { ...current, position, error: null } : current)}
+          onApply={() => { void applySplit(); }}
+          onCancel={() => {
+            setSplitTool(null);
+            setNotice(t("status.splitCancelled"));
+          }}
         />
       ) : null}
       {edgeModifier?.hollow ? (
@@ -12377,7 +12651,9 @@ function SecondaryToolbar({
   onVariableFillet,
   onMirror,
   onPattern,
+  onSplit,
   patternActive,
+  splitActive,
   onPivot,
   pivotActive,
   onHollow,
@@ -12486,7 +12762,9 @@ function SecondaryToolbar({
   onVariableFillet: () => void;
   onMirror: () => void;
   onPattern: () => void;
+  onSplit: () => void;
   patternActive: boolean;
+  splitActive: boolean;
   onPivot: () => void;
   pivotActive: boolean;
   onHollow: () => void;
@@ -12797,6 +13075,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.variableFillet"), icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
     // Aushoehlen braucht denselben exakten Koerper wie die Kantenwerkzeuge.
     { label: t("editor.tool.hollow"), icon: ToolbarHollowIcon, action: onHollow, enabled: canEdgeModify, active: hollowActive },
+    { label: t("editor.tool.split"), icon: ToolbarSplitIcon, action: onSplit, enabled: hasSelection, active: splitActive },
   ];
   const arrangeTools = [
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
