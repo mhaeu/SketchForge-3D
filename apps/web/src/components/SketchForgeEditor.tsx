@@ -21,6 +21,7 @@ import { manifoldModuleSource } from "@/generated/manifoldModuleSource";
 import { manifoldWasmBase64 } from "@/generated/manifoldWasmBase64";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import { createGearGeometry } from "@/lib/gearGeometry";
+import { groupedContentScale, scaleGroupedVertices } from "@/lib/groupScale";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { sketchPrimitiveGeometry } from "@/lib/sketchPrimitives";
@@ -2597,7 +2598,14 @@ function meshForShape(shape: WorkplaneShape): MeshData {
       const childMesh = meshForShape(child);
       appendMeshData(vertices, faces, childMesh);
     });
-    return transformMesh({ name: sanitizeName(shape.name), vertices, faces }, shape);
+    /*
+     * Ohne das Strecken bekaemen Ausfuhr, Ausrichten, Fangen und die
+     * Filamentschaetzung eine nach dem Gruppieren gezogene Gruppe in der
+     * Groesse, die sie beim Gruppieren hatte. Die Ansicht und das Aufloesen
+     * streckten schon immer - siehe `restoreGroupedChildren`.
+     */
+    const stretched = scaleGroupedVertices(vertices, groupedContentScale(shape, () => localGroupBounds(shape.groupedShapes ?? [])));
+    return transformMesh({ name: sanitizeName(shape.name), vertices: stretched, faces }, shape);
   }
 
   const raw =
@@ -5843,13 +5851,7 @@ function restoreGroupedChildren(group: WorkplaneShape): WorkplaneShape[] {
     return [];
   }
 
-  const bounds = localGroupBounds(children);
-  const baseWidth = group.groupedBaseWidth ?? Math.max(0.001, bounds.maxX - bounds.minX);
-  const baseHeight = group.groupedBaseHeight ?? Math.max(0.001, bounds.maxY - bounds.minY);
-  const baseDepth = group.groupedBaseDepth ?? Math.max(0.001, bounds.maxZ - bounds.minZ);
-  const sx = shapeWidth(group) / Math.max(0.001, baseWidth);
-  const sy = group.height / Math.max(0.001, baseHeight);
-  const sz = shapeDepth(group) / Math.max(0.001, baseDepth);
+  const [sx, sy, sz] = groupedContentScale(group, () => localGroupBounds(children));
   const groupQuaternion = quaternionForShape(group);
   const groupReflection = new THREE.Matrix4().makeScale(mirrorSign(group.mirrorX), mirrorSign(group.mirrorY), mirrorSign(group.mirrorZ));
   const groupCenter = new THREE.Vector3(group.x, (group.elevation ?? 0) + group.height / 2, group.z);
