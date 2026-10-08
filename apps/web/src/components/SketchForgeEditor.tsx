@@ -174,6 +174,7 @@ import { importedShapeFromObj } from "@/lib/objImport";
 import { attachProjectAsset, dedupeProjectAssets, projectAssetFromBytes, sourceFormatForFileName } from "@/lib/projectAssets";
 import { findSketchOutlineIntersection } from "@/lib/sketchProfileValidation";
 import { addLineIntersectionPoints, splitSketchSegment } from "@/lib/sketchPointRefinement";
+import { revolveProfileFitsAxis } from "@/lib/cadSketchRevolve";
 import { buildFilledSketchRevolveMesh, buildSketchRevolveMesh, DEFAULT_SKETCH_REVOLVE_SETTINGS, normalizeSketchRevolveSettings, type SketchRevolveMesh } from "@/lib/sketchRevolve";
 import { exportSkfProject, importSkfProject, SKF_MEDIA_TYPE } from "@/lib/skfProject";
 import { makeShapeFromAsset, sceneShape, shapeAssetLabel, toolbarShapeAssets, type ToolbarShapeAsset } from "@/lib/shapeCatalog";
@@ -838,6 +839,83 @@ async function cadShapeFromSketchProfile(
   return { ...shape, sketchProfile: cloneSketchProfile(profile), sketchOperation: operation };
 }
 
+/**
+ * Ein gedrehter Umriss als genauer Koerper, wie eine Hochziehung: Der Kern
+ * dreht die Flaeche, statt dass wir Scheiben zusammensetzen. Darauf wirken
+ * Aushoehlen, Verrunden und Fasen - auf einem Netz nicht.
+ *
+ * Null, wenn es nicht geht: ein Umriss, der die Achse ueberquert (den
+ * schneidet nur das Netz ab), oder ein Kern, der ablehnt. Dann uebernimmt das
+ * Netz, und zwar still - der Koerper entsteht ja trotzdem.
+ */
+async function cadShapeFromSketchRevolve(
+  profile: SketchProfile,
+  settings: SketchRevolveSettings,
+  existing?: WorkplaneShape | null,
+): Promise<WorkplaneShape | null> {
+  const prepared = expandSketchCircles(cloneSketchProfile(profile));
+  if (!revolveProfileFitsAxis(prepared)) return null;
+  try {
+    const worker = ensureSketchCadWorker();
+    const requestId = ++sketchCadRequestId;
+    const response = await new Promise<SketchCadBuildResponse>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        sketchCadPending.delete(requestId);
+        reject(new Error(t("status.sketchWorkerTimeout")));
+      }, 30_000);
+      sketchCadPending.set(requestId, { resolve, reject, timer });
+      worker.postMessage({
+        type: "build",
+        requestId,
+        profile: prepared,
+        height: MIN_SHAPE_DIMENSION,
+        revolve: { startAngle: settings.startAngle, sweepAngle: settings.sweepAngle },
+      });
+    });
+    if (response.type === "error") return null;
+    const source = canonicalizeShape({
+      id: existing?.id ?? createLocalId("sketch-revolve"),
+      name: existing?.name ?? t("shape.sketchRevolve"),
+      kind: "mesh",
+      color: existing?.color ?? "#78b96b",
+      hole: existing?.hole,
+      x: 0,
+      z: 0,
+      elevation: 0,
+      size: 1,
+      width: 1,
+      depth: 1,
+      height: MIN_SHAPE_DIMENSION,
+      rotation: existing?.rotation ?? 0,
+      rotationX: existing?.rotationX ?? 0,
+      rotationZ: existing?.rotationZ ?? 0,
+      mirrorX: existing?.mirrorX,
+      mirrorY: existing?.mirrorY,
+      mirrorZ: existing?.mirrorZ,
+      sketchProfile: cloneSketchProfile(profile),
+      sketchOperation: "revolve",
+      sketchRevolve: settings,
+      locked: existing?.locked ?? false,
+      hidden: existing?.hidden ?? false,
+    } satisfies WorkplaneShape);
+    const shape = shapeFromCadMesh(source, response.positions, response.normals, response.indices, response.brep, SKETCH_CAD_DEFLECTION);
+    if (!shape) return null;
+    // Wie beim Netz: Der Koerper steht am Ursprung, oder dort, wo der
+    // bearbeitete stand. Seine eigenen Masse hat ihm shapeFromCadMesh gegeben.
+    return canonicalizeShape({
+      ...shape,
+      x: existing?.x ?? 0,
+      z: existing?.z ?? 0,
+      elevation: existing?.elevation ?? 0,
+      sketchProfile: cloneSketchProfile(profile),
+      sketchOperation: "revolve",
+      sketchRevolve: settings,
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function shapeFromRevolvedSketchProfile(
   profile: SketchProfile,
   settings: Partial<SketchRevolveSettings>,
@@ -845,8 +923,19 @@ async function shapeFromRevolvedSketchProfile(
   /** Voll statt hohl - zwischen Achse und aeusserer Kontur fehlt dann nichts. */
   filled = false,
 ) {
-  const runtime = await getManifoldRuntime();
   const normalizedSettings = normalizeSketchRevolveSettings(settings);
+  /*
+   * Der volle Querschnitt bleibt beim Netz. "Voll" heisst bei einem
+   * Drehkoerper nicht "ohne Loecher", sondern "bis zur Achse aufgefuellt" -
+   * der Schatten des Umrisses zur Achse hin (siehe revolveFill.ts). Das ist
+   * eine Rechnung auf abgetasteten Vielecken, nicht auf Kanten, und der Kern
+   * kennt sie nicht.
+   */
+  if (!filled) {
+    const exact = await cadShapeFromSketchRevolve(profile, normalizedSettings, existing);
+    if (exact) return exact;
+  }
+  const runtime = await getManifoldRuntime();
   const mesh = filled
     ? buildFilledSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings)
     : buildSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings);
@@ -9242,6 +9331,16 @@ export function SketchForgeEditor({
     const exactSourceLength = partInputs.reduce((total, part) => total + (part.stepText?.length ?? 0), 0);
     if (triangleCount === 0 && partInputs.every((part) => !part.brep && !part.stepText && !part.primitive)) {
       throw new Error(t("status.noPrintableSurface"));
+    }
+    /*
+     * Ein Drehkoerper aus einer aelteren Fassung ist ein Netz: Damals wurde
+     * er aus Scheiben gebaut, nicht vom Kern gedreht. Darauf scheitert das
+     * Aushoehlen auf eine Weise, die nichts erklaert ("die Wand kann nicht so
+     * dick sein", selbst bei 0,2 mm). Also wird es hier gesagt, samt dem Weg
+     * heraus: Skizze oeffnen und neu abschliessen.
+     */
+    if (partInputs.some((part) => !part.shape.cadBrep && part.shape.sketchOperation === "revolve" && part.shape.sketchProfile)) {
+      throw new Error(t("status.revolveIsOldMesh"));
     }
     if (triangleCount > 180_000) {
       throw new Error(t("status.meshTooDenseSimple"));

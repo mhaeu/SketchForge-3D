@@ -11,6 +11,11 @@ export type SketchCadBuildRequest =
     requestId: number;
     profile: SketchProfile;
     height: number;
+    /**
+     * Beim Drehen gesetzt: Der Umriss wird um die senkrechte Achse gedreht,
+     * statt um `height` hochgezogen zu werden.
+     */
+    revolve?: { startAngle: number; sweepAngle: number };
   };
 
 export type SketchCadBuildResponse =

@@ -554,6 +554,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.referenceNoDuplicate": "Der Bezugspunkt lässt sich nicht duplizieren",
   "status.referenceNoCopy": "Der Bezugspunkt lässt sich nicht kopieren",
   "status.meshTooDenseSimple": "Dieses Netz ist zu dicht für die Kantenbearbeitung. Vereinfache es zuerst auf unter 180.000 Dreiecke.",
+  "status.revolveIsOldMesh": "Dieser Rotationskörper wurde von einer älteren Fassung als Netz gebaut. Öffne „Skizze bearbeiten“ und schließe sie noch einmal ab - dann ist er ein genauer Körper und lässt sich aushöhlen, verrunden und fasen.",
+  "status.revolveProfileCrossesAxis": "Der Umriss überquert die Drehachse.",
   "status.selectOneForRegion": "Wähle ein Objekt, um einen Teilbereich davon zu verändern",
   "status.unlockObjectFirst": "Entsperre zuerst das Objekt",
   "status.cannotConvertToMesh": "Dieses Objekt lässt sich nicht in ein Netz umwandeln",

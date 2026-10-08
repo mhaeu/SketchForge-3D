@@ -1279,6 +1279,8 @@ export const MESSAGES_EN = {
   "status.referenceNoDuplicate": "The reference point cannot be duplicated",
   "status.referenceNoCopy": "The reference point cannot be copied",
   "status.meshTooDenseSimple": "This mesh is too dense for interactive edge treatment. Simplify it below 180,000 triangles first.",
+  "status.revolveIsOldMesh": "This revolved body was built as a mesh by an older version. Open \"Edit sketch\" and finish it again to make it an exact body; then it can be hollowed, rounded and chamfered.",
+  "status.revolveProfileCrossesAxis": "The outline crosses the revolve axis.",
   "status.selectOneForRegion": "Select one object to resize a region of it",
   "status.unlockObjectFirst": "Unlock the object first",
   "status.cannotConvertToMesh": "This object cannot be converted to a mesh",
