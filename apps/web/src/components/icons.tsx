@@ -511,6 +511,27 @@ export function ToolbarLayFlatIcon(props: IconProps) {
 }
 
 /**
+ * Flaechen aneinanderlegen: links ein schraeg stehendes Teil, rechts ein
+ * stehendes, und ein Pfeil, der das schraege an die senkrechte Flaeche des
+ * anderen bringt. Das schraege ist gestrichelt - es steht noch nicht da, wo
+ * es hin soll.
+ */
+export function ToolbarMateFacesIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      {/* Der stehende Koerper mit der Zielflaeche an seiner linken Seite. */}
+      <path d="M30 10 h12 v28 h-12 Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M30 10 v28" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      {/* Das schraege Teil, das wandert. */}
+      <path d="M6 16 L18 11 L21 27 L9 32 Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" strokeDasharray="4 3" />
+      {/* Und der Weg dorthin. */}
+      <path d="M22 22 h5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M26 18 l5 4 -5 4 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
  * Punkt auf Punkt setzen: zwei Koerper, an jedem eine gezeigte Ecke, und ein
  * Pfeil, der die eine auf die andere bringt. Der wandernde Koerper ist
  * gestrichelt - er steht noch nicht da, wo er hin soll.

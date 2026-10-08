@@ -336,6 +336,9 @@ type WorkplaneViewportProps = {
   /** Dasselbe Zeigen auf eine Flaeche, aber fuer die Schnittebene des Teilens. */
   splitPickMode?: boolean;
   onSplitFacePick?: (picked: { centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
+  /** Und dasselbe fuers Aneinanderlegen - dort zweimal: erst die bewegte Flaeche, dann die andere. */
+  mateFacesMode?: boolean;
+  onMateFacePick?: (picked: { shapeId: string; centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
   /** Die Ebene, die das Teilen gerade vorschlaegt. */
   splitPreview?: { normal: [number, number, number]; origin: [number, number, number]; size: number } | null;
   /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
@@ -3659,6 +3662,8 @@ export function WorkplaneViewport({
   onLayFlatPick,
   splitPickMode = false,
   onSplitFacePick,
+  mateFacesMode = false,
+  onMateFacePick,
   splitPreview = null,
   snapAnchor = null,
   onSnapPick,
@@ -3745,6 +3750,14 @@ export function WorkplaneViewport({
   layFlatModeRef.current = layFlatMode;
   const splitPickModeRef = useRef(splitPickMode);
   splitPickModeRef.current = splitPickMode;
+  const mateFacesModeRef = useRef(mateFacesMode);
+  mateFacesModeRef.current = mateFacesMode;
+  /*
+   * Drei Werkzeuge stellen dieselbe Frage - welche Flaeche? - und nur die
+   * Antwort geht woandershin. Diese Abfrage steht darum an einer Stelle,
+   * damit ein viertes nicht vier Ketten von Oder-Abfragen verlaengert.
+   */
+  const facePickActive = () => layFlatModeRef.current || splitPickModeRef.current || mateFacesModeRef.current;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4636,8 +4649,8 @@ export function WorkplaneViewport({
   }, [pivotMode, snapMode]);
 
   useEffect(() => {
-    if (!layFlatMode && !splitPickMode) syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
-  }, [isCutAwayPoint, layFlatMode, splitPickMode]);
+    if (!layFlatMode && !splitPickMode && !mateFacesMode) syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
+  }, [isCutAwayPoint, layFlatMode, mateFacesMode, splitPickMode]);
 
   useEffect(() => {
     const state = threeRef.current;
@@ -4649,6 +4662,7 @@ export function WorkplaneViewport({
       && !mirrorMode
       && !snapMode
       && !layFlatMode
+      && !mateFacesMode
       && !rulerMode
       && !rulerDeleteMode
       && !rulerMoveMode
@@ -4658,7 +4672,7 @@ export function WorkplaneViewport({
       state.transformGuideLayer.visible = visible;
       state.needsRender = true;
     }
-  }, [activeTransformKind, alignMode, layFlatMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, snapMode, workplaneMode]);
+  }, [activeTransformKind, alignMode, layFlatMode, mateFacesMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, snapMode, workplaneMode]);
 
   useEffect(() => {
     window.sketchforgePerf = {
@@ -6551,14 +6565,15 @@ export function WorkplaneViewport({
         return;
       }
 
-      if (layFlatModeRef.current || splitPickModeRef.current) {
+      if (facePickActive()) {
         event.preventDefault();
         const picked = pickShapeTriangles(event.clientX, event.clientY);
         const face = picked ? planarFace(picked.positions, picked.triangle) : null;
         if (picked && face) {
-          // Dieselbe Frage, zwei Antworten: flachlegen oder die Schnittebene
-          // auf diese Flaeche legen.
+          // Dieselbe Frage, drei Antworten: flachlegen, die Schnittebene auf
+          // diese Flaeche legen, oder sie an eine andere legen.
           if (splitPickModeRef.current) onSplitFacePick?.({ centre: face.centre, normal: face.normal });
+          else if (mateFacesModeRef.current) onMateFacePick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
           else onLayFlatPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
         } else onSnapMiss?.(picked ? "target" : "nothing");
         return;
@@ -6953,7 +6968,7 @@ export function WorkplaneViewport({
         updateSnapHover(event.clientX, event.clientY);
         return;
       }
-      if (layFlatModeRef.current || splitPickModeRef.current) {
+      if (facePickActive()) {
         syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, event.clientX, event.clientY);
         return;
       }
@@ -7748,7 +7763,7 @@ export function WorkplaneViewport({
         )}
       </div>
 
-      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
+      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode || mateFacesMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
         <div className="workplane-plane">
           <div
             className="three-workplane-host"
@@ -7775,7 +7790,7 @@ export function WorkplaneViewport({
               onCommit={commitMoveDimension}
             />
           ) : null}
-          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !layFlatMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
+          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !layFlatMode && !mateFacesMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
             <TransformOverlay
               box={transformOverlay}
               measureKey={pinnedMeasureKey ?? hoverMeasureKey}

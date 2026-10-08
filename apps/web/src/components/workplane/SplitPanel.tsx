@@ -1,19 +1,10 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
 import { MousePointerClick, X } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-import { selectWholeValue } from "@/lib/numberField";
-import {
-  displayStepFromMillimeters,
-  displayToMillimeters,
-  formatMeasurementNumber,
-  lengthDisplayUnit,
-  millimetersToDisplay,
-  parseMeasurementInput,
-} from "@/lib/measurementUnits";
 import { SPLIT_AXIS_DISPLAY_ORDER, splitAxisLabel, splitRotationAxes, type SplitRotation } from "@/lib/modelSplit";
+import { ToolPanelSlider } from "@/components/workplane/ToolPanelSlider";
 import type { AlignAxis, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 /**
@@ -23,93 +14,6 @@ import type { AlignAxis, WorkplaneWorkspaceSettings } from "@/types/sketchforge"
  * dasselbe schwebende Werkzeugfeld, und ein zweiter Satz gleicher Regeln waere
  * nur eine zweite Stelle zum Pflegen.
  */
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-/**
- * Ein Regler mit Zahlenfeld. Dasselbe wie beim Muster, aber mit eigenen
- * Grenzen je Regler - die Lage der Ebene reicht nur so weit wie die Auswahl.
- */
-function SplitSlider({
-  label,
-  value,
-  min,
-  max,
-  step,
-  unit,
-  workspace,
-  length = false,
-  disabled = false,
-  children,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  unit?: string;
-  workspace: WorkplaneWorkspaceSettings;
-  length?: boolean;
-  disabled?: boolean;
-  children?: React.ReactNode;
-  onChange: (value: number) => void;
-}) {
-  const toDisplay = (millimetres: number) => (length ? millimetersToDisplay(millimetres, workspace) : millimetres);
-  const toModel = (shown: number) => (length ? displayToMillimeters(shown, workspace) : shown);
-  const shown = toDisplay(value);
-  const shownMin = toDisplay(min);
-  const shownMax = toDisplay(max);
-  const shownStep = length ? displayStepFromMillimeters(step, workspace) : step;
-  const position = ((clamp(shown, shownMin, shownMax) - shownMin) / Math.max(Number.EPSILON, shownMax - shownMin)) * 100;
-  const text = formatMeasurementNumber(shown, workspace.accuracy, shownStep);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(text);
-  useEffect(() => {
-    if (!editing) setDraft(text);
-  }, [editing, text]);
-  return (
-    <label className="edge-modifier-field edge-modifier-slider range-property" style={{ "--slider-pos": `${position}%` } as CSSProperties}>
-      <span className="range-property-header">
-        <span className="range-property-name">{label}</span>
-        <span className="range-value-control">
-          <input
-            type="text"
-            inputMode="decimal"
-            value={editing ? draft : text}
-            disabled={disabled}
-            onFocus={(event) => { setDraft(text); setEditing(true); selectWholeValue(event.currentTarget); }}
-            onChange={(event) => setDraft(event.currentTarget.value)}
-            onBlur={() => {
-              const parsed = parseMeasurementInput(draft);
-              onChange(clamp(toModel(Number.isFinite(parsed) ? parsed : shown), min, max));
-              setEditing(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") { setDraft(text); setEditing(false); }
-            }}
-          />
-          {unit ? <span className="range-value-unit">{unit}</span> : (length ? <span className="range-value-unit">{lengthDisplayUnit(workspace).label}</span> : null)}
-          {children}
-        </span>
-      </span>
-      <div className="range-control">
-        <input
-          type="range"
-          min={shownMin}
-          max={shownMax}
-          step={shownStep}
-          value={clamp(shown, shownMin, shownMax)}
-          disabled={disabled}
-          onChange={(event) => onChange(clamp(toModel(Number(event.currentTarget.value)), min, max))}
-        />
-      </div>
-    </label>
-  );
-}
 
 export function SplitPanel({
   axis,
@@ -176,7 +80,7 @@ export function SplitPanel({
         ))}
       </div>
 
-      <SplitSlider
+      <ToolPanelSlider
         label={t("split.position")}
         value={position}
         min={min}
@@ -198,10 +102,10 @@ export function SplitPanel({
         >
           <MousePointerClick size={16} />
         </button>
-      </SplitSlider>
+      </ToolPanelSlider>
 
       {rotationAxes.map((rotationAxis, index) => (
-        <SplitSlider
+        <ToolPanelSlider
           key={rotationAxis}
           label={t("split.rotation", { axis: splitAxisLabel(rotationAxis) })}
           value={rotation[index]}

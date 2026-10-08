@@ -88,6 +88,7 @@ import {
   ToolbarPatternIcon,
   ToolbarHollowIcon,
   ToolbarSplitIcon,
+  ToolbarMateFacesIcon,
   ToolbarLayFlatIcon,
   ToolbarObjectListIcon,
   ToolbarOpenGroupIcon,
@@ -202,6 +203,7 @@ import { cavityFitPatch } from "@/lib/cavityFit";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
+import { mateMotion, mateTurnDegrees, type MateFacePick, type MateMode } from "@/lib/mateFaces";
 import { bodiesTooTall } from "@/lib/buildVolume";
 import { toolbarDensityFor, TOOLBAR_BASE_ICON_SIZE } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
@@ -211,6 +213,7 @@ const HOLLOW_OPENING_TOP: CadHollowOpening = ["top"];
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { SplitPanel } from "./workplane/SplitPanel";
+import { MateFacesPanel } from "./workplane/MateFacesPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
 import { HollowPanel } from "./workplane/HollowPanel";
@@ -6452,6 +6455,16 @@ export function SketchForgeEditor({
   const [mirrorMode, setMirrorMode] = useState(false);
   const [patternTool, setPatternTool] = useState<PatternSettings | null>(null);
   /**
+   * Das Aneinanderlegen: Art, Spiel und - sobald die erste Flaeche gezeigt
+   * ist - diese Flaeche. Der zweite Klick legt an.
+   */
+  const [mateTool, setMateTool] = useState<{
+    mode: MateMode;
+    gap: number;
+    source: MateFacePick | null;
+    error: string | null;
+  } | null>(null);
+  /**
    * Das Teilen-Werkzeug: die Ausrichtung der Ebene, ihre Kippung und ihre
    * Lage. `position` ist null, solange sie noch nicht angefasst wurde - dann
    * steht sie in der Mitte der Auswahl.
@@ -8790,6 +8803,94 @@ export function SketchForgeEditor({
     );
     setLayFlatMode(false);
   }, [commitShapes, placementWorkplane, selectedIds, shapes]);
+
+  /*
+   * Wie beim Teilen: Der Klick kommt aus dem Bild und sieht den Zustand nur
+   * ueber diesen Verweis - sonst haengt er an dem Stand, der beim Aufbauen des
+   * Rueckrufs galt.
+   */
+  const mateToolRef = useRef(mateTool);
+  mateToolRef.current = mateTool;
+
+  const toggleMateFaces = useCallback(() => {
+    if (mateTool) {
+      setMateTool(null);
+      setNotice(t("status.mateCancelled"));
+      return;
+    }
+    // Ein Werkzeugfeld zur Zeit: zwei stehen uebereinander in derselben Ecke.
+    setSnapMode(null);
+    setSnapAnchor(null);
+    setPivotMode(false);
+    setAlignMode(false);
+    setMirrorMode(false);
+    setLayFlatMode(false);
+    setPatternTool(null);
+    setSplitTool(null);
+    setMateTool({ mode: "against", gap: 0, source: null, error: null });
+    setNotice(t("status.matePickSource"));
+  }, [mateTool]);
+
+  /**
+   * Die beiden Klicks des Aneinanderlegens.
+   *
+   * Der erste merkt sich die Flaeche, die wandern soll; der zweite legt an.
+   * Gerechnet wird wie beim Flachlegen: erst die Drehung um den angeklickten
+   * Punkt, dann die Verschiebung - nur dass das Ziel hier die Flaeche eines
+   * anderen Koerpers ist und nicht die Arbeitsebene.
+   */
+  const pickMateFace = useCallback((picked: {
+    shapeId: string;
+    centre: { x: number; y: number; z: number };
+    normal: { x: number; y: number; z: number };
+  }) => {
+    const current = mateToolRef.current;
+    if (!current) return;
+    const pick: MateFacePick = { shapeId: picked.shapeId, point: picked.centre, normal: picked.normal };
+    if (!current.source) {
+      if (snapMoveIds(picked.shapeId, selectedIds, shapes).length === 0) {
+        setMateTool({ ...current, error: t("status.mateLocked") });
+        return;
+      }
+      setMateTool({ ...current, source: pick, error: null });
+      setNotice(t("status.matePickTarget"));
+      return;
+    }
+    const moving = snapMoveIds(current.source.shapeId, selectedIds, shapes);
+    if (moving.includes(pick.shapeId)) {
+      // An sich selbst legt sich nichts an - und an einen mitwandernden
+      // Nachbarn auch nicht: Der zweite Koerper soll stehen bleiben.
+      setMateTool({ ...current, error: t("status.mateSameBody") });
+      return;
+    }
+    const motion = mateMotion(current.source, pick, current.mode, current.gap);
+    if (!motion || moving.length === 0) {
+      setMateTool({ ...current, error: t("status.mateLocked") });
+      return;
+    }
+    const wanted = new Set(moving);
+    const turned = motion.rotation
+      ? shapes.map((shape) => (wanted.has(shape.id)
+          ? canonicalizeShape({ ...shape, ...rotatedGeometryShapePatch(shape, motion.rotation!, motion.pivot) })
+          : shape))
+      : shapes;
+    const angle = motion.rotation ? mateTurnDegrees(motion.rotation) : 0;
+    commitShapes(
+      turned.map((shape) => (wanted.has(shape.id)
+        ? {
+            ...shape,
+            x: cleanNearZero(shape.x + motion.translation.x),
+            z: cleanNearZero(shape.z + motion.translation.z),
+            elevation: cleanNearZero((shape.elevation ?? 0) + motion.translation.y),
+          }
+        : shape)),
+      moving,
+      angle < 0.05 ? t("status.mateAlready") : t("status.mateDone", { angle: Number(angle.toFixed(1)) }),
+    );
+    // Dieselbe Einstellung bleibt stehen, damit das naechste Paar mit einem
+    // Klickpaar zusammenfindet.
+    setMateTool({ ...current, source: null, error: null });
+  }, [commitShapes, selectedIds, shapes]);
 
   const missSnapPoint = useCallback((reason: "nothing" | "target") => {
     setNotice(t(reason === "target" ? "status.snapNoTarget" : "status.snapNothingThere"));
@@ -11888,6 +11989,20 @@ export function SketchForgeEditor({
           setNotice(t("status.snapCancelled"));
           return;
         }
+        if (mateTool) {
+          /*
+           * Ist die erste Flaeche schon gezeigt, nimmt Escape nur sie zurueck -
+           * Art und Spiel sollen stehen bleiben.
+           */
+          if (mateTool.source) {
+            setMateTool({ ...mateTool, source: null, error: null });
+            setNotice(t("status.matePickSource"));
+            return;
+          }
+          setMateTool(null);
+          setNotice(t("status.mateCancelled"));
+          return;
+        }
         if (splitTool) {
           /*
            * Zeigt das Teilen gerade auf eine Flaeche, nimmt Escape nur das
@@ -12207,6 +12322,8 @@ export function SketchForgeEditor({
         hollowActive={Boolean(edgeModifier?.hollow)}
         onLayFlat={toggleLayFlatTool}
         layFlatActive={layFlatMode}
+        onMateFaces={toggleMateFaces}
+        mateFacesActive={Boolean(mateTool)}
         onSnapPoints={() => toggleSnapTool("point")}
         onSnapPointToWorkplane={() => toggleSnapTool("workplane")}
         snapMode={snapMode}
@@ -12305,6 +12422,8 @@ export function SketchForgeEditor({
           snapTarget={snapTarget}
           layFlatMode={layFlatMode}
           onLayFlatPick={layFlatOnFace}
+          mateFacesMode={Boolean(mateTool)}
+          onMateFacePick={pickMateFace}
           snapAnchor={snapAnchor}
           onSnapPick={takeSnapPoint}
           onSnapMiss={missSnapPoint}
@@ -12403,6 +12522,25 @@ export function SketchForgeEditor({
           onChange={setPatternTool}
           onCreate={createPattern}
           onCancel={() => setPatternTool(null)}
+        />
+      ) : null}
+      {mateTool ? (
+        <MateFacesPanel
+          mode={mateTool.mode}
+          gap={mateTool.gap}
+          hasSource={Boolean(mateTool.source)}
+          workspace={workspaceSettings}
+          error={mateTool.error}
+          onModeChange={(mode) => setMateTool((current) => current ? { ...current, mode, error: null } : current)}
+          onGapChange={(gap) => setMateTool((current) => current ? { ...current, gap, error: null } : current)}
+          onRestart={() => {
+            setMateTool((current) => current ? { ...current, source: null, error: null } : current);
+            setNotice(t("status.matePickSource"));
+          }}
+          onCancel={() => {
+            setMateTool(null);
+            setNotice(t("status.mateCancelled"));
+          }}
         />
       ) : null}
       {splitTool && splitPlane ? (
@@ -12762,6 +12900,8 @@ function SecondaryToolbar({
   hollowActive,
   onLayFlat,
   layFlatActive,
+  onMateFaces,
+  mateFacesActive,
   onSnapPoints,
   onSnapPointToWorkplane,
   snapMode,
@@ -12873,6 +13013,8 @@ function SecondaryToolbar({
   hollowActive: boolean;
   onLayFlat: () => void;
   layFlatActive: boolean;
+  onMateFaces: () => void;
+  mateFacesActive: boolean;
   onSnapPoints: () => void;
   onSnapPointToWorkplane: () => void;
   snapMode: SnapMode | null;
@@ -13183,6 +13325,9 @@ function SecondaryToolbar({
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
     { label: t("editor.tool.dropToWorkplane"), icon: ToolbarDropToWorkplaneIcon, action: onDropToWorkplane, enabled: hasSelection },
     { label: t("editor.tool.layFlat"), icon: ToolbarLayFlatIcon, action: onLayFlat, enabled: canSnapToWorkplane, active: layFlatActive },
+    // Neben dem Flachlegen, weil es dieselbe Frage stellt: welche Flaeche?
+    // Nur ist das Ziel hier die Flaeche eines anderen Koerpers.
+    { label: t("editor.tool.mateFaces"), icon: ToolbarMateFacesIcon, action: onMateFaces, enabled: canSnapToWorkplane, active: mateFacesActive },
     { label: t("editor.tool.centerOnWorkplane"), icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
     { label: t("editor.tool.alignToWorkplane"), icon: ToolbarAlignToWorkplaneIcon, action: onAlignToWorkplane, enabled: hasSelection },
     // Diese beiden brauchen keine Auswahl: Der Klick sagt, welcher Koerper
