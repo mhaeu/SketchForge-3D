@@ -10,15 +10,21 @@
  */
 
 export type PatternMode = "row" | "circle";
-export type PatternAxis = "x" | "y" | "z";
 
 export type PatternSettings = {
   mode: PatternMode;
   /** Stuecke im Muster, das Original mitgezaehlt. */
   count: number;
-  /** Reihe: Mitte zu Mitte. Negativ laeuft nach der anderen Seite. */
-  spacing: number;
-  axis: PatternAxis;
+  /**
+   * Reihe: Mitte zu Mitte, je Achse. Negativ laeuft nach der anderen Seite.
+   *
+   * Drei Zahlen statt einer Achse und einer Strecke: Eine Reihe laengs X ist
+   * weiter eine Zahl in einem Feld, aber zwei davon zugleich geben eine
+   * schraege Reihe, und mit der Hoehe eine Treppe.
+   */
+  spacingX: number;
+  spacingY: number;
+  spacingZ: number;
   /** Kreis: der Winkel, ueber den sich das Muster erstreckt. 360 schliesst den Ring. */
   angle: number;
   /** Kreis: die Mitte, um die gedreht wird. */
@@ -26,13 +32,32 @@ export type PatternSettings = {
   centreZ: number;
   /** Kreis: jede Kopie mitdrehen (wie Zaehne) oder stehen lassen, wie sie ist. */
   turnCopies: boolean;
+  /** Kreis: um wie viel jede Kopie steigt. Aus dem Ring wird damit eine Schraube. */
+  rise: number;
+  /**
+   * Kreis: um wie viel sich der Abstand zur Mitte je Kopie aendert. Negativ
+   * laeuft nach innen; zusammen mit `rise` wird daraus eine Kegelspirale.
+   */
+  radiusChange: number;
 };
 
 export const PATTERN_MIN_COUNT = 2;
 export const PATTERN_MAX_COUNT = 100;
 
 export function defaultPatternSettings(): PatternSettings {
-  return { mode: "row", count: 4, spacing: 30, axis: "x", angle: 360, centreX: 0, centreZ: 0, turnCopies: true };
+  return {
+    mode: "row",
+    count: 4,
+    spacingX: 30,
+    spacingY: 0,
+    spacingZ: 0,
+    angle: 360,
+    centreX: 0,
+    centreZ: 0,
+    turnCopies: true,
+    rise: 0,
+    radiusChange: 0,
+  };
 }
 
 export function clampPatternCount(count: number) {
@@ -41,11 +66,12 @@ export function clampPatternCount(count: number) {
 }
 
 /** Wie weit die Kopie Nummer `index` in der Reihe versetzt ist (1 = die erste). */
-export function rowOffset(settings: Pick<PatternSettings, "spacing" | "axis">, index: number) {
-  const distance = settings.spacing * index;
-  if (settings.axis === "x") return { dx: distance, dy: 0, dz: 0 };
-  if (settings.axis === "y") return { dx: 0, dy: distance, dz: 0 };
-  return { dx: 0, dy: 0, dz: distance };
+export function rowOffset(settings: Pick<PatternSettings, "spacingX" | "spacingY" | "spacingZ">, index: number) {
+  return {
+    dx: settings.spacingX * index,
+    dy: settings.spacingY * index,
+    dz: settings.spacingZ * index,
+  };
 }
 
 /**
@@ -105,6 +131,25 @@ export function patternPlacement(
     return { x: from.x + dx, z: from.z + dz, elevation: from.elevation + dy, turn: 0 };
   }
   const degrees = circleStepDegrees(settings.count, settings.angle) * index;
-  const moved = turnedAroundUp(from, { x: settings.centreX, z: settings.centreZ }, degrees);
-  return { x: moved.x, z: moved.z, elevation: from.elevation, turn: settings.turnCopies ? degrees : 0 };
+  const centre = { x: settings.centreX, z: settings.centreZ };
+  const moved = turnedAroundUp(from, centre, degrees);
+  const outX = moved.x - centre.x;
+  const outZ = moved.z - centre.z;
+  const radius = Math.hypot(outX, outZ);
+  /*
+   * Die Aenderung laeuft laengs des Strahls nach aussen. Steht das Stueck
+   * genau in der Mitte, gibt es keinen Strahl - dann bleibt es dort, statt in
+   * eine willkuerliche Richtung zu wandern.
+   *
+   * Und sie hoert in der Mitte auf: Eine Spirale nach innen, die weiter
+   * laeuft, als der Abstand reicht, wuerde ihre Stuecke durch die Mitte
+   * hindurch auf die andere Seite werfen. Sie sammeln sich lieber dort.
+   */
+  const grown = radius > 1e-9 ? Math.max(0, radius + settings.radiusChange * index) / radius : 1;
+  return {
+    x: centre.x + outX * grown,
+    z: centre.z + outZ * grown,
+    elevation: from.elevation + settings.rise * index,
+    turn: settings.turnCopies ? degrees : 0,
+  };
 }

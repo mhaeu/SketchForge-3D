@@ -17,7 +17,6 @@ import {
   PATTERN_MAX_COUNT,
   PATTERN_MIN_COUNT,
   clampPatternCount,
-  type PatternAxis,
   type PatternSettings,
 } from "@/lib/shapePattern";
 import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
@@ -119,11 +118,6 @@ export function PatternPanel({
   useLanguage();
   const pieces = clampPatternCount(settings.count);
   const copies = (pieces - 1) * Math.max(1, selectedCount);
-  const axes: Array<{ id: PatternAxis; label: string }> = [
-    { id: "x", label: "X" },
-    { id: "y", label: "Y" },
-    { id: "z", label: "Z" },
-  ];
   return (
     <aside className="edge-modifier-panel pattern-panel" aria-label={t("pattern.title")}>
       <div className="edge-modifier-header">
@@ -161,30 +155,39 @@ export function PatternPanel({
 
       {settings.mode === "row" ? (
         <>
+          {/* Drei Strecken statt einer Achse und einer Strecke: Eine Reihe
+              laengs X ist weiter eine Zahl in einem Feld; zwei davon geben
+              eine schraege Reihe, mit der Hoehe eine Treppe. */}
           <PatternSlider
-            label={t("pattern.spacing")}
-            value={settings.spacing}
+            label={t("pattern.spacingX")}
+            value={settings.spacingX}
             min={-400}
             max={400}
             step={0.1}
             workspace={workspace}
             length
-            onChange={(spacing) => onChange({ ...settings, spacing })}
+            onChange={(spacingX) => onChange({ ...settings, spacingX })}
           />
-          <div className="pattern-choice" role="radiogroup" aria-label={t("pattern.axis")}>
-            {axes.map((axis) => (
-              <button
-                key={axis.id}
-                type="button"
-                role="radio"
-                aria-checked={settings.axis === axis.id}
-                className={settings.axis === axis.id ? "active" : ""}
-                onClick={() => onChange({ ...settings, axis: axis.id })}
-              >
-                {axis.label}
-              </button>
-            ))}
-          </div>
+          <PatternSlider
+            label={t("pattern.spacingY")}
+            value={settings.spacingY}
+            min={-400}
+            max={400}
+            step={0.1}
+            workspace={workspace}
+            length
+            onChange={(spacingY) => onChange({ ...settings, spacingY })}
+          />
+          <PatternSlider
+            label={t("pattern.spacingZ")}
+            value={settings.spacingZ}
+            min={-400}
+            max={400}
+            step={0.1}
+            workspace={workspace}
+            length
+            onChange={(spacingZ) => onChange({ ...settings, spacingZ })}
+          />
         </>
       ) : (
         <>
@@ -217,6 +220,26 @@ export function PatternPanel({
             workspace={workspace}
             length
             onChange={(centreZ) => onChange({ ...settings, centreZ })}
+          />
+          <PatternSlider
+            label={t("pattern.rise")}
+            value={settings.rise}
+            min={-200}
+            max={200}
+            step={0.1}
+            workspace={workspace}
+            length
+            onChange={(rise) => onChange({ ...settings, rise })}
+          />
+          <PatternSlider
+            label={t("pattern.radiusChange")}
+            value={settings.radiusChange}
+            min={-100}
+            max={100}
+            step={0.1}
+            workspace={workspace}
+            length
+            onChange={(radiusChange) => onChange({ ...settings, radiusChange })}
           />
           <label className="edge-modifier-check">
             <input

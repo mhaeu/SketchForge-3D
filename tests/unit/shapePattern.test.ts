@@ -24,23 +24,31 @@ describe("Die Stueckzahl eines Musters", () => {
 });
 
 describe("Die Reihe", () => {
-  it("versetzt entlang der gewaehlten Achse, in unseren Achsen", () => {
+  it("versetzt entlang jeder Achse, in unseren Achsen", () => {
     /*
      * X nach rechts, Y nach oben, Z nach hinten - wie im Eigenschaftsfeld.
      * Bei Layerling ist Z die Hoehe und Y negiert; wer das uebernimmt, schickt
      * die Reihe in die falsche Richtung.
      */
-    expect(rowOffset({ spacing: 10, axis: "x" }, 3)).toEqual({ dx: 30, dy: 0, dz: 0 });
-    expect(rowOffset({ spacing: 10, axis: "y" }, 3)).toEqual({ dx: 0, dy: 30, dz: 0 });
-    expect(rowOffset({ spacing: 10, axis: "z" }, 3)).toEqual({ dx: 0, dy: 0, dz: 30 });
+    expect(rowOffset({ spacingX: 10, spacingY: 0, spacingZ: 0 }, 3)).toEqual({ dx: 30, dy: 0, dz: 0 });
+    expect(rowOffset({ spacingX: 0, spacingY: 10, spacingZ: 0 }, 3)).toEqual({ dx: 0, dy: 30, dz: 0 });
+    expect(rowOffset({ spacingX: 0, spacingY: 0, spacingZ: 10 }, 3)).toEqual({ dx: 0, dy: 0, dz: 30 });
+  });
+
+  /**
+   * Alle drei zugleich: eine schraege Reihe, und mit der Hoehe eine Treppe.
+   * Das ging vorher nicht - es gab eine Achse und eine Strecke.
+   */
+  it("nimmt alle drei zugleich - eine Treppe", () => {
+    expect(rowOffset({ spacingX: 10, spacingY: 4, spacingZ: -2 }, 3)).toEqual({ dx: 30, dy: 12, dz: -6 });
   });
 
   it("laeuft bei negativem Abstand nach der anderen Seite", () => {
-    expect(rowOffset({ spacing: -12, axis: "x" }, 2)).toEqual({ dx: -24, dy: 0, dz: 0 });
+    expect(rowOffset({ spacingX: -12, spacingY: 0, spacingZ: 0 }, 2)).toEqual({ dx: -24, dy: 0, dz: 0 });
   });
 
   it("laesst das Original stehen, wo es steht", () => {
-    expect(rowOffset({ spacing: 10, axis: "x" }, 0)).toEqual({ dx: 0, dy: 0, dz: 0 });
+    expect(rowOffset({ spacingX: 10, spacingY: 7, spacingZ: 3 }, 0)).toEqual({ dx: 0, dy: 0, dz: 0 });
   });
 });
 
@@ -108,15 +116,21 @@ describe("Die Vorgabe", () => {
     const settings = defaultPatternSettings();
     expect(settings.mode).toBe("row");
     expect(clampPatternCount(settings.count)).toBe(settings.count);
-    expect(settings.spacing).toBeGreaterThan(0);
+    // Die Vorgabe ist die Reihe laengs X, wie vor den drei Strecken.
+    expect(settings.spacingX).toBeGreaterThan(0);
+    expect(settings.spacingY).toBe(0);
+    expect(settings.spacingZ).toBe(0);
+    // Und der Kreis faengt als flacher Ring an, nicht als Schraube.
+    expect(settings.rise).toBe(0);
+    expect(settings.radiusChange).toBe(0);
   });
 });
 
 describe("Wo ein Stueck des Musters steht", () => {
   const at = { x: 40, z: 0, elevation: 5 };
-  const row: PatternSettings = { ...defaultPatternSettings(), mode: "row", count: 4, spacing: 12, axis: "z" };
+  const row: PatternSettings = { ...defaultPatternSettings(), mode: "row", count: 4, spacingX: 0, spacingZ: 12 };
   const circle: PatternSettings = {
-    mode: "circle", count: 4, spacing: 0, axis: "x", angle: 360, centreX: 0, centreZ: 0, turnCopies: true,
+    ...defaultPatternSettings(), mode: "circle", count: 4, spacingX: 0, angle: 360, centreX: 0, centreZ: 0, turnCopies: true,
   };
 
   it("laesst das Original genau dort, wo es steht", () => {
@@ -126,7 +140,7 @@ describe("Wo ein Stueck des Musters steht", () => {
 
   it("schiebt die Reihe entlang ihrer Achse und dreht dabei nichts", () => {
     expect(patternPlacement(row, 2, at)).toEqual({ x: 40, z: 24, elevation: 5, turn: 0 });
-    expect(patternPlacement({ ...row, axis: "y" }, 2, at)).toEqual({ x: 40, z: 0, elevation: 29, turn: 0 });
+    expect(patternPlacement({ ...row, spacingZ: 0, spacingY: 12 }, 2, at)).toEqual({ x: 40, z: 0, elevation: 29, turn: 0 });
   });
 
   it("setzt den Kreis auf seinen Radius und dreht die Kopien mit", () => {
@@ -147,6 +161,55 @@ describe("Wo ein Stueck des Musters steht", () => {
     // Die Stelle wandert trotzdem auf den Kreis.
     expect(Math.hypot(kept.x, kept.z)).toBeCloseTo(40, 9);
     expect(kept.x).not.toBeCloseTo(40, 3);
+  });
+
+  /**
+   * Mit Steigung wird aus dem Ring eine Schraube: Jede Kopie steht ihre
+   * Steigung hoeher, der Abstand zur Mitte bleibt.
+   */
+  it("macht aus dem Kreis mit Steigung eine Schraube", () => {
+    const climbing = { ...circle, count: 5, rise: 3 };
+    expect(patternPlacement(climbing, 0, at).elevation).toBe(5);
+    expect(patternPlacement(climbing, 2, at).elevation).toBe(11);
+    const third = patternPlacement(climbing, 2, at);
+    expect(Math.hypot(third.x, third.z)).toBeCloseTo(40, 9);
+  });
+
+  /**
+   * Und mit einer Abstandsaenderung eine Spirale - flach, oder mit Steigung
+   * zusammen kegelig.
+   */
+  it("und mit einer Abstandsaenderung eine Spirale", () => {
+    const spiral = { ...circle, count: 5, radiusChange: 5 };
+    const second = patternPlacement(spiral, 1, at);
+    expect(Math.hypot(second.x, second.z)).toBeCloseTo(45, 9);
+    const fourth = patternPlacement(spiral, 3, at);
+    expect(Math.hypot(fourth.x, fourth.z)).toBeCloseTo(55, 9);
+    // Nach innen laeuft sie genauso.
+    const inward = patternPlacement({ ...circle, count: 5, radiusChange: -5 }, 2, at);
+    expect(Math.hypot(inward.x, inward.z)).toBeCloseTo(30, 9);
+  });
+
+  /**
+   * Eine Spirale nach innen hoert in der Mitte auf. Ohne das wuerden ihre
+   * Stuecke durch die Mitte hindurch auf die andere Seite geworfen - aus einer
+   * einlaufenden Spirale wuerde eine, die sich selbst durchschlaegt.
+   */
+  it("wirft eine einlaufende Spirale nicht durch die Mitte", () => {
+    const tight = { ...circle, count: 10, radiusChange: -15 };
+    const far = patternPlacement(tight, 9, at);
+    expect(Math.hypot(far.x, far.z)).toBe(0);
+  });
+
+  /**
+   * Steht das Stueck genau in der Mitte, gibt es keine Richtung, in die eine
+   * Abstandsaenderung es schieben koennte. Dann bleibt es dort - und wandert
+   * nicht in eine willkuerliche.
+   */
+  it("laesst ein Stueck in der Mitte in Ruhe", () => {
+    const centred = patternPlacement({ ...circle, radiusChange: 8 }, 1, { x: 0, z: 0, elevation: 0 });
+    expect(centred.x).toBe(0);
+    expect(centred.z).toBe(0);
   });
 
   it("haelt sich an die begrenzte Stueckzahl", () => {
