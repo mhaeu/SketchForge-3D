@@ -4,7 +4,7 @@ import type { CSSProperties } from "react";
 import { Check, LoaderCircle, X } from "lucide-react";
 import { t, type MessageKey } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-import { CAD_HOLLOW_OPENINGS, hollowWallLimits, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
+import { HOLLOW_SIDES, hollowWallLimits, toggleHollowSide, type CadHollowJoin, type CadHollowOpening, type HollowSide } from "@/lib/cadHollow";
 import {
   displayStepFromMillimeters,
   displayToMillimeters,
@@ -26,11 +26,13 @@ import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
  * Werkzeugfeldern.
  */
 
-const OPENING_LABELS: Record<CadHollowOpening, MessageKey> = {
+const SIDE_LABELS: Record<HollowSide, MessageKey> = {
   top: "hollow.opening.top",
   bottom: "hollow.opening.bottom",
-  both: "hollow.opening.both",
-  none: "hollow.opening.none",
+  front: "hollow.opening.front",
+  back: "hollow.opening.back",
+  left: "hollow.opening.left",
+  right: "hollow.opening.right",
 };
 
 export function HollowPanel({
@@ -100,17 +102,19 @@ export function HollowPanel({
         />
       </label>
 
-      <div className="pattern-choice hollow-choice" role="radiogroup" aria-label={t("hollow.opening")}>
-        {CAD_HOLLOW_OPENINGS.map((choice) => (
+      {/* Ein Schalter je Seite, in beliebiger Mischung: vorn allein ist ein
+          Schubfach, links und rechts ein Tunnel, keiner ein geschlossener
+          Koerper. Darum Schalter und keine Auswahl unter mehreren. */}
+      <div className="pattern-choice hollow-choice" role="group" aria-label={t("hollow.opening")}>
+        {HOLLOW_SIDES.map((side) => (
           <button
-            key={choice}
+            key={side}
             type="button"
-            role="radio"
-            aria-checked={opening === choice}
-            className={opening === choice ? "active" : ""}
-            onClick={() => onChange({ opening: choice })}
+            aria-pressed={opening.includes(side)}
+            className={opening.includes(side) ? "active" : ""}
+            onClick={() => onChange({ opening: toggleHollowSide(opening, side) })}
           >
-            {t(OPENING_LABELS[choice])}
+            {t(SIDE_LABELS[side])}
           </button>
         ))}
       </div>

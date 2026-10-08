@@ -205,6 +205,9 @@ import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@
 import { bodiesTooTall } from "@/lib/buildVolume";
 import { toolbarDensityFor, TOOLBAR_BASE_ICON_SIZE } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
+
+/** Womit das Aushoehlen anfaengt: der Deckel offen, der Rest zu. */
+const HOLLOW_OPENING_TOP: CadHollowOpening = ["top"];
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { SplitPanel } from "./workplane/SplitPanel";
@@ -9542,8 +9545,8 @@ export function SketchForgeEditor({
     }
     const dimensions = { width: shapeWidth(selectedShape), depth: shapeDepth(selectedShape), height: selectedShape.height };
     startEdgeModifier("fillet", {
-      thickness: normalizeHollowWall(undefined, dimensions, "top"),
-      opening: "top",
+      thickness: normalizeHollowWall(undefined, dimensions, HOLLOW_OPENING_TOP),
+      opening: HOLLOW_OPENING_TOP,
       join: "round",
     });
   }, [selectedShape, startEdgeModifier]);
@@ -9552,8 +9555,8 @@ export function SketchForgeEditor({
     const current = edgeModifierRef.current?.hollow;
     if (!current) return;
     const opening = next.opening ?? current.opening;
-    // Die offene Seite verschiebt die Grenzen der Wand: Bei geschlossenem
-    // Deckel zaehlt die Hoehe mit.
+    // Die offenen Seiten verschieben die Grenzen der Wand: Eine Abmessung
+    // zaehlt nur mit, wenn beide ihrer Seiten zu bleiben.
     const thickness = normalizeHollowWall(next.wall ?? current.thickness, hollowDimensions, opening);
     sendCadHollowRef.current?.({ thickness, opening, join: next.join ?? current.join });
   }, [hollowDimensions]);

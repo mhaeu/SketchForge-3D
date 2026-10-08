@@ -1,3 +1,5 @@
+import type { OcctKernel, ShapeHandle } from "occt-wasm";
+
 /**
  * cadHollow.ts
  *
@@ -16,13 +18,53 @@
  * Innenkanten, und die Wand haengt davon ab, welche Seiten offen bleiben.
  */
 
-/** Welche Seiten offen bleiben. */
-export type CadHollowOpening = "none" | "top" | "bottom" | "both";
+/**
+ * Die sechs Seiten eines Koerpers, in seinem eigenen Rahmen.
+ *
+ * Die Richtungen sind die des Ansichtswuerfels (viewCubeOrientation.ts): vorn
+ * ist +z, hinten -z. So heisst "vorn" hier dieselbe Seite, die der Wuerfel
+ * zeigt, wenn man auf "vorn" klickt - und nicht die gegenueberliegende.
+ */
+export const HOLLOW_SIDES = ["top", "bottom", "front", "back", "left", "right"] as const;
+export type HollowSide = (typeof HOLLOW_SIDES)[number];
+
+/** Welche Seiten offen bleiben. Leer heisst: ringsherum zu. */
+export type CadHollowOpening = readonly HollowSide[];
 
 /** Wie die Waende innen aufeinandertreffen. */
 export type CadHollowJoin = "round" | "sharp";
 
-export const CAD_HOLLOW_OPENINGS: readonly CadHollowOpening[] = ["top", "bottom", "both", "none"];
+type HollowDirection = { x: number; y: number; z: number };
+
+const SIDE_DIRECTIONS: Record<HollowSide, HollowDirection> = {
+  top: { x: 0, y: 1, z: 0 },
+  bottom: { x: 0, y: -1, z: 0 },
+  front: { x: 0, y: 0, z: 1 },
+  back: { x: 0, y: 0, z: -1 },
+  left: { x: -1, y: 0, z: 0 },
+  right: { x: 1, y: 0, z: 0 },
+};
+
+function isHollowSide(value: unknown): value is HollowSide {
+  return typeof value === "string" && (HOLLOW_SIDES as readonly string[]).includes(value);
+}
+
+/**
+ * Eine Liste offener Seiten, aufgeraeumt: nur gueltige Seiten, jede einmal,
+ * in der Reihenfolge von HOLLOW_SIDES. So vergleichen sich zwei Auswahlen
+ * gleich, egal in welcher Reihenfolge angeklickt wurde.
+ */
+export function normalizeHollowOpening(value: unknown): CadHollowOpening {
+  if (!Array.isArray(value)) return [];
+  const wanted = new Set(value.filter(isHollowSide));
+  return HOLLOW_SIDES.filter((side) => wanted.has(side));
+}
+
+export function toggleHollowSide(opening: CadHollowOpening, side: HollowSide): CadHollowOpening {
+  return opening.includes(side)
+    ? opening.filter((entry) => entry !== side)
+    : normalizeHollowOpening([...opening, side]);
+}
 
 /** Duenner als das haelt kein Druck zusammen. */
 export const MIN_HOLLOW_WALL = 0.4;
@@ -42,14 +84,24 @@ export type HollowDimensions = { width: number; depth: number; height: number };
 /**
  * Die Grenzen der Wandstaerke fuer diesen Koerper.
  *
- * Die Hoehe zaehlt nur mit, wenn oben und unten zu bleiben: Bei einer offenen
- * Seite steht die Wand dort nicht, und eine flache Schale darf eine Wand
- * haben, die dicker ist als ihre halbe Hoehe.
+ * Eine Abmessung zaehlt nur mit, wenn **beide** ihrer Seiten zu bleiben: dann
+ * muessen dort zwei Waende hineinpassen. Ist eine der beiden offen, steht dort
+ * nur eine Wand, und eine flache Schale darf eine Wand haben, die dicker ist
+ * als ihre halbe Hoehe - sonst waere jede flache Form unaushoehlbar.
+ *
+ * Bleibt keine Abmessung uebrig (jede Richtung an beiden Enden offen), zaehlt
+ * die kleinste von allen: Von so einem Koerper ist nichts mehr da, was eine
+ * Wand traegt, und eine grosszuegige Grenze wuerde das nur verschleiern.
  */
 export function hollowWallLimits(dimensions: HollowDimensions, opening: CadHollowOpening) {
-  const across = Math.min(dimensions.width, dimensions.depth);
-  const closedTopAndBottom = opening === "none";
-  const smallest = closedTopAndBottom ? Math.min(across, dimensions.height) : across;
+  const open = (side: HollowSide) => opening.includes(side);
+  const constrained: number[] = [];
+  if (!open("left") && !open("right")) constrained.push(dimensions.width);
+  if (!open("front") && !open("back")) constrained.push(dimensions.depth);
+  if (!open("top") && !open("bottom")) constrained.push(dimensions.height);
+  const smallest = constrained.length > 0
+    ? Math.min(...constrained)
+    : Math.min(dimensions.width, dimensions.depth, dimensions.height);
   const max = Math.max(MIN_HOLLOW_WALL, (smallest / 2) * HOLLOW_WALL_SHARE);
   return { min: MIN_HOLLOW_WALL, max };
 }
@@ -60,55 +112,96 @@ export function normalizeHollowWall(value: unknown, dimensions: HollowDimensions
   return Math.min(limits.max, Math.max(limits.min, wanted));
 }
 
-/** Eine Flaeche, so weit sie fuer die Auswahl zaehlt. */
+/** Eine Flaeche, so weit sie fuer die Auswahl zaehlt - im Rahmen des Koerpers. */
 export type HollowFace = {
-  /** Die Hoehe ihrer Mitte entlang der Hochachse des Koerpers. */
-  up: number;
-  /** Wie weit ihre Normale nach oben zeigt: 1 ganz nach oben, -1 nach unten. */
-  normalUp: number;
+  /** Die Mitte der Flaeche. */
+  centre: HollowDirection;
+  /** Ihre Normale, nach aussen zeigend. */
+  normal: HollowDirection;
 };
 
 /**
- * Wie weit eine Normale von der Hochachse abweichen darf, um noch als Deckel
- * oder Boden zu gelten. 0,9 sind etwa 26 Grad - das nimmt die leicht schraege
- * Deckflaeche eines verjuengten Koerpers mit, aber keine Seitenwand.
+ * Wie weit eine Normale von der Richtung einer Seite abweichen darf, um noch
+ * als deren Flaeche zu gelten. 0,9 sind etwa 26 Grad - das nimmt die leicht
+ * schraege Deckflaeche eines verjuengten Koerpers mit, aber keine Nachbarwand.
  */
 const FACING_UP = 0.9;
 
+function along(point: HollowDirection, direction: HollowDirection) {
+  return point.x * direction.x + point.y * direction.y + point.z * direction.z;
+}
+
 /**
- * Welche Flaechen offen bleiben.
+ * Welche Flaechen einer Seite offen bleiben.
  *
- * Gesucht wird nicht einfach die hoechste Flaeche: Bei einem liegenden Rohr
- * liegt die Mitte des Mantels genauso hoch wie die der Deckel. Es zaehlt, wohin
- * die Flaeche **schaut** - und von denen, die nach oben schauen, die hoechste.
+ * Gesucht wird nicht einfach die aeusserste Flaeche: Bei einem liegenden Rohr
+ * liegt die Mitte des Mantels genauso hoch wie die der Deckel. Es zaehlt,
+ * wohin die Flaeche **schaut** - und von denen, die zu dieser Seite schauen,
+ * die aeusserste.
  *
  * Mehrere auf derselben Hoehe kommen zusammen heraus: Die Oberseite eines
  * Koerpers mit einem Loch darin besteht aus mehreren Flaechen, und offen
  * bleiben muessen sie alle.
  */
+export function sideFaceIndexes(faces: ReadonlyArray<HollowFace>, side: HollowSide): number[] {
+  if (faces.length === 0) return [];
+  const direction = SIDE_DIRECTIONS[side];
+  const reach = faces.map((face) => along(face.centre, direction));
+  // Die Toleranz richtet sich nach dem Koerper: ein Hundertstel seiner
+  // Ausdehnung in dieser Richtung, mindestens ein Hundertstel Millimeter.
+  const tolerance = Math.max(0.01, (Math.max(...reach) - Math.min(...reach)) * 0.01);
+  const facing = faces
+    .map((face, index) => ({ index, outward: along(face.normal, direction), reach: reach[index] }))
+    .filter((entry) => entry.outward >= FACING_UP);
+  if (facing.length === 0) return [];
+  const edge = facing.reduce((best, entry) => Math.max(best, entry.reach), Number.NEGATIVE_INFINITY);
+  return facing.filter((entry) => Math.abs(entry.reach - edge) <= tolerance).map((entry) => entry.index);
+}
+
+/** Dieselbe Suche fuer jede gewaehlte Seite, zusammengelegt. */
 export function openingFaceIndexes(faces: ReadonlyArray<HollowFace>, opening: CadHollowOpening): number[] {
-  if (opening === "none" || faces.length === 0) return [];
-  const extent = faces.reduce(
-    (span, face) => ({ min: Math.min(span.min, face.up), max: Math.max(span.max, face.up) }),
-    { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY },
-  );
-  // Die Toleranz richtet sich nach dem Koerper: ein Hundertstel seiner Hoehe,
-  // mindestens aber ein Hundertstel Millimeter.
-  const tolerance = Math.max(0.01, (extent.max - extent.min) * 0.01);
+  const found = new Set<number>();
+  opening.forEach((side) => sideFaceIndexes(faces, side).forEach((index) => found.add(index)));
+  return [...found].sort((one, other) => one - other);
+}
 
-  const pick = (wantsTop: boolean) => {
-    const facing = faces
-      .map((face, index) => ({ face, index }))
-      .filter((entry) => (wantsTop ? entry.face.normalUp >= FACING_UP : entry.face.normalUp <= -FACING_UP));
-    if (facing.length === 0) return [];
-    const edge = facing.reduce(
-      (best, entry) => (wantsTop ? Math.max(best, entry.face.up) : Math.min(best, entry.face.up)),
-      wantsTop ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
-    );
-    return facing.filter((entry) => Math.abs(entry.face.up - edge) <= tolerance).map((entry) => entry.index);
-  };
+/** Die gewaehlten Seiten, auf denen der Koerper keine passende Flaeche hat. */
+export function hollowSidesWithoutFace(faces: ReadonlyArray<HollowFace>, opening: CadHollowOpening): HollowSide[] {
+  return opening.filter((side) => sideFaceIndexes(faces, side).length === 0);
+}
 
-  if (opening === "top") return pick(true);
-  if (opening === "bottom") return pick(false);
-  return [...new Set([...pick(true), ...pick(false)])].sort((one, other) => one - other);
+/**
+ * Die Flaechen eines Koerpers, wie die Seitenauswahl sie braucht.
+ *
+ * Steht hier und nicht im Arbeiter, damit die Durchlaufpruefung genau diese
+ * Beschreibung gegen den echten Kern laufen laesst - handgebaute Flaechen
+ * sagen nichts darueber, ob Mitte und Normale aus OpenCascade zusammenpassen.
+ *
+ * `surfaceNormal` liefert die Normale **schon nach aussen gedreht**: An einem
+ * Kasten (20 x 30 x 20, mittig auf x und z) gibt der Kern fuer die linke
+ * Flaeche (-1,0,0) und fuer die rechte (1,0,0), obwohl die linke "reversed"
+ * heisst. Wer das Vorzeichen der Umlaufrichtung noch einmal daraufrechnet,
+ * dreht genau die drei Flaechen am unteren Ende jeder Achse nach innen - und
+ * dann findet die Suche nach dem Boden keinen. Genau das war hier der Fall:
+ * Mit "unten" offen fand das Aushoehlen keine Flaeche und brach ab, und
+ * "oben und unten" oeffnete nur den Deckel. Gemessen in occt-wasm 5.5.0
+ * (tests/e2e/hollowSides.e2e.ts haelt es fest).
+ */
+export function describeHollowFaces(cad: OcctKernel, faces: ReadonlyArray<ShapeHandle>): HollowFace[] {
+  return faces.map((face) => {
+    try {
+      const centre = cad.getSurfaceCenterOfMass(face);
+      const bounds = cad.uvBounds(face);
+      const normal = cad.surfaceNormal(face, (bounds.uMin + bounds.uMax) / 2, (bounds.vMin + bounds.vMax) / 2);
+      return {
+        centre: { x: centre.x, y: centre.y, z: centre.z },
+        normal: { x: normal.x, y: normal.y, z: normal.z },
+      };
+    } catch {
+      // Eine Flaeche, die sich nicht ausmessen laesst, bleibt zu. Lieber ein
+      // geschlossener Koerper als ein Abbruch. Eine Normale aus Nullen zeigt
+      // zu keiner Seite und wird darum von keiner genommen.
+      return { centre: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 0 } };
+    }
+  });
 }

@@ -2,7 +2,7 @@
 
 import * as THREE from "three";
 import { JoinType, OcctKernel, type ShapeHandle } from "occt-wasm";
-import { openingFaceIndexes, type HollowFace } from "@/lib/cadHollow";
+import { describeHollowFaces, hollowSidesWithoutFace, openingFaceIndexes, type CadHollowOpening } from "@/lib/cadHollow";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import { meshTreatedBody } from "@/lib/cadMeshAccuracy";
 import { CAD_MODIFIER_KERNEL_RESTART_MESSAGE, CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierKernelExhausted, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
@@ -581,28 +581,19 @@ function hollowSolid(
   cad: OcctKernel,
   solid: ShapeHandle,
   thickness: number,
-  opening: "none" | "top" | "bottom" | "both",
+  opening: CadHollowOpening,
   join: "round" | "sharp",
 ): ShapeHandle {
   const faces = cad.getSubShapes(solid, "face");
   try {
-    const described: HollowFace[] = faces.map((face) => {
-      try {
-        const centre = cad.getSurfaceCenterOfMass(face);
-        const bounds = cad.uvBounds(face);
-        const normal = cad.surfaceNormal(face, (bounds.uMin + bounds.uMax) / 2, (bounds.vMin + bounds.vMax) / 2);
-        const outward = cad.shapeOrientation(face) === "reversed" ? -1 : 1;
-        return { up: centre.y, normalUp: normal.y * outward };
-      } catch {
-        // Eine Flaeche, die sich nicht ausmessen laesst, bleibt zu. Lieber ein
-        // geschlossener Koerper als ein Abbruch.
-        return { up: 0, normalUp: 0 };
-      }
-    });
-    const open = openingFaceIndexes(described, opening).map((index) => faces[index]);
-    if (opening !== "none" && open.length === 0) {
-      throw new Error("No face found to leave open on that side");
+    const described = describeHollowFaces(cad, faces);
+    // Jede gewaehlte Seite braucht ihre eigene Flaeche. Fehlt eine, wird das
+    // gesagt und nicht stillschweigend eine Seite weniger geoeffnet.
+    const missing = hollowSidesWithoutFace(described, opening);
+    if (missing.length > 0) {
+      throw new Error(`This body has no flat face on these sides to leave open: ${missing.join(", ")}`);
     }
+    const open = openingFaceIndexes(described, opening).map((index) => faces[index]);
     /*
      * Die Toleranz der Schalenrechnung. 1e-6 ist der genaue Wert; der groebere
      * 1e-3 ueberlebt mehr Eingaben, erzeugt aber eine andere Topologie.
@@ -610,7 +601,28 @@ function hollowSolid(
      * JoinType.Intersection zieht die Flaechen bis zum Schnitt und laesst sie
      * scharf - das ist die Wahl, die es erst seit occt-wasm 5.4.0 gibt.
      */
-    return cad.shell(solid, open, thickness, 1e-6, join === "sharp" ? JoinType.Intersection : JoinType.Arc);
+    const joinType = join === "sharp" ? JoinType.Intersection : JoinType.Arc;
+    if (open.length === 0) {
+      /*
+       * Ringsherum zu: Das kann `shell` nicht. Ohne eine Flaeche zum
+       * Wegnehmen schiebt es einfach alle Flaechen nach innen und gibt den
+       * geschrumpften Koerper zurueck - gemessen an einem Kasten von
+       * 20 x 30 x 20 mit 2 mm: 6.656 mm^3, also genau der Innenkasten, statt
+       * der 5.344 mm^3 einer Schale. Das war hier bisher das Ergebnis von
+       * "nichts offen": kein Hohlkoerper, sondern ein kleinerer Klotz.
+       *
+       * Der geschlossene Hohlkoerper ist der aeussere minus diesen inneren.
+       * Heraus kommt ein Koerper mit zwoelf Flaechen - sechs aussen, sechs
+       * innen - und dem richtigen Rauminhalt.
+       */
+      const inner = cad.shell(solid, [], thickness, 1e-6, joinType);
+      try {
+        return cad.cut(solid, inner);
+      } finally {
+        releaseHandles(cad, [inner]);
+      }
+    }
+    return cad.shell(solid, open, thickness, 1e-6, joinType);
   } finally {
     releaseHandles(cad, faces);
   }
