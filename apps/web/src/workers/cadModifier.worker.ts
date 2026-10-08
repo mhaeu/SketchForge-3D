@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { JoinType, OcctKernel, type ShapeHandle } from "occt-wasm";
 import { openingFaceIndexes, type HollowFace } from "@/lib/cadHollow";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
+import { meshTreatedBody } from "@/lib/cadMeshAccuracy";
 import { CAD_MODIFIER_KERNEL_RESTART_MESSAGE, CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierKernelExhausted, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
 
 const HASH_UPPER_BOUND = 2_147_483_647;
@@ -535,11 +536,6 @@ function cadDisplayEdgesFromCollected(edges: CollectedCadEdge[]): CadModifierDis
     .map((edge) => ({ points: edge.points }));
 }
 
-function tessellationOptions(quality: CadModifierQuality, amount: number, minDeflection?: CadModifierDeflection) {
-  const deflection = cadModifierTessellationDeflection(quality, amount, minDeflection);
-  return { linearDeflection: deflection.linear, angularDeflection: deflection.angular };
-}
-
 function copyCadMesh(mesh: { positions: Float32Array; normals: Float32Array; indices: Uint32Array; triangleCount: number }) {
   return {
     positions: new Float32Array(mesh.positions),
@@ -682,9 +678,12 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
         }
         hollowed = shells.length === 1 ? shells[0] : activeCad.makeCompound(shells);
         if (!cadShapeIsUsableSolid(activeCad, hollowed)) throw new Error("The chosen wall leaves no hollow body");
-        const options = tessellationOptions(request.quality, request.thickness, request.minDeflection);
-        const deflection: CadModifierDeflection = { linear: options.linearDeflection, angular: options.angularDeflection };
-        const mesh = copyCadMesh(activeCad.tessellate(hollowed, options));
+        const requested = cadModifierTessellationDeflection(request.quality, request.thickness, request.minDeflection);
+        const meshed = meshTreatedBody(activeCad, [...shells], hollowed, requested);
+        shells.splice(0, shells.length, ...meshed.components);
+        hollowed = meshed.result;
+        const deflection: CadModifierDeflection = meshed.deflection;
+        const mesh = copyCadMesh(meshed.mesh);
         const displayEdges = collectEdges(activeCad, hollowed, 0).displayEdges;
         const brep = activeCad.toBREP(hollowed);
         post(
@@ -729,9 +728,15 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
       }
       result = componentResults.length === 1 ? componentResults[0] : activeCad.makeCompound(componentResults);
       if (!cadShapeIsUsableSolid(activeCad, result)) throw new Error("The chosen size creates invalid or overlapping edge geometry");
-      const options = tessellationOptions(request.quality, request.amount, request.minDeflection);
-    const deflection: CadModifierDeflection = { linear: options.linearDeflection, angular: options.angularDeflection };
-      const mesh = copyCadMesh(activeCad.tessellate(result, options));
+      const requested = cadModifierTessellationDeflection(request.quality, request.amount, request.minDeflection);
+      // Zieht den Winkel an, wo das Netz von seiner Flaeche abliegen wuerde,
+      // und ersetzt dabei Teile und Verbund durch frische Abschriften.
+      const meshed = meshTreatedBody(activeCad, [...componentResults], result, requested);
+      componentResults.splice(0, componentResults.length, ...meshed.components);
+      result = meshed.result;
+      const deflection: CadModifierDeflection = meshed.deflection;
+      const options = { linearDeflection: deflection.linear, angularDeflection: deflection.angular };
+      const mesh = copyCadMesh(meshed.mesh);
       const displayEdges = collectEdges(activeCad, result, 0).displayEdges;
       const brep = activeCad.toBREP(result);
       const components: CadModifierComponentMesh[] = componentResults.map((component, owner) => {
