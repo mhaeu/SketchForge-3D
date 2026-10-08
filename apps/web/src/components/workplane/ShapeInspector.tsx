@@ -24,6 +24,21 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import {
+  knurlSettings,
+  MAX_KNURL_ANGLE,
+  maxKnurlChamfer,
+  maxKnurlCount,
+  maxKnurlDepth,
+  MIN_KNURL_ANGLE,
+  MIN_KNURL_COUNT,
+  MIN_KNURL_DEPTH,
+  normalizeKnurlAngle,
+  normalizeKnurlChamfer,
+  normalizeKnurlCount,
+  normalizeKnurlDepth,
+  normalizeKnurlPattern,
+} from "@/lib/knurlGeometry";
+import {
   MAX_BORE_SIDES,
   MAX_COUNTERSINK_ANGLE,
   MAX_TEARDROP_TIP_ANGLE,
@@ -710,6 +725,56 @@ function getShapePropertiesWithAppLimits(
       { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
     ];
+  }
+
+  if (shape.kind === "knurl") {
+    const knurl = knurlSettings({ ...shape, width });
+    /*
+     * Ein Durchmesser, nicht Breite und Tiefe getrennt: Die Raendelung rechnet
+     * nur mit der Breite, und eine abweichende Tiefe waere eine Zahl, die der
+     * Koerper nicht zeigt. Wer ihn unrund will, zieht ihn danach breit.
+     *
+     * Rillenzahl, Rillentiefe und Fase haengen an den Massen und ruecken mit:
+     * ein duennerer Griff traegt weniger Rillen (enger als 0,8 mm zeigt sie
+     * kein Drucker), ein flacherer eine kleinere Fase. Sonst stuende da eine
+     * Zahl, die der Koerper schon nicht mehr einhaelt.
+     */
+    const setDiameter = (value: number) => onUpdate({
+      width: value,
+      depth: value,
+      size: resizedShapeSize(value, value),
+      knurlCount: normalizeKnurlCount(knurl.count, value),
+      knurlDepth: normalizeKnurlDepth(knurl.depth, value),
+      knurlChamfer: normalizeKnurlChamfer(knurl.chamfer, value, shape.height),
+    }, { resizeAxis: "width" });
+    const setKnurlHeight = (value: number) => onUpdate({
+      height: value,
+      knurlChamfer: normalizeKnurlChamfer(knurl.chamfer, width, value),
+    }, { resizeAxis: "height" });
+    const properties: ShapePropertyConfig[] = [
+      {
+        type: "select",
+        id: "knurlPattern",
+        label: t("inspector.knurlPattern"),
+        value: knurl.pattern,
+        options: [
+          { value: "straight", label: t("knurl.straight") },
+          { value: "diamond", label: t("knurl.diamond") },
+        ],
+        onChange: (value) => onUpdate({ knurlPattern: normalizeKnurlPattern(value) }),
+      },
+      { id: "diameter", label: t("prop.diameter"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setDiameter },
+      { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setKnurlHeight },
+      { id: "knurlCount", label: t("prop.knurlCount"), value: knurl.count, min: MIN_KNURL_COUNT, max: maxKnurlCount(width), step: 1, onChange: (value) => onUpdate({ knurlCount: normalizeKnurlCount(value, width) }) },
+      { id: "knurlDepth", label: t("prop.knurlDepth"), value: knurl.depth, min: MIN_KNURL_DEPTH, max: maxKnurlDepth(width), step: 0.05, onChange: (value) => onUpdate({ knurlDepth: normalizeKnurlDepth(value, width) }) },
+      { id: "knurlChamfer", label: t("prop.knurlChamfer"), value: knurl.chamfer, min: 0, max: Math.max(0.05, maxKnurlChamfer(width, shape.height)), step: 0.05, onChange: (value) => onUpdate({ knurlChamfer: normalizeKnurlChamfer(value, width, shape.height) }) },
+    ];
+    // Der Winkel gilt nur fuer die gekreuzte Raendelung - bei der geraden
+    // waere er ein Regler ohne Wirkung.
+    if (knurl.pattern === "diamond") {
+      properties.push({ id: "knurlAngle", label: t("prop.knurlAngle"), value: knurl.angle, min: MIN_KNURL_ANGLE, max: MAX_KNURL_ANGLE, step: 1, onChange: (value) => onUpdate({ knurlAngle: normalizeKnurlAngle(value) }) });
+    }
+    return properties;
   }
 
   if (shape.kind === "cylinder") {

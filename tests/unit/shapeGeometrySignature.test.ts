@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 const PARAMETRIC_FIELDS = [
   "radius", "steps", "sides", "bevel", "segments", "topRadius", "baseRadius",
   "teeth", "toothSize", "toothWidth", "centerHoleSize", "gearType", "helixAngle", "helixQuality",
+  "knurlPattern", "knurlCount", "knurlDepth", "knurlAngle", "knurlChamfer",
   "threadRole", "threadHead", "threadDrive", "threadHand", "threadProfile", "threadDiameter",
   "threadPitch", "threadClearance", "threadQuality", "threadHeadHeight", "threadChamfer", "threadHeadChamfer",
   "springTurns", "springWire", "springQuality",

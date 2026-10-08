@@ -9,6 +9,20 @@ import { LANGUAGES, LANGUAGE_NAMES, setLanguage, t, type MessageKey } from "@/li
 import { useLanguage } from "@/lib/useLanguage";
 import { gearCenterHoleLimits, gearToothPitch } from "@/lib/gearGeometry";
 import {
+  DEFAULT_KNURL_ANGLE,
+  DEFAULT_KNURL_CHAMFER,
+  DEFAULT_KNURL_COUNT,
+  DEFAULT_KNURL_DEPTH,
+  DEFAULT_KNURL_PATTERN,
+  MAX_KNURL_ANGLE,
+  maxKnurlChamfer,
+  maxKnurlCount,
+  maxKnurlDepth,
+  MIN_KNURL_ANGLE,
+  MIN_KNURL_COUNT,
+  MIN_KNURL_DEPTH,
+} from "@/lib/knurlGeometry";
+import {
   DEFAULT_THREAD_CLEARANCE,
   DEFAULT_THREAD_DIAMETER,
   DEFAULT_THREAD_DRIVE,
@@ -69,6 +83,11 @@ const GEAR_TYPE_OPTIONS: Array<{ value: GearType; label: MessageKey }> = [
   { value: "helical", label: "gear.helical" },
   { value: "bevel", label: "gear.bevel" },
 ];
+const KNURL_PATTERN_OPTIONS = [
+  { value: "straight", label: "knurl.straight" as MessageKey },
+  { value: "diamond", label: "knurl.diamond" as MessageKey },
+];
+
 const THREAD_ROLE_OPTIONS = [
   { value: "rod", label: "thread.rod" as MessageKey },
   { value: "screw", label: "thread.screw" as MessageKey },
@@ -102,10 +121,10 @@ const THREAD_PROFILE_OPTIONS = [
   { value: "round", label: "thread.profileRound" as MessageKey },
 ];
 
-type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality";
+type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality" | "knurlCount" | "knurlDepth" | "knurlAngle" | "knurlChamfer";
 type ShapeSpecialField =
   | { type: "number"; key: ShapeSpecialNumberKey; label: string; defaultValue: number; min: number; max: number; step?: number; unit?: string }
-  | { type: "select"; key: "font" | "gearType" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
+  | { type: "select"; key: "font" | "gearType" | "knurlPattern" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
   | { type: "text"; key: "text"; label: string; defaultValue: string; maxLength: number };
 
 const THEME_LABEL_KEYS: Record<AppThemePreference, MessageKey> = {
@@ -197,6 +216,21 @@ function specialFieldsForShape(
       { type: "number", key: "threadClearance", label: t("prop.clearance"), defaultValue: defaults.threadClearance ?? DEFAULT_THREAD_CLEARANCE, min: MIN_THREAD_CLEARANCE, max: MAX_THREAD_CLEARANCE, unit: "mm" },
       { type: "number", key: "threadQuality", label: t("prop.quality"), defaultValue: defaults.threadQuality ?? DEFAULT_THREAD_QUALITY, min: MIN_THREAD_QUALITY, max: MAX_THREAD_QUALITY, step: 6 },
     );
+    return fields;
+  }
+  if (kind === "knurl") {
+    const pattern = customization.knurlPattern ?? defaults.knurlPattern ?? DEFAULT_KNURL_PATTERN;
+    const fields: ShapeSpecialField[] = [
+      { type: "select", key: "knurlPattern", label: t("inspector.knurlPattern"), defaultValue: defaults.knurlPattern ?? DEFAULT_KNURL_PATTERN, options: translatedOptions(KNURL_PATTERN_OPTIONS) },
+      // Die Obergrenze haengt am Durchmesser: enger als 0,8 mm ringsherum
+      // zeigt kein Schmelzschichtdrucker eine Rille.
+      { type: "number", key: "knurlCount", label: t("prop.knurlCount"), defaultValue: defaults.knurlCount ?? DEFAULT_KNURL_COUNT, min: MIN_KNURL_COUNT, max: maxKnurlCount(dimensions.width), step: 1 },
+      { type: "number", key: "knurlDepth", label: t("prop.knurlDepth"), defaultValue: defaults.knurlDepth ?? DEFAULT_KNURL_DEPTH, min: MIN_KNURL_DEPTH, max: maxKnurlDepth(dimensions.width), unit: "mm" },
+      { type: "number", key: "knurlChamfer", label: t("prop.knurlChamfer"), defaultValue: defaults.knurlChamfer ?? DEFAULT_KNURL_CHAMFER, min: 0, max: Math.max(0.05, maxKnurlChamfer(dimensions.width, dimensions.height)), unit: "mm" },
+    ];
+    if (pattern === "diamond") {
+      fields.push({ type: "number", key: "knurlAngle", label: t("prop.knurlAngle"), defaultValue: defaults.knurlAngle ?? DEFAULT_KNURL_ANGLE, min: MIN_KNURL_ANGLE, max: MAX_KNURL_ANGLE, unit: "deg" });
+    }
     return fields;
   }
   if (kind === "gear") {

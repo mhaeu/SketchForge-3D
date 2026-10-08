@@ -76,7 +76,7 @@ describe("SketchForge .skf project packages", () => {
   it("round-trips every supported native shape kind and editable properties", async () => {
     const nativeKinds: ShapeKind[] = [
       "box", "cylinder", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-      "halfSphere", "torus", "tube", "gear", "ring", "wedge", "polygon", "icosahedron", "loft",
+      "halfSphere", "torus", "tube", "gear", "knurl", "ring", "wedge", "polygon", "icosahedron", "loft",
       "counterbore", "countersink", "teardrop",
     ];
     const shapes = nativeKinds.map((kind, index) => shape(kind, `${kind}-${index}`, {
@@ -92,6 +92,11 @@ describe("SketchForge .skf project packages", () => {
       gearType: kind === "gear" ? "helical" : undefined,
       helixAngle: kind === "gear" ? -30 : undefined,
       helixQuality: kind === "gear" ? 24 : undefined,
+      knurlPattern: kind === "knurl" ? "diamond" : undefined,
+      knurlCount: kind === "knurl" ? 24 : undefined,
+      knurlDepth: kind === "knurl" ? 0.75 : undefined,
+      knurlAngle: kind === "knurl" ? 35 : undefined,
+      knurlChamfer: kind === "knurl" ? 1.25 : undefined,
       loftBottomShape: kind === "loft" ? "Triangle" : undefined,
       loftTopShape: kind === "loft" ? "Hexagon" : undefined,
       loftTopWidth: kind === "loft" ? 16 : undefined,

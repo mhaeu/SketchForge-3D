@@ -31,7 +31,7 @@ export const SKF_LIMITS = {
 
 const SHAPE_KINDS = new Set([
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
+  "halfSphere", "torus", "tube", "gear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
   "counterbore", "countersink", "teardrop",
 ]);
 
@@ -948,6 +948,27 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
   if (definition.sketchRevolve !== undefined) {
     const settings = objectRecord(definition.sketchRevolve, `${label}.sketchRevolve`);
     ["startAngle", "sweepAngle", "sides", "quality"].forEach((field) => finiteNumber(settings[field], `${label}.sketchRevolve.${field}`));
+  }
+  if (kind === "knurl") {
+    if (definition.knurlPattern !== undefined && !["straight", "diamond"].includes(definition.knurlPattern as string)) {
+      throw new Error(`${label}.knurlPattern is invalid`);
+    }
+    if (definition.knurlCount !== undefined) {
+      const count = finiteNumber(definition.knurlCount, `${label}.knurlCount`);
+      if (!Number.isInteger(count) || count < 6 || count > 180) throw new Error(`${label}.knurlCount is outside the supported range`);
+    }
+    if (definition.knurlDepth !== undefined) {
+      const depth = finiteNumber(definition.knurlDepth, `${label}.knurlDepth`);
+      if (depth <= 0) throw new Error(`${label}.knurlDepth must be positive`);
+    }
+    if (definition.knurlAngle !== undefined) {
+      const angle = finiteNumber(definition.knurlAngle, `${label}.knurlAngle`);
+      if (angle < 10 || angle > 60) throw new Error(`${label}.knurlAngle is outside the supported range`);
+    }
+    if (definition.knurlChamfer !== undefined) {
+      const chamfer = finiteNumber(definition.knurlChamfer, `${label}.knurlChamfer`);
+      if (chamfer < 0) throw new Error(`${label}.knurlChamfer cannot be negative`);
+    }
   }
   if (kind === "gear") {
     const teeth = finiteNumber(definition.teeth, `${label}.teeth`);

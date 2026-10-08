@@ -46,6 +46,20 @@ import {
   normalizeGearToothWidth,
   normalizeGearType,
 } from "@/lib/gearGeometry";
+import {
+  DEFAULT_KNURL_ANGLE,
+  DEFAULT_KNURL_CHAMFER,
+  DEFAULT_KNURL_COUNT,
+  DEFAULT_KNURL_DEPTH,
+  DEFAULT_KNURL_DIAMETER,
+  DEFAULT_KNURL_HEIGHT,
+  DEFAULT_KNURL_PATTERN,
+  normalizeKnurlAngle,
+  normalizeKnurlChamfer,
+  normalizeKnurlCount,
+  normalizeKnurlDepth,
+  normalizeKnurlPattern,
+} from "@/lib/knurlGeometry";
 import { THREAD_ASSET_PRESETS, createThreadShapeFields, isThreadAssetId } from "@/lib/threadShape";
 import {
   DEFAULT_THREAD_CLEARANCE,
@@ -107,6 +121,7 @@ const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   spring: "shape.spring",
   ruler: "shape.ruler",
   gear: "shape.gear",
+  knurl: "shape.knurl",
   loft: "shape.loft",
   counterbore: "shape.counterbore",
   countersink: "shape.countersink",
@@ -142,6 +157,7 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "spring", name: "Spring", src: "assets/sketchforge/shape-icons-gray/spring.png", menuIcon: "assets/sketchforge/shape-icons-gray/spring.png", kind: "spring", color: "#18b99a" },
   { id: "ruler", name: "Ruler", src: "assets/sketchforge/shape-icons-gray/ruler.png", menuIcon: "assets/sketchforge/shape-icons-gray/ruler.png", kind: "ruler", color: "#f2e4b8" },
   { id: "gear", name: "Gear", src: "assets/sketchforge/gear-types/spur.png", menuIcon: "assets/sketchforge/gear-types/spur.png", kind: "gear", color: "#6f7f8d" },
+  { id: "knurl", name: "Knurl", src: "assets/sketchforge/shape-icons-gray/knurl.png", menuIcon: "assets/sketchforge/shape-icons-gray/knurl.png", kind: "knurl", color: "#7a8a99" },
   { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
   // Die drei Bohrformen. Sie sind zum Abziehen gedacht - hinstellen, mit dem
   // Werkstueck verschneiden, fertig - und tragen darum eine eigene Farbe.
@@ -190,6 +206,11 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
     // Bewusst ungleiche Vorgabe, damit sich die Ellipse beim Einfuegen sofort
     // vom kreisrunden Zylinder unterscheidet.
     return { width: 26, depth: 16, height: 20 };
+  }
+  if (kind === "knurl") {
+    // Ein Griff zum Anfassen: 20 mm dick, 15 hoch. Nicht aus der runden Reihe
+    // unten, weil er hoeher als breit gedacht ist und nicht flach.
+    return { width: DEFAULT_KNURL_DIAMETER, depth: DEFAULT_KNURL_DIAMETER, height: DEFAULT_KNURL_HEIGHT };
   }
   const roundProfile = kind === "sphere" || kind === "torus" || kind === "ring" || kind === "halfSphere";
   const flatProfile = kind === "torus" || kind === "ring" || kind === "text" || kind === "gear";
@@ -265,6 +286,15 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
       threadQuality: DEFAULT_THREAD_QUALITY,
     };
   }
+  if (kind === "knurl") {
+    return {
+      knurlPattern: DEFAULT_KNURL_PATTERN,
+      knurlCount: normalizeKnurlCount(DEFAULT_KNURL_COUNT, dimensions.width),
+      knurlDepth: normalizeKnurlDepth(DEFAULT_KNURL_DEPTH, dimensions.width),
+      knurlAngle: DEFAULT_KNURL_ANGLE,
+      knurlChamfer: normalizeKnurlChamfer(DEFAULT_KNURL_CHAMFER, dimensions.width, dimensions.height),
+    };
+  }
   if (kind === "gear") {
     const teeth = DEFAULT_GEAR_TEETH;
     const toothSize = normalizeGearToothSize(DEFAULT_GEAR_TOOTH_SIZE, dimensions.width, dimensions.depth);
@@ -336,6 +366,11 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    knurlPattern: shape.knurlPattern,
+    knurlCount: shape.knurlCount,
+    knurlDepth: shape.knurlDepth,
+    knurlAngle: shape.knurlAngle,
+    knurlChamfer: shape.knurlChamfer,
     threadRole: shape.threadRole,
     threadHead: shape.threadHead,
     threadDrive: shape.threadDrive,
@@ -480,6 +515,11 @@ export function makeShapeFromAsset(
     gearType: asset.kind === "gear" ? normalizeGearType(customization.gearType ?? DEFAULT_GEAR_TYPE) : undefined,
     helixAngle: asset.kind === "gear" ? normalizeGearHelixAngle(customization.helixAngle ?? DEFAULT_GEAR_HELIX_ANGLE) : undefined,
     helixQuality: asset.kind === "gear" ? normalizeGearHelixQuality(customization.helixQuality ?? DEFAULT_GEAR_HELIX_QUALITY) : undefined,
+    knurlPattern: asset.kind === "knurl" ? normalizeKnurlPattern(customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,
+    knurlCount: asset.kind === "knurl" ? normalizeKnurlCount(customization.knurlCount ?? DEFAULT_KNURL_COUNT, width) : undefined,
+    knurlDepth: asset.kind === "knurl" ? normalizeKnurlDepth(customization.knurlDepth ?? DEFAULT_KNURL_DEPTH, width) : undefined,
+    knurlAngle: asset.kind === "knurl" ? normalizeKnurlAngle(customization.knurlAngle ?? DEFAULT_KNURL_ANGLE) : undefined,
+    knurlChamfer: asset.kind === "knurl" ? normalizeKnurlChamfer(customization.knurlChamfer ?? DEFAULT_KNURL_CHAMFER, width, height) : undefined,
     threadRole: asset.kind === "thread" ? normalizeThreadRole(customization.threadRole ?? DEFAULT_THREAD_ROLE) : undefined,
     threadHead: asset.kind === "thread" ? normalizeThreadHead(customization.threadHead ?? DEFAULT_THREAD_HEAD) : undefined,
     threadDrive: asset.kind === "thread" ? normalizeThreadDrive(customization.threadDrive ?? DEFAULT_THREAD_DRIVE) : undefined,

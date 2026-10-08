@@ -28,6 +28,7 @@ import type { AppThemePreference, ResolvedAppTheme } from "@/lib/appTheme";
 import type { ChallengeTutorialId } from "@/lib/challenges";
 import { cadModifierPrimitiveForBakedShape, cadTransformFromMatrix, cadTransformToMatrix } from "@/lib/cadBakeMetadata";
 import { createGearGeometry } from "@/lib/gearGeometry";
+import { createKnurlGeometry } from "@/lib/knurlGeometry";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { createLoftGeometry } from "@/lib/loftGeometry";
@@ -167,6 +168,7 @@ const SHAPE_KINDS = new Set<ShapeAsset["kind"]>([
   "torus",
   "tube",
   "gear",
+  "knurl",
   "ring",
   "wedge",
   "polygon",
@@ -1354,6 +1356,11 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    knurlPattern: shape.knurlPattern,
+    knurlCount: shape.knurlCount,
+    knurlDepth: shape.knurlDepth,
+    knurlAngle: shape.knurlAngle,
+    knurlChamfer: shape.knurlChamfer,
     threadRole: shape.threadRole,
     threadHead: shape.threadHead,
     threadDrive: shape.threadDrive,
@@ -1545,6 +1552,11 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    knurlPattern: shape.knurlPattern,
+    knurlCount: shape.knurlCount,
+    knurlDepth: shape.knurlDepth,
+    knurlAngle: shape.knurlAngle,
+    knurlChamfer: shape.knurlChamfer,
     threadRole: shape.threadRole,
     threadHead: shape.threadHead,
     threadDrive: shape.threadDrive,
@@ -10388,6 +10400,19 @@ function createShapeObject(
         helixQuality: shape.helixQuality,
       })), material, shape);
       break;
+    case "knurl":
+      // Die Raendelung ist rund: Breite ist ihr Durchmesser, die Tiefe folgt
+      // daraus. Was ein ungleiches Mass daraus macht, macht die Skalierung.
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createKnurlGeometry({
+        width,
+        height,
+        knurlPattern: shape.knurlPattern,
+        knurlCount: shape.knurlCount,
+        knurlDepth: shape.knurlDepth,
+        knurlAngle: shape.knurlAngle,
+        knurlChamfer: shape.knurlChamfer,
+      })), material, shape);
+      break;
     case "thread":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createThreadGeometry({
         width,
@@ -10674,7 +10699,7 @@ function addShapeEdgeDecorations(group: THREE.Group, mesh: THREE.Mesh, prepared:
   const complexEdges =
     shape.kind === "mesh" ||
     Boolean(shape.importedMesh) ||
-    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "wedge", "loft", "polygon"].includes(shape.kind);
+    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "knurl", "wedge", "loft", "polygon"].includes(shape.kind);
   const importedTriangleCount = shape.importedMesh?.triangleCount ?? 0;
   const skipHeavyImportedEdges = Boolean(shape.importedMesh) && importedTriangleCount > IMPORTED_SELECTED_EDGE_TRIANGLE_LIMIT;
   if ((group.userData.showEdges || complexEdges) && !skipHeavyImportedEdges) {

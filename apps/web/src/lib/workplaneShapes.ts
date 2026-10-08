@@ -163,12 +163,12 @@ export function shapeTaperDimensions(shape: WorkplaneShape) {
 }
 
 /**
- * Arten, die eine Verjuengung ueberhaupt annehmen. Zahnrad, Gewinde und Feder
- * kennen sie nicht: ihre Form kommt aus ihren eigenen Werten, nicht aus Breite
- * und Tiefe der Grundflaeche.
+ * Arten, die eine Verjuengung ueberhaupt annehmen. Zahnrad, Gewinde, Feder und
+ * Raendelung kennen sie nicht: ihre Form kommt aus ihren eigenen Werten, nicht
+ * aus Breite und Tiefe der Grundflaeche.
  */
 export function shapeSupportsTaper(kind: WorkplaneShape["kind"]) {
-  return kind !== "gear" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
+  return kind !== "gear" && kind !== "knurl" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
 }
 
 /**
@@ -631,6 +631,7 @@ export function fallbackSolidColor(shape: WorkplaneShape) {
   if (shape.kind === "cone") return "#6e2786";
   if (shape.kind === "pyramid") return "#f2cf10";
   if (shape.kind === "gear") return "#6f7f8d";
+  if (shape.kind === "knurl") return "#7a8a99";
   if (shape.kind === "loft") return "#5b5ce2";
   return "#d41721";
 }
@@ -769,6 +770,11 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.gearType === b.gearType &&
     a.helixAngle === b.helixAngle &&
     a.helixQuality === b.helixQuality &&
+    a.knurlPattern === b.knurlPattern &&
+    a.knurlCount === b.knurlCount &&
+    a.knurlDepth === b.knurlDepth &&
+    a.knurlAngle === b.knurlAngle &&
+    a.knurlChamfer === b.knurlChamfer &&
     a.threadRole === b.threadRole &&
     a.threadHead === b.threadHead &&
     a.threadDrive === b.threadDrive &&

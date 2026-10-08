@@ -16,6 +16,7 @@ export type ShapeKind =
   | "torus"
   | "tube"
   | "gear"
+  | "knurl"
   | "thread"
   | "spring"
   | "ruler"
@@ -113,6 +114,16 @@ export type ShapeCustomization = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
+  knurlPattern?: KnurlPattern;
+  /** Raendelung: wie viele Rillen ringsherum. */
+  knurlCount?: number;
+  /** Raendelung: wie tief eine Rille geht, in mm. */
+  knurlDepth?: number;
+  /** Raendelung: wie steil die gekreuzten Rillen laufen, in Grad von der Achse. */
+  knurlAngle?: number;
+  /** Raendelung: die Fase an beiden Enden, in mm. */
+  knurlChamfer?: number;
   threadRole?: ThreadRole;
   threadHead?: ThreadHead;
   threadDrive?: ThreadDrive;
@@ -236,6 +247,9 @@ export type SketchProfile = {
 export type SketchOperation = "extrude" | "revolve" | "sweep";
 
 export type GearType = "spur" | "helical" | "bevel";
+
+/** Die Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
+export type KnurlPattern = "straight" | "diamond";
 
 export type LoftProfileShape = "Oval" | "Rectangle" | "Triangle" | "Pentagon" | "Hexagon";
 
@@ -459,6 +473,16 @@ export type WorkplaneShape = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
+  knurlPattern?: KnurlPattern;
+  /** Raendelung: wie viele Rillen ringsherum. */
+  knurlCount?: number;
+  /** Raendelung: wie tief eine Rille geht, in mm. */
+  knurlDepth?: number;
+  /** Raendelung: wie steil die gekreuzten Rillen laufen, in Grad von der Achse. */
+  knurlAngle?: number;
+  /** Raendelung: die Fase an beiden Enden, in mm. */
+  knurlChamfer?: number;
   threadRole?: ThreadRole;
   threadHead?: ThreadHead;
   threadDrive?: ThreadDrive;

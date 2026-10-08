@@ -150,7 +150,7 @@ describe("shapes from the extended palette", () => {
 
   it("offers every kind in the palette", () => {
     const kinds = toolbarShapeAssets.map((asset) => asset.kind);
-    ["ellipse", "polygon", "thread", "spring", "ruler"].forEach((kind) => {
+    ["ellipse", "polygon", "thread", "spring", "ruler", "knurl"].forEach((kind) => {
       expect(kinds).toContain(kind);
     });
   });
@@ -159,6 +159,22 @@ describe("shapes from the extended palette", () => {
     const shape = makeShapeFromAsset(assetFor("ellipse"));
     expect(shape.width).not.toBeCloseTo(shape.depth, 3);
     expect(shape.sides).toBe(96);
+  });
+
+  /**
+   * Die Raendelung kommt als Griff in die Szene, nicht als flache Scheibe:
+   * 20 mm dick, 15 hoch, mit geraden Rillen und einer kleinen Fase an beiden
+   * Enden - so, wie man einen Drehknopf anfasst.
+   */
+  it("stellt die Raendelung als Griff hin, mit Rillen und Fase", () => {
+    const shape = makeShapeFromAsset(assetFor("knurl"));
+    expect(shape.width).toBe(20);
+    expect(shape.depth).toBe(20);
+    expect(shape.height).toBe(15);
+    expect(shape.knurlPattern).toBe("straight");
+    expect(shape.knurlCount).toBe(30);
+    expect(shape.knurlDepth).toBeCloseTo(0.6, 9);
+    expect(shape.knurlChamfer).toBeCloseTo(0.5, 9);
   });
 
   it("inserts the polygon as a regular hexagon", () => {

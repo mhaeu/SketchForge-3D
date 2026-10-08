@@ -29,6 +29,13 @@ import {
   MIN_SPRING_TURNS,
   MIN_SPRING_WIRE,
 } from "@/lib/springGeometry";
+import {
+  MAX_KNURL_ANGLE,
+  MAX_KNURL_COUNT,
+  MIN_KNURL_ANGLE,
+  MIN_KNURL_COUNT,
+  MIN_KNURL_DEPTH,
+} from "@/lib/knurlGeometry";
 
 export const DEFAULT_SNAP_GRID: GridSize = "1.0 mm";
 export const MIN_CUSTOM_SHAPE_DIMENSION = 0.01;
@@ -148,7 +155,7 @@ export function snapGridStep(size: GridSize) {
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
 const customizableShapeKinds: ShapeKind[] = [
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
+  "halfSphere", "torus", "tube", "gear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
   "mesh", "loft", "counterbore", "countersink", "teardrop",
 ];
 
@@ -278,6 +285,17 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
           : fallbackEntry?.gearType;
       entry.helixAngle = optionalShapeNumber(source.helixAngle, fallbackEntry?.helixAngle, -45, 45);
       entry.helixQuality = optionalShapeNumber(source.helixQuality, fallbackEntry?.helixQuality, 4, 32, true);
+    }
+    if (kind === "knurl") {
+      entry.knurlPattern = source.knurlPattern === undefined
+        ? fallbackEntry?.knurlPattern
+        : source.knurlPattern === "straight" || source.knurlPattern === "diamond"
+          ? source.knurlPattern
+          : fallbackEntry?.knurlPattern;
+      entry.knurlCount = optionalShapeNumber(source.knurlCount, fallbackEntry?.knurlCount, MIN_KNURL_COUNT, MAX_KNURL_COUNT, true);
+      entry.knurlDepth = optionalShapeNumber(source.knurlDepth, fallbackEntry?.knurlDepth, MIN_KNURL_DEPTH, MAX_CUSTOM_SHAPE_DIMENSION / 2);
+      entry.knurlAngle = optionalShapeNumber(source.knurlAngle, fallbackEntry?.knurlAngle, MIN_KNURL_ANGLE, MAX_KNURL_ANGLE);
+      entry.knurlChamfer = optionalShapeNumber(source.knurlChamfer, fallbackEntry?.knurlChamfer, 0, MAX_CUSTOM_SHAPE_DIMENSION / 4);
     }
     if (kind === "spring") {
       entry.springTurns = optionalShapeNumber(source.springTurns, fallbackEntry?.springTurns, MIN_SPRING_TURNS, MAX_SPRING_TURNS, true);

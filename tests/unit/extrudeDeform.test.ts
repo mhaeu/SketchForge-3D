@@ -69,9 +69,10 @@ describe("Drall und versetzte Deckflaeche", () => {
   });
 
   it("laesst Koerper aus, die ihr eigenes Oben haben", () => {
-    // Zahnprofil, Gewindewendel, Federwindung und Linealteilung wuerden sich
-    // mit einem Drall schlagen statt ihn mitzumachen.
-    ["gear", "thread", "spring", "ruler"].forEach((kind) => {
+    // Zahnprofil, Gewindewendel, Federwindung, Raendelrillen und
+    // Linealteilung wuerden sich mit einem Drall schlagen statt ihn
+    // mitzumachen - ihre Form kommt aus ihren eigenen Werten.
+    ["gear", "knurl", "thread", "spring", "ruler"].forEach((kind) => {
       expect(shapeSupportsExtrudeDeform(kind as WorkplaneShape["kind"])).toBe(false);
       expect(shapeHasExtrudeDeform(shape({ kind: kind as WorkplaneShape["kind"], extrudeTwist: 45 }))).toBe(false);
     });
