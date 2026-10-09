@@ -135,7 +135,7 @@ import {
   type ResizeAxis,
 } from "@/lib/workplaneShapes";
 import { clampRegionToShape, displayPositions, fullShapeRegion, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
-import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForRoundShape, importedStepSourceForShape } from "@/lib/cadBakeMetadata";
+import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForProfileShape, cadModifierPrimitiveForRoundShape, importedStepSourceForShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
   CAD_MODIFIER_MAX_SHARP_ANGLE,
@@ -2828,6 +2828,8 @@ function cadModifierPrimitiveForShape(shape: WorkplaneShape): CadModifierPrimiti
     // Round kinds go analytic unconditionally: sending their tessellation
     // instead is what makes filleting them produce invalid geometry.
     ?? cadModifierPrimitiveForRoundShape(shape)
+    // Und Formen mit vieleckiger Grundflaeche als hochgezogener Umriss.
+    ?? cadModifierPrimitiveForProfileShape(shape)
     ?? (shapeHasTransformToBake(shape) ? cadModifierPrimitiveForAnalyticBox(shape) : null);
 }
 

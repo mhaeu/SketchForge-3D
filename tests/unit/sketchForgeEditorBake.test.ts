@@ -4,8 +4,10 @@ import {
   cadBrepTransformForShape,
   cadModifierPrimitiveForAnalyticBox,
   cadModifierPrimitiveForBakedShape,
+  cadModifierPrimitiveForProfileShape,
 } from "@/lib/cadBakeMetadata";
 import { cadTransformRequiresGeneralTransform } from "@/lib/cadModifierRuntime";
+import { knurlCorners } from "@/lib/knurlGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 function expectTransformClose(actual: number[] | undefined, expected: number[]) {
@@ -233,5 +235,71 @@ describe("SketchForge transform baking", () => {
     const restoredPrimitive = cadModifierPrimitiveForBakedShape(resizedBakedShape);
     expect(restoredPrimitive?.transform).toBeDefined();
     expect(cadTransformRequiresGeneralTransform(restoredPrimitive?.transform ?? [])).toBe(true);
+  });
+});
+
+/**
+ * Die Raendelung geht als hochgezogener Umriss in den Kern. Hier steht nur,
+ * was dabei an Daten herauskommt - ob der Kern daraus denselben Koerper baut
+ * wie das Netz, steht in tests/e2e/cadProfileSolid.e2e.ts.
+ */
+describe("Die Raendelung als Umriss fuer den Kern", () => {
+  const knurl = (overrides: Partial<WorkplaneShape> = {}): WorkplaneShape => ({
+    id: "k",
+    name: "Raendelung",
+    kind: "knurl",
+    color: "#7a8a99",
+    x: 0,
+    z: 0,
+    elevation: 0,
+    size: 20,
+    width: 20,
+    depth: 20,
+    height: 15,
+    rotation: 0,
+    knurlPattern: "straight",
+    knurlCount: 30,
+    knurlDepth: 0.6,
+    knurlChamfer: 0.5,
+    ...overrides,
+  }) as WorkplaneShape;
+
+  it("gibt den Ring aus Graten und Rillengruenden - dieselben Ecken wie das Netz", () => {
+    const part = cadModifierPrimitiveForProfileShape(knurl());
+    expect(part?.kind).toBe("profileExtrusion");
+    if (part?.kind !== "profileExtrusion") return;
+    // 30 Rillen, je ein Grat und ein Grund: 60 Ecken, also 120 Zahlen.
+    expect(part.loop).toHaveLength(120);
+    const corners = knurlCorners(20, 30, 0.6);
+    expect(part.loop[0]).toBeCloseTo(Math.cos(corners[0].angle) * corners[0].radius, 9);
+    expect(part.loop[1]).toBeCloseTo(Math.sin(corners[0].angle) * corners[0].radius, 9);
+    expect(part.loop[2]).toBeCloseTo(Math.cos(corners[1].angle) * corners[1].radius, 9);
+    expect(part.height).toBe(15);
+    expect(part.capChamfer).toEqual({ radius: 10, size: 0.5 });
+  });
+
+  /**
+   * Die Rillenzahl haengt am Durchmesser: Ein duenner Griff traegt weniger,
+   * und der Umriss muss dieselbe Zahl nehmen wie das Netz - sonst waere der
+   * genaue Koerper eine andere Form.
+   */
+  it("nimmt die Rillenzahl, die bei diesem Durchmesser erlaubt ist", () => {
+    const part = cadModifierPrimitiveForProfileShape(knurl({ width: 6, size: 6, depth: 6, knurlCount: 120 }));
+    if (part?.kind !== "profileExtrusion") throw new Error("kein Umriss");
+    // Auf 6 mm passen 23 Rillen, nicht 120.
+    expect(part.loop).toHaveLength(23 * 2 * 2);
+  });
+
+  /**
+   * Ein gedrehter Koerper bringt seine Lage als Matrix mit - der Umriss selbst
+   * steht immer im eigenen Rahmen der Form.
+   */
+  it("legt die Lage eines gedrehten Koerpers als Matrix dazu", () => {
+    const upright = cadModifierPrimitiveForProfileShape(knurl());
+    expect(upright?.kind === "profileExtrusion" && upright.transform).toBeUndefined();
+    const turned = cadModifierPrimitiveForProfileShape(knurl({ rotationX: 90, x: 12 }));
+    if (turned?.kind !== "profileExtrusion") throw new Error("kein Umriss");
+    expect(turned.transform).toHaveLength(12);
+    expect(turned.loop).toEqual(upright?.kind === "profileExtrusion" ? upright.loop : []);
   });
 });

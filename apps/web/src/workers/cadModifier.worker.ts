@@ -3,6 +3,7 @@
 import * as THREE from "three";
 import { JoinType, OcctKernel, type ShapeHandle } from "occt-wasm";
 import { describeHollowFaces, hollowSidesWithoutFace, openingFaceIndexes, type CadHollowOpening } from "@/lib/cadHollow";
+import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import { meshTreatedBody } from "@/lib/cadMeshAccuracy";
 import { CAD_MODIFIER_KERNEL_RESTART_MESSAGE, CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierKernelExhausted, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
@@ -255,6 +256,10 @@ function buildPrimitiveSolid(cad: OcctKernel, primitive: CadModifierPrimitivePar
       throw new Error("The selected primitive has invalid dimensions");
     }
     return applyCadTransform(cad, cad.makeCone(baseRadius, topRadius, height), primitiveToLocalFrame(true, 0));
+  }
+
+  if (primitive.kind === "profileExtrusion") {
+    return buildProfileExtrusionSolid(cad, primitive);
   }
 
   if (primitive.kind === "torus") {

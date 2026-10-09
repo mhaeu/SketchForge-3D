@@ -3,6 +3,7 @@ import type { WorkplaneShape } from "@/types/sketchforge";
 import type { CadModifierPrimitivePart } from "@/lib/cadModifierTypes";
 import { cadTransformRequiresGeneralTransform } from "@/lib/cadModifierRuntime";
 import { mirrorSign, preservesFeatureSize, resizedImportedCoordinates, shapeDepth, shapeHasShapeDeform, shapeWidth } from "@/lib/workplaneShapes";
+import { knurlCorners, knurlSettings } from "@/lib/knurlGeometry";
 
 export type BakedCadMetadataFrame = {
   centerX: number;
@@ -152,6 +153,39 @@ export function cadModifierPrimitiveForRoundShape(shape: WorkplaneShape): CadMod
   }
 
   return null;
+}
+
+/**
+ * Formen, deren Grundflaeche ein Vieleck ist, als hochgezogener Umriss.
+ *
+ * Bis jetzt genau eine: die Raendelung mit geraden Rillen. Ihr Umriss ist der
+ * Ring aus Graten und Rillengruenden, aus dem auch ihr Netz gebaut wird -
+ * dieselben Ecken, also derselbe Koerper, nur exakt. Darauf wirken Verrunden,
+ * Fasen und Aushoehlen.
+ *
+ * Die gekreuzte Raendelung bleibt ein Netz: Ihre Rillen laufen auf Schrauben-
+ * linien, und was zwei gegeneinander verdrehte Scharen gemeinsam haben, ist
+ * kein hochgezogener Umriss. (Layerling hat es versucht - der Kern braucht
+ * dort 43 s fuer 30 Rillen.)
+ */
+export function cadModifierPrimitiveForProfileShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
+  if (shape.importedMesh || shape.groupedShapes?.length) return null;
+  if (shape.kind !== "knurl") return null;
+  const width = shapeWidth(shape);
+  const settings = knurlSettings({ ...shape, width });
+  if (settings.pattern !== "straight") return null;
+  if (!allFinitePositive([settings.diameter, settings.height])) return null;
+  const loop: number[] = [];
+  knurlCorners(settings.diameter, settings.count, settings.depth).forEach(({ angle, radius }) => {
+    loop.push(Math.cos(angle) * radius, Math.sin(angle) * radius);
+  });
+  return {
+    kind: "profileExtrusion",
+    loop,
+    height: settings.height,
+    capChamfer: settings.chamfer > 0 ? { radius: settings.diameter / 2, size: settings.chamfer } : undefined,
+    transform: primitivePlacementTransform(shape, settings.height),
+  };
 }
 
 export function cadModifierPrimitiveForBakedShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {

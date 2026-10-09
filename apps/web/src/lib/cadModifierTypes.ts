@@ -40,7 +40,14 @@ export type CadModifierPrimitivePart =
   | { kind: "cylinder"; radius: number; height: number; transform?: number[] }
   | { kind: "cone"; baseRadius: number; topRadius: number; height: number; transform?: number[] }
   | { kind: "sphere"; radius: number; transform?: number[] }
-  | { kind: "torus"; majorRadius: number; minorRadius: number; transform?: number[] };
+  | { kind: "torus"; majorRadius: number; minorRadius: number; transform?: number[] }
+  /**
+   * Ein hochgezogener Umriss: Paare aus x und z in der Grundflaeche, dazu die
+   * Hoehe und - wenn die Form sie hat - die Fase von 45 Grad an beiden Enden.
+   * Damit kommt eine Form mit vieleckiger Grundflaeche als genauer Koerper in
+   * den Kern statt als Netz; siehe `cadProfileSolid.ts`.
+   */
+  | { kind: "profileExtrusion"; loop: number[]; height: number; capChamfer?: { radius: number; size: number }; transform?: number[] };
 
 export type CadModifierMeshPart = {
   positions?: Float32Array;
