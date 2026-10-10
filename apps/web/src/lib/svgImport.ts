@@ -225,12 +225,25 @@ function extrusionProfileFromPath(path: THREE.ShapePath) {
 }
 
 function cleanRingPoints(points: THREE.Vector2[]) {
+  const finite = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  /*
+   * Zwei Punkte, die naeher beieinander liegen als ein Milliardstel der
+   * Zeichnung, sind derselbe Punkt. Das Mass muss mit der Zeichnung wachsen:
+   * Inkscape schliesst einen Umriss aus Boegen etwa 0,0000002 mm vor seinem
+   * Anfang, und mit der festen Schranke 1e-20 blieb dieser Splitter stehen.
+   * Eine Strecke der Laenge null aber liegt auf der Geraden durch sich
+   * selbst - die Kreuzungspruefung hielt darum jeden Punkt fuer darauf
+   * liegend, und ein Loch im Umriss wurde zu einem eigenen Koerper.
+   *
+   * Dieselbe Schranke benutzt `pointInRing` schon (extent * 1e-9).
+   */
+  const extent = finite.reduce((largest, point) => Math.max(largest, Math.abs(point.x), Math.abs(point.y)), 1);
+  const same = (extent * 1e-9) ** 2;
   const cleaned: THREE.Vector2[] = [];
-  for (const point of points) {
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
-    if (!cleaned.length || cleaned[cleaned.length - 1].distanceToSquared(point) > 1e-20) cleaned.push(point.clone());
+  for (const point of finite) {
+    if (!cleaned.length || cleaned[cleaned.length - 1].distanceToSquared(point) > same) cleaned.push(point.clone());
   }
-  if (cleaned.length > 1 && cleaned[0].distanceToSquared(cleaned[cleaned.length - 1]) <= 1e-20) cleaned.pop();
+  if (cleaned.length > 1 && cleaned[0].distanceToSquared(cleaned[cleaned.length - 1]) <= same) cleaned.pop();
   return cleaned;
 }
 
@@ -244,6 +257,9 @@ function ringSamplePoint(points: THREE.Vector2[]) {
 function pointOnSegment(point: THREE.Vector2, a: THREE.Vector2, b: THREE.Vector2, tolerance: number) {
   const ab = b.clone().sub(a);
   const ap = point.clone().sub(a);
+  // Eine Strecke ohne Laenge traegt nur ihren eigenen Punkt - nicht jeden
+  // Punkt auf der Geraden durch sie, denn eine solche Gerade gibt es nicht.
+  if (ab.lengthSq() <= tolerance * tolerance) return ap.length() <= tolerance;
   const cross = Math.abs(ab.x * ap.y - ab.y * ap.x);
   if (cross > tolerance * Math.max(1, ab.length())) return false;
   const dot = ap.dot(ab);
