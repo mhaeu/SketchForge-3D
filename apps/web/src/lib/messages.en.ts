@@ -761,6 +761,7 @@ export const MESSAGES_EN = {
   "inspector.gearType": "Gear Type",
   "inspector.gearProfile": "Tooth shape",
   "gear.profileInvolute": "Involute",
+  "gear.profileRound": "Round",
   "gear.profileSimple": "Simple",
   "prop.gearModule": "Module",
   "prop.gearPressureAngle": "Pressure angle",

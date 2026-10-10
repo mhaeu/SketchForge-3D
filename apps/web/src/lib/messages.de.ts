@@ -815,6 +815,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "inspector.gearType": "Zahnradart",
   "inspector.gearProfile": "Zahnform",
   "gear.profileInvolute": "Evolvente",
+  "gear.profileRound": "Rund",
   "gear.profileSimple": "Einfach",
   "prop.gearModule": "Modul",
   "prop.gearPressureAngle": "Eingriffswinkel",

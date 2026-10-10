@@ -17,6 +17,7 @@ import {
   gearCenterHoleLimits,
   involuteGearDiameter,
   involuteGearMeasures,
+  roundGearMeasures,
   MAX_GEAR_BACKLASH,
   MAX_GEAR_MODULE,
   MAX_GEAR_PRESSURE_ANGLE,
@@ -1124,7 +1125,7 @@ function getShapePropertiesWithAppLimits(
     ];
   }
 
-  if (shape.kind === "gear" && normalizeGearProfile(shape.gearProfile) === "involute") {
+  if (shape.kind === "gear" && normalizeGearProfile(shape.gearProfile) !== "simple") {
     /*
      * Ein Evolventenrad wird nach Modul und Zaehnezahl eingestellt, wie bei
      * jedem Zahnradrechner - seine Groesse folgt daraus (Aussendurchmesser =
@@ -1135,11 +1136,15 @@ function getShapePropertiesWithAppLimits(
      * Zahngroesse und Zahnbreite entfallen ebenso - die gehoeren zu den
      * geraden Zaehnen, die ihre Form nicht aus dem Modul nehmen.
      */
-    const measures = involuteGearMeasures(width, shape);
+    const profile = normalizeGearProfile(shape.gearProfile);
+    const round = profile === "round";
+    // Beide Zahnformen folgen dem Modul; nur der Kopf steht bei den runden
+    // niedriger, also gehoert zu ihnen ein anderer Aussendurchmesser.
+    const measures = round ? roundGearMeasures(width, shape) : involuteGearMeasures(width, shape);
     const teeth = measures.teeth;
     const centerHoleLimits = gearCenterHoleLimits(width, depth, normalizeGearToothSize(shape.toothSize, width, depth));
-    const resized = (module: number, nextTeeth: number) => {
-      const diameter = involuteGearDiameter(module, nextTeeth);
+    const resized = (module: number, nextTeeth: number, nextProfile = profile) => {
+      const diameter = involuteGearDiameter(module, nextTeeth, nextProfile);
       return {
         teeth: nextTeeth,
         width: diameter,
@@ -1155,12 +1160,27 @@ function getShapePropertiesWithAppLimits(
         type: "select",
         id: "gearProfile",
         label: t("inspector.gearProfile"),
-        value: "involute",
+        value: profile,
         options: [
           { value: "involute", label: t("gear.profileInvolute") },
+          { value: "round", label: t("gear.profileRound") },
           { value: "simple", label: t("gear.profileSimple") },
         ],
-        onChange: (value) => onUpdate({ gearProfile: normalizeGearProfile(value) }),
+        /*
+         * Beim Umstellen bleibt das Modul und die Groesse rueckt mit: Runde
+         * Zaehne stehen niedriger, ihr Aussendurchmesser ist Modul x
+         * (Zaehne + 1,2) statt (Zaehne + 2). Wer nur die Zahnform tauschte,
+         * haette sonst ein anderes Modul - und damit ein Rad, das zu keinem
+         * anderen mehr passt.
+         */
+        onChange: (value) => {
+          const next = normalizeGearProfile(value);
+          if (next === "simple") {
+            onUpdate({ gearProfile: next });
+            return;
+          }
+          onUpdate({ gearProfile: next, ...resized(measures.module, teeth, next) }, { resizeAxis: "width" });
+        },
       },
       {
         id: "module",
@@ -1180,15 +1200,15 @@ function getShapePropertiesWithAppLimits(
         step: 1,
         onChange: (value) => onUpdate(resized(measures.module, normalizeGearTeeth(value)), { resizeAxis: "width" }),
       },
-      {
+      ...(round ? [] : [{
         id: "pressureAngle",
         label: t("prop.gearPressureAngle"),
         value: normalizeGearPressureAngle(shape.gearPressureAngle),
         min: MIN_GEAR_PRESSURE_ANGLE,
         max: MAX_GEAR_PRESSURE_ANGLE,
         step: 0.5,
-        onChange: (gearPressureAngle) => onUpdate({ gearPressureAngle }),
-      },
+        onChange: (gearPressureAngle: number) => onUpdate({ gearPressureAngle }),
+      }]),
       {
         id: "backlash",
         label: t("prop.gearBacklash"),

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { GearProfile, GearType, WorkplaneShape } from "@/types/sketchforge";
+import { roundWave, roundWaveCorners, type RoundWave } from "@/lib/roundWave";
 
 export const DEFAULT_GEAR_TEETH = 12;
 export const DEFAULT_GEAR_TOOTH_SIZE = 2.5;
@@ -60,7 +61,20 @@ const INVOLUTE_FLANK_STEPS = 12;
 export function normalizeGearProfile(value?: string): GearProfile {
   // Ein Zahnrad, das vor den Evolventenzaehnen gespeichert wurde, hat kein
   // Profil und behaelt seine geraden Zaehne.
-  return value === "involute" ? "involute" : "simple";
+  return value === "involute" || value === "round" ? value : "simple";
+}
+
+/**
+ * Runde Zaehne stehen niedriger als evolventische: Ein Modul ueber dem
+ * Teilkreis wuerden sie am Fuss ausbauchen - dort waeren sie breiter als die
+ * Muendung der Luecke, und zwei Boegen je Teilung geben das nicht her.
+ */
+export const ROUND_GEAR_ADDENDUM = 0.6;
+export const ROUND_GEAR_DEDENDUM = 0.85;
+
+/** Wie viele Module der Aussendurchmesser auf die Zaehnezahl legt. */
+function gearDiameterTeethOffset(profile?: string) {
+  return normalizeGearProfile(profile) === "round" ? ROUND_GEAR_ADDENDUM * 2 : 2;
 }
 
 export function normalizeGearPressureAngle(value?: number) {
@@ -77,13 +91,13 @@ export function normalizeGearModule(value?: number) {
 }
 
 /** Der Aussendurchmesser zu Modul und Zaehnezahl - Breite und Tiefe des Koerpers. */
-export function involuteGearDiameter(module: number, teeth?: number) {
-  return Math.max(MIN_GEAR_MODULE, module) * (normalizeGearTeeth(teeth) + 2);
+export function involuteGearDiameter(module: number, teeth?: number, profile?: string) {
+  return Math.max(MIN_GEAR_MODULE, module) * (normalizeGearTeeth(teeth) + gearDiameterTeethOffset(profile));
 }
 
 /** Und zurueck: das Modul, das zu diesem Aussendurchmesser gehoert. */
-export function involuteGearModule(diameter: number, teeth?: number) {
-  return Math.max(0.001, diameter) / (normalizeGearTeeth(teeth) + 2);
+export function involuteGearModule(diameter: number, teeth?: number, profile?: string) {
+  return Math.max(0.001, diameter) / (normalizeGearTeeth(teeth) + gearDiameterTeethOffset(profile));
 }
 
 /**
@@ -191,6 +205,28 @@ export function involuteToothCentre(teeth: number, index: number) {
   return ((index + 0.5) / teeth) * Math.PI * 2;
 }
 
+export type RoundGearMeasures = RoundWave & { module: number; pitchRadius: number };
+
+/**
+ * Runde Zaehne nach Modul und Zaehnezahl.
+ *
+ * Der Kopf steht 0,6 Modul ueber dem Teilkreis, der Grund 0,85 darunter - ein
+ * Viertelmodul Luft fuer den Kopf des Gegenrades. Auf dem Teilkreis ist der
+ * Zahn so dick wie die halbe Teilung minus die halbe Spielbreite, also kaemmen
+ * zwei runde Raeder desselben Moduls beim gewohnten Achsabstand.
+ */
+export function roundGearMeasures(width: number, options: Pick<WorkplaneShape, "teeth" | "gearBacklash">): RoundGearMeasures {
+  const teeth = normalizeGearTeeth(options.teeth);
+  const module = involuteGearModule(Math.max(0.01, width), teeth, "round");
+  const backlash = normalizeGearBacklash(options.gearBacklash, module);
+  const pitchRadius = (module * teeth) / 2;
+  const tipRadius = pitchRadius + ROUND_GEAR_ADDENDUM * module;
+  const rootRadius = Math.max(pitchRadius * 0.2, pitchRadius - ROUND_GEAR_DEDENDUM * module);
+  const halfThickness = Math.PI / teeth / 2 - backlash / (4 * pitchRadius);
+  const wave = roundWave(teeth, tipRadius, rootRadius, pitchRadius, halfThickness, involuteToothCentre(teeth, 0));
+  return { ...wave, module, pitchRadius };
+}
+
 export type GearOutlineCorner = { angle: number; radiusX: number; radiusZ: number };
 
 /**
@@ -239,6 +275,9 @@ export function gearOutlineCorners(
   const safeDepth = Math.max(0.01, depth);
   if (normalizeGearProfile(options.gearProfile) === "involute") {
     return involuteOutlineCorners(involuteGearMeasures(safeWidth, options));
+  }
+  if (normalizeGearProfile(options.gearProfile) === "round") {
+    return roundWaveCorners(roundGearMeasures(safeWidth, options));
   }
   const teeth = normalizeGearTeeth(options.teeth);
   const toothSize = normalizeGearToothSize(options.toothSize, safeWidth, safeDepth);
@@ -440,9 +479,10 @@ export function createGearGeometry({
    * damit sein Modul, und zwei Raeder "mit demselben Modul" kaemmen nicht
    * mehr. Gemessen: 2.521 mm^3 gezogen gegen 2.391 mm^3 im Mass. Also bleibt
    * ein Evolventenrad bei seinem Modul und ist ein paar Prozent schmaler als
-   * sein Rahmen.
+   * sein Rahmen. Fuer runde Zaehne gilt dasselbe - auch sie kaemmen nach
+   * Modul.
    */
-  if (normalizeGearProfile(requestedProfile) !== "involute") {
+  if (normalizeGearProfile(requestedProfile) === "simple") {
     const outlineScaleX = safeWidth / Math.max(Number.EPSILON, outlineMaxX - outlineMinX);
     const outlineScaleZ = safeDepth / Math.max(Number.EPSILON, outlineMaxZ - outlineMinZ);
     for (let ring = 0; ring < ringCount; ring += 1) {

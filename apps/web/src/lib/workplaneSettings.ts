@@ -292,7 +292,7 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
       entry.helixQuality = optionalShapeNumber(source.helixQuality, fallbackEntry?.helixQuality, 4, 32, true);
       entry.gearProfile = source.gearProfile === undefined
         ? fallbackEntry?.gearProfile
-        : source.gearProfile === "simple" || source.gearProfile === "involute"
+        : source.gearProfile === "simple" || source.gearProfile === "involute" || source.gearProfile === "round"
           ? source.gearProfile
           : fallbackEntry?.gearProfile;
       entry.gearPressureAngle = optionalShapeNumber(source.gearPressureAngle, fallbackEntry?.gearPressureAngle, MIN_GEAR_PRESSURE_ANGLE, MAX_GEAR_PRESSURE_ANGLE);

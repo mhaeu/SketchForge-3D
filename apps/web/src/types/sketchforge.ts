@@ -259,7 +259,7 @@ export type GearType = "spur" | "helical" | "bevel";
  * Evolventenzaehnen hatte und was es behaelt, bis die Form umgestellt wird.
  * "involute" kaemmt wirklich.
  */
-export type GearProfile = "simple" | "involute";
+export type GearProfile = "simple" | "involute" | "round";
 
 /** Die Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
 export type KnurlPattern = "straight" | "diamond";

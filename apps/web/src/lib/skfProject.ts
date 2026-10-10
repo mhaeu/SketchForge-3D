@@ -988,7 +988,7 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
       const helixAngle = finiteNumber(definition.helixAngle, `${label}.helixAngle`);
       if (helixAngle < -45 || helixAngle > 45) throw new Error(`${label}.helixAngle is outside the supported range`);
     }
-    if (definition.gearProfile !== undefined && !["simple", "involute"].includes(definition.gearProfile as string)) {
+    if (definition.gearProfile !== undefined && !["simple", "involute", "round"].includes(definition.gearProfile as string)) {
       throw new Error(`${label}.gearProfile is invalid`);
     }
     if (definition.gearPressureAngle !== undefined) {

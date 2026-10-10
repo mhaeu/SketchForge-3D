@@ -166,7 +166,9 @@ export function cadModifierPrimitiveForRoundShape(shape: WorkplaneShape): CadMod
  * alter Weg ueber das Netz funktioniert weiter.
  */
 function involuteGearProfilePart(shape: WorkplaneShape): CadModifierPrimitivePart | null {
-  if (normalizeGearProfile(shape.gearProfile) !== "involute") return null;
+  // Beide nach Modul gebauten Zahnformen gehen als Umriss durch; gerade
+  // Zaehne nicht - die sind nicht nach Modul gebaut.
+  if (normalizeGearProfile(shape.gearProfile) === "simple") return null;
   if (normalizeGearType(shape.gearType) !== "spur") return null;
   const width = shapeWidth(shape);
   const depth = shapeDepth(shape);

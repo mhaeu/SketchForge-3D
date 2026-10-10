@@ -83,6 +83,12 @@ const GEAR_TYPE_OPTIONS: Array<{ value: GearType; label: MessageKey }> = [
   { value: "helical", label: "gear.helical" },
   { value: "bevel", label: "gear.bevel" },
 ];
+const GEAR_PROFILE_OPTIONS = [
+  { value: "involute", label: "gear.profileInvolute" as MessageKey },
+  { value: "round", label: "gear.profileRound" as MessageKey },
+  { value: "simple", label: "gear.profileSimple" as MessageKey },
+];
+
 const KNURL_PATTERN_OPTIONS = [
   { value: "straight", label: "knurl.straight" as MessageKey },
   { value: "diamond", label: "knurl.diamond" as MessageKey },
@@ -124,7 +130,7 @@ const THREAD_PROFILE_OPTIONS = [
 type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality" | "knurlCount" | "knurlDepth" | "knurlAngle" | "knurlChamfer";
 type ShapeSpecialField =
   | { type: "number"; key: ShapeSpecialNumberKey; label: string; defaultValue: number; min: number; max: number; step?: number; unit?: string }
-  | { type: "select"; key: "font" | "gearType" | "knurlPattern" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
+  | { type: "select"; key: "font" | "gearType" | "gearProfile" | "knurlPattern" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
   | { type: "text"; key: "text"; label: string; defaultValue: string; maxLength: number };
 
 const THEME_LABEL_KEYS: Record<AppThemePreference, MessageKey> = {
@@ -241,6 +247,7 @@ function specialFieldsForShape(
     const gearType = customization.gearType ?? defaults.gearType ?? "spur";
     const fields: ShapeSpecialField[] = [
       { type: "select", key: "gearType", label: t("inspector.gearType"), defaultValue: defaults.gearType ?? "spur", options: translatedOptions(GEAR_TYPE_OPTIONS) },
+      { type: "select", key: "gearProfile", label: t("inspector.gearProfile"), defaultValue: defaults.gearProfile ?? "involute", options: translatedOptions(GEAR_PROFILE_OPTIONS) },
       { type: "number", key: "teeth", label: t("inspector.teeth"), defaultValue: defaults.teeth ?? 12, min: 6, max: 64, step: 1 },
       { type: "number", key: "toothSize", label: t("prop.toothSize"), defaultValue: defaults.toothSize ?? 2.5, min: 0.2, max: Math.max(0.2, Math.min(dimensions.width, dimensions.depth) * 0.22), unit: "mm" },
       { type: "number", key: "toothWidth", label: t("prop.toothWidth"), defaultValue: defaults.toothWidth ?? toothPitch * 0.54, min: toothPitch * 0.12, max: toothPitch * 0.82, unit: "mm" },
