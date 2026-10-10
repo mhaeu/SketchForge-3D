@@ -17,6 +17,7 @@
  */
 
 import type { AlignAxis, WorkplaneShape } from "@/types/sketchforge";
+import { sceneAxisFromLetter, sceneAxisLetter } from "@/lib/axisLabels";
 
 /** Grad um die beiden Achsen, die `splitRotationAxes` nennt, in dieser Reihenfolge. */
 export type SplitRotation = readonly [number, number];
@@ -45,14 +46,10 @@ type Point3 = readonly [number, number, number];
  */
 export const SPLIT_AXIS_DISPLAY_ORDER: readonly AlignAxis[] = ["x", "z", "y"];
 
-export function splitAxisLabel(axis: AlignAxis): "X" | "Y" | "Z" {
-  return axis === "x" ? "X" : axis === "y" ? "Z" : "Y";
-}
-
-export function splitAxisFromLabel(label: string): AlignAxis | null {
-  const value = label.trim().toLowerCase();
-  return value === "x" ? "x" : value === "y" ? "z" : value === "z" ? "y" : null;
-}
+// Die Buchstaben der Oberflaeche stehen in `axisLabels.ts` - eine Stelle fuer
+// alle Felder, nicht eine Abschrift je Werkzeug.
+export const splitAxisLabel = sceneAxisLetter;
+export const splitAxisFromLabel = sceneAxisFromLetter;
 
 export function splitAxisNormal(axis: AlignAxis): [number, number, number] {
   return axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];

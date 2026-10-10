@@ -73,6 +73,7 @@ import {
   normalizeHoneycombFrameWidth,
   normalizeHoneycombWallThickness,
 } from "@/lib/honeycombGeometry";
+import { sceneAxisLetter } from "@/lib/axisLabels";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS, customSnapGridLabel, snapGridOptions } from "@/lib/workplaneSettings";
@@ -1617,13 +1618,20 @@ export function ShapeInspector({
   }));
   const isSketchRevolve = shape.sketchOperation === "revolve" || Boolean(shape.sketchRevolve);
   // Absolute position on the workplane: X = shape.x, Z = shape.z (centers),
-  // Y = elevation (underside height). Slider range follows the workspace size;
-  // the number field accepts any value (allowsAboveSliderMax), incl. negative.
+  /*
+   * Die Buchstaben stehen in `axisLabels.ts`: Y laeuft nach hinten, **Z nach
+   * oben** - wie im Scheibenschneider und wie im Teilen-Werkzeug. Die Felder
+   * heissen weiter nach den Szenenachsen (`z` ist die Tiefe, `elevation` die
+   * Hoehe); umbenannt wird nur, was man liest.
+   *
+   * Der Reglerbereich folgt der Arbeitsflaeche; das Zahlenfeld nimmt jeden
+   * Wert (allowsAboveSliderMax), auch einen negativen.
+   */
   const positionBound = Math.max(200, (workspace.width ?? 200), (workspace.depth ?? 200));
   const positionProperties: ShapePropertyConfig[] = [
-    { id: "x", label: "X", value: shape.x ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (x) => onUpdate({ x }) },
-    { id: "y", label: "Y", value: shape.elevation ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (elevation) => onUpdate({ elevation }) },
-    { id: "z", label: "Z", value: shape.z ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (z) => onUpdate({ z }) },
+    { id: "x", label: sceneAxisLetter("x"), value: shape.x ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (x) => onUpdate({ x }) },
+    { id: "z", label: sceneAxisLetter("z"), value: shape.z ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (z) => onUpdate({ z }) },
+    { id: "y", label: sceneAxisLetter("y"), value: shape.elevation ?? 0, min: -positionBound, max: positionBound, step: 0.1, onChange: (elevation) => onUpdate({ elevation }) },
   ];
   // Cross/marker size for the reference point only. Dedicated fields so they
   // never interfere with the width/height/depth used by real geometry.

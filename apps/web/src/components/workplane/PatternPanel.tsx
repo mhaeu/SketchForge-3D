@@ -19,6 +19,7 @@ import {
   clampPatternCount,
   type PatternSettings,
 } from "@/lib/shapePattern";
+import { sceneAxisLetter } from "@/lib/axisLabels";
 import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 /**
@@ -157,9 +158,13 @@ export function PatternPanel({
         <>
           {/* Drei Strecken statt einer Achse und einer Strecke: Eine Reihe
               laengs X ist weiter eine Zahl in einem Feld; zwei davon geben
-              eine schraege Reihe, mit der Hoehe eine Treppe. */}
+              eine schraege Reihe, mit der Hoehe eine Treppe.
+
+              Die Buchstaben kommen aus `axisLabels.ts` - Y laeuft nach
+              hinten, Z nach oben. Die Felder heissen nach den Szenenachsen,
+              darum steht "Z" ueber `spacingY`. */}
           <PatternSlider
-            label={t("pattern.spacingX")}
+            label={`${t("pattern.spacing")} ${sceneAxisLetter("x")}`}
             value={settings.spacingX}
             min={-400}
             max={400}
@@ -169,17 +174,7 @@ export function PatternPanel({
             onChange={(spacingX) => onChange({ ...settings, spacingX })}
           />
           <PatternSlider
-            label={t("pattern.spacingY")}
-            value={settings.spacingY}
-            min={-400}
-            max={400}
-            step={0.1}
-            workspace={workspace}
-            length
-            onChange={(spacingY) => onChange({ ...settings, spacingY })}
-          />
-          <PatternSlider
-            label={t("pattern.spacingZ")}
+            label={`${t("pattern.spacing")} ${sceneAxisLetter("z")}`}
             value={settings.spacingZ}
             min={-400}
             max={400}
@@ -187,6 +182,16 @@ export function PatternPanel({
             workspace={workspace}
             length
             onChange={(spacingZ) => onChange({ ...settings, spacingZ })}
+          />
+          <PatternSlider
+            label={`${t("pattern.spacing")} ${sceneAxisLetter("y")}`}
+            value={settings.spacingY}
+            min={-400}
+            max={400}
+            step={0.1}
+            workspace={workspace}
+            length
+            onChange={(spacingY) => onChange({ ...settings, spacingY })}
           />
         </>
       ) : (
@@ -202,7 +207,7 @@ export function PatternPanel({
             onChange={(angle) => onChange({ ...settings, angle })}
           />
           <PatternSlider
-            label={t("pattern.centreX")}
+            label={`${t("pattern.centre")} ${sceneAxisLetter("x")}`}
             value={settings.centreX}
             min={-400}
             max={400}
@@ -212,7 +217,7 @@ export function PatternPanel({
             onChange={(centreX) => onChange({ ...settings, centreX })}
           />
           <PatternSlider
-            label={t("pattern.centreZ")}
+            label={`${t("pattern.centre")} ${sceneAxisLetter("z")}`}
             value={settings.centreZ}
             min={-400}
             max={400}
