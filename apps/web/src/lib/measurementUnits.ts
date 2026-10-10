@@ -102,23 +102,132 @@ export function displayStepFromMillimeters(step: number, workspace: Pick<Workpla
   return step / lengthDisplayUnit(workspace).millimetersPerUnit;
 }
 
+/**
+ * Eine einzelne Zahl, mit Punkt oder Komma als Dezimalzeichen.
+ *
+ * Welches von beiden es ist, entscheidet das letzte: "1.234,5" ist
+ * deutsch geschrieben, "1,234.5" englisch. Steht nur ein Komma da, ist es das
+ * Dezimalzeichen - "12,5" sind zwoelfeinhalb und nicht zwoelftausendfuenf.
+ */
+function decimalNumber(token: string) {
+  const commaIndex = token.lastIndexOf(",");
+  const dotIndex = token.lastIndexOf(".");
+  let normalized = token;
+  if (commaIndex >= 0 && dotIndex >= 0) {
+    normalized = commaIndex > dotIndex
+      ? token.replace(/\./g, "").replace(",", ".")
+      : token.replace(/,/g, "");
+  } else if (commaIndex >= 0) {
+    normalized = token.replace(",", ".");
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+type MeasurementToken = { kind: "number"; value: number } | { kind: "symbol"; value: "+" | "-" | "*" | "/" | "(" | ")" };
+
+/**
+ * Die Eingabe in Zahlen und Zeichen zerlegt. `null`, wenn etwas darin steht,
+ * was in einem Massfeld nichts zu suchen hat - dann behaelt das Feld seinen
+ * Wert, statt eine geratene Zahl zu uebernehmen.
+ *
+ * `x` gilt als Malzeichen: "15x3" ist, wie man eine Groesse von Hand
+ * hinschreibt.
+ */
+function measurementTokens(compact: string): MeasurementToken[] | null {
+  const tokens: MeasurementToken[] = [];
+  let index = 0;
+  while (index < compact.length) {
+    const character = compact[index];
+    if (/[0-9.,]/.test(character)) {
+      let end = index;
+      while (end < compact.length && /[0-9.,]/.test(compact[end])) end += 1;
+      const value = decimalNumber(compact.slice(index, end));
+      if (Number.isNaN(value)) return null;
+      tokens.push({ kind: "number", value });
+      index = end;
+      continue;
+    }
+    if (character === "x" || character === "X" || character === "*") {
+      tokens.push({ kind: "symbol", value: "*" });
+    } else if (character === "+" || character === "-" || character === "/" || character === "(" || character === ")") {
+      tokens.push({ kind: "symbol", value: character });
+    } else {
+      return null;
+    }
+    index += 1;
+  }
+  return tokens;
+}
+
+/**
+ * Eine Zahl oder eine Rechnung aus einem Massfeld.
+ *
+ * Gerechnet wird mit Plus, Minus, Mal (`*` oder `x`), Geteilt und Klammern,
+ * nach Punkt-vor-Strich: "120-2*4" sind 112, "(40+2)/2" sind 21. Das ist
+ * keine Bequemlichkeit, sondern wie man an einem Teil rechnet - die halbe
+ * Breite, drei Loecher auf eine Strecke, zwei Wandstaerken abgezogen.
+ *
+ * Gerechnet wird von Hand und nicht mit `eval`: Eine Eingabe aus einem
+ * Textfeld ist kein Programm, das wir ausfuehren wollen.
+ *
+ * NaN, wenn die Eingabe keine Rechnung ist - der Aufrufer behaelt dann seinen
+ * alten Wert.
+ */
 export function parseMeasurementInput(value: string | number) {
   if (typeof value === "number") return Number.isFinite(value) ? value : Number.NaN;
   const compact = value.trim().replace(/[\s\u00a0]/g, "");
   if (!compact) return Number.NaN;
+  const tokens = measurementTokens(compact);
+  if (!tokens || tokens.length === 0) return Number.NaN;
 
-  const commaIndex = compact.lastIndexOf(",");
-  const dotIndex = compact.lastIndexOf(".");
-  let normalized = compact;
-  if (commaIndex >= 0 && dotIndex >= 0) {
-    normalized = commaIndex > dotIndex
-      ? compact.replace(/\./g, "").replace(",", ".")
-      : compact.replace(/,/g, "");
-  } else if (commaIndex >= 0) {
-    normalized = compact.replace(",", ".");
+  let position = 0;
+  const peek = () => tokens[position];
+  const takeSymbol = (...wanted: string[]) => {
+    const token = peek();
+    if (token && token.kind === "symbol" && wanted.includes(token.value)) {
+      position += 1;
+      return token.value;
+    }
+    return null;
+  };
+
+  /** Eine Zahl, eine Klammer, oder ein Vorzeichen davor. */
+  const readFactor = (): number => {
+    const sign = takeSymbol("+", "-");
+    if (sign) return sign === "-" ? -readFactor() : readFactor();
+    if (takeSymbol("(")) {
+      const inner = readSum();
+      if (!takeSymbol(")")) return Number.NaN;
+      return inner;
+    }
+    const token = peek();
+    if (!token || token.kind !== "number") return Number.NaN;
+    position += 1;
+    return token.value;
+  };
+
+  const readProduct = (): number => {
+    let result = readFactor();
+    for (let symbol = takeSymbol("*", "/"); symbol; symbol = takeSymbol("*", "/")) {
+      const next = readFactor();
+      result = symbol === "*" ? result * next : result / next;
+    }
+    return result;
+  };
+
+  function readSum(): number {
+    let result = readProduct();
+    for (let symbol = takeSymbol("+", "-"); symbol; symbol = takeSymbol("+", "-")) {
+      const next = readProduct();
+      result = symbol === "+" ? result + next : result - next;
+    }
+    return result;
   }
 
-  const parsed = Number(normalized);
+  const parsed = readSum();
+  // Bleibt etwas uebrig, war die Eingabe keine Rechnung: "12 34" oder "5)".
+  if (position !== tokens.length) return Number.NaN;
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
