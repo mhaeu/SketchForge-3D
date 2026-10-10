@@ -80,7 +80,7 @@ import {
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import type { RegionTaper } from "@/lib/regionTaper";
 import { regionBoxPlacement, regionFromBoxPlacement } from "@/lib/regionFrame";
-import { deformShapePoint } from "@/lib/shapeMeshDeform";
+import { deformShapePoint, subdivideTrianglesByHeight, twistBandCount, twistBandPlanes } from "@/lib/shapeMeshDeform";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
 import { cleanNearZero, cleanRotationDegrees, fallbackSolidColor, mirroredAxisCount, mirrorSign, normalizeShapeOpacity, linkedResizeAxisCount, linkedResizeValues, resizeAxisIsLinked, preservesFeatureSize, proportionalResizeScale, resizedImportedCoordinates, resizedImportedMeshPositions, resizedShapeSize, shapeDepth, shapeExtrudeDeformAt, shapeHasExtrudeDeform, shapeHasShapeDeform, shapeHasSideHeights, shapeHasTaper, shapeSideHeightScaleAt, shapeSideHeightScaleAtShare, shapeSideHeights, shapeOverallFootprintDimensions, shapeTaperDimensions, shapeTaperScaleAt, shapeWidth, shapeWithParametricSource, shapeAccumulatedRotation, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
@@ -10607,9 +10607,40 @@ function createImagePlateMaterials(shape: WorkplaneShape, sideMaterial: THREE.Me
   ];
 }
 
+/**
+ * Das Netz in Hoehenbaender schneiden, bevor der Drall es verdreht.
+ *
+ * Ohne das laeuft eine Seitenkante geradlinig von unten nach oben, waehrend
+ * der Drall sie auf einem Bogen fuehren muesste: Der Koerper wird in der
+ * Mitte eingeschnuert, und jede Seitenflaeche knickt entlang ihrer Diagonale,
+ * weil ihre beiden Dreiecke nach dem Verdrehen nicht mehr in einer Ebene
+ * liegen. Siehe `twistBandCount`.
+ *
+ * `null`, wenn es nichts zu schneiden gibt - dann bleibt der bisherige Weg.
+ */
+function twistBandedGeometry(geometry: THREE.BufferGeometry, shape: WorkplaneShape) {
+  const bands = twistBandCount(shape);
+  if (bands <= 1) return null;
+  const source = geometry.index ? geometry.toNonIndexed() : geometry;
+  const position = source.getAttribute("position");
+  if (!position) return null;
+  source.computeBoundingBox();
+  const box = source.boundingBox;
+  if (!box) return null;
+  const banded = subdivideTrianglesByHeight(
+    position.array as ArrayLike<number>,
+    twistBandPlanes(box.min.y, box.max.y, bands),
+  );
+  if (source !== geometry) source.dispose();
+  const next = new THREE.BufferGeometry();
+  next.setAttribute("position", new THREE.Float32BufferAttribute(banded, 3));
+  return next;
+}
+
 function taperGeometryForShape(geometry: THREE.BufferGeometry, shape: WorkplaneShape) {
   if (!shapeHasShapeDeform(shape)) return geometry;
-  const tapered = geometry.userData.cached ? geometry.clone() : geometry;
+  const tapered = twistBandedGeometry(geometry, shape)
+    ?? (geometry.userData.cached ? geometry.clone() : geometry);
   if (tapered !== geometry) {
     tapered.userData = {};
   }

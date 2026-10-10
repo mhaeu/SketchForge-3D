@@ -135,6 +135,7 @@ import {
   type ResizeAxis,
 } from "@/lib/workplaneShapes";
 import { clampRegionToShape, displayPositions, fullShapeRegion, tightenRegionToShape, type RegionResizeMode, type ResizeRegion } from "@/lib/regionResize";
+import { subdivideTrianglesByHeight, twistBandCount, twistBandPlanes } from "@/lib/shapeMeshDeform";
 import { bakeCadMetadataForShapeTransform, cadBrepTransformForShape, cadModifierPrimitiveForAnalyticBox, cadModifierPrimitiveForBakedShape, cadModifierPrimitiveForProfileShape, cadModifierPrimitiveForRoundShape, importedStepSourceForShape } from "@/lib/cadBakeMetadata";
 import { hasOneToOneCadComponentMapping } from "@/lib/cadModifierGroups";
 import {
@@ -2113,7 +2114,45 @@ async function restoreEdgeTreatmentInShape(shape: WorkplaneShape, path: number[]
   };
 }
 
-function transformMesh(mesh: MeshData, shape: WorkplaneShape): MeshData {
+/**
+ * Dasselbe Schneiden in Hoehenbaender wie im Bild, aber fuer das Netz, das in
+ * die Druckdatei geht (siehe `twistBandCount`). Ohne das waere der verdrehte
+ * Koerper in der Datei eingeschnuert, auch wenn er im Bild rund laeuft.
+ */
+function meshWithTwistBands(mesh: MeshData, bands: number): MeshData {
+  if (bands <= 1 || mesh.faces.length === 0) return mesh;
+  const soup: number[] = [];
+  mesh.faces.forEach(([a, b, c]) => {
+    [a, b, c].forEach((index) => {
+      const vertex = mesh.vertices[index];
+      if (vertex) soup.push(vertex[0], vertex[1], vertex[2]);
+    });
+  });
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (let index = 1; index < soup.length; index += 3) {
+    minY = Math.min(minY, soup[index]);
+    maxY = Math.max(maxY, soup[index]);
+  }
+  const banded = subdivideTrianglesByHeight(soup, twistBandPlanes(minY, maxY, bands));
+  const vertices: Vec3[] = [];
+  const faces: [number, number, number][] = [];
+  for (let offset = 0; offset + 8 < banded.length; offset += 9) {
+    const base = vertices.length;
+    vertices.push(
+      [banded[offset], banded[offset + 1], banded[offset + 2]],
+      [banded[offset + 3], banded[offset + 4], banded[offset + 5]],
+      [banded[offset + 6], banded[offset + 7], banded[offset + 8]],
+    );
+    faces.push([base, base + 1, base + 2]);
+  }
+  return { ...mesh, vertices, faces };
+}
+
+function transformMesh(source: MeshData, shape: WorkplaneShape): MeshData {
+  // Erst in Baender schneiden, dann verdrehen - sonst laufen die Seitenkanten
+  // geradlinig durch den Drall hindurch.
+  const mesh = meshWithTwistBands(source, twistBandCount(shape));
   const centerY = shape.height / 2;
   const tapered = shapeHasTaper(shape);
   const deformed = shapeHasExtrudeDeform(shape);
