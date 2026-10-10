@@ -769,6 +769,7 @@ export const MESSAGES_EN = {
   "gear.spur": "Spur gear",
   "inspector.knurlPattern": "Knurl pattern",
   "knurl.straight": "Straight",
+  "knurl.round": "Round",
   "knurl.diamond": "Crossed",
   "gear.helical": "Helical gear",
   "gear.bevel": "Bevel gear",

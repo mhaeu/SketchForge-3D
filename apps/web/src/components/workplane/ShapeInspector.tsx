@@ -760,7 +760,7 @@ function getShapePropertiesWithAppLimits(
       depth: value,
       size: resizedShapeSize(value, value),
       knurlCount: normalizeKnurlCount(knurl.count, value),
-      knurlDepth: normalizeKnurlDepth(knurl.depth, value),
+      knurlDepth: normalizeKnurlDepth(knurl.depth, value, knurl.count, knurl.pattern),
       knurlChamfer: normalizeKnurlChamfer(knurl.chamfer, value, shape.height),
     }, { resizeAxis: "width" });
     const setKnurlHeight = (value: number) => onUpdate({
@@ -775,14 +775,31 @@ function getShapePropertiesWithAppLimits(
         value: knurl.pattern,
         options: [
           { value: "straight", label: t("knurl.straight") },
+          { value: "round", label: t("knurl.round") },
           { value: "diamond", label: t("knurl.diamond") },
         ],
-        onChange: (value) => onUpdate({ knurlPattern: normalizeKnurlPattern(value) }),
+        // Runde Rillen duerfen nicht so tief; die Tiefe rueckt beim Umstellen
+        // mit, statt eine Zahl stehen zu lassen, die nicht mehr gilt.
+        onChange: (value) => {
+          const knurlPattern = normalizeKnurlPattern(value);
+          onUpdate({ knurlPattern, knurlDepth: normalizeKnurlDepth(knurl.depth, width, knurl.count, knurlPattern) });
+        },
       },
       { id: "diameter", label: t("prop.diameter"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setDiameter },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setKnurlHeight },
-      { id: "knurlCount", label: t("prop.knurlCount"), value: knurl.count, min: MIN_KNURL_COUNT, max: maxKnurlCount(width), step: 1, onChange: (value) => onUpdate({ knurlCount: normalizeKnurlCount(value, width) }) },
-      { id: "knurlDepth", label: t("prop.knurlDepth"), value: knurl.depth, min: MIN_KNURL_DEPTH, max: maxKnurlDepth(width), step: 0.05, onChange: (value) => onUpdate({ knurlDepth: normalizeKnurlDepth(value, width) }) },
+      {
+        id: "knurlCount",
+        label: t("prop.knurlCount"),
+        value: knurl.count,
+        min: MIN_KNURL_COUNT,
+        max: maxKnurlCount(width),
+        step: 1,
+        onChange: (value) => {
+          const knurlCount = normalizeKnurlCount(value, width);
+          onUpdate({ knurlCount, knurlDepth: normalizeKnurlDepth(knurl.depth, width, knurlCount, knurl.pattern) });
+        },
+      },
+      { id: "knurlDepth", label: t("prop.knurlDepth"), value: knurl.depth, min: MIN_KNURL_DEPTH, max: maxKnurlDepth(width, knurl.count, knurl.pattern), step: 0.05, onChange: (value) => onUpdate({ knurlDepth: normalizeKnurlDepth(value, width, knurl.count, knurl.pattern) }) },
       { id: "knurlChamfer", label: t("prop.knurlChamfer"), value: knurl.chamfer, min: 0, max: Math.max(0.05, maxKnurlChamfer(width, shape.height)), step: 0.05, onChange: (value) => onUpdate({ knurlChamfer: normalizeKnurlChamfer(value, width, shape.height) }) },
     ];
     // Der Winkel gilt nur fuer die gekreuzte Raendelung - bei der geraden

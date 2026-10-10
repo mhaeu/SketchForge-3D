@@ -262,7 +262,7 @@ export type GearType = "spur" | "helical" | "bevel";
 export type GearProfile = "simple" | "involute" | "round";
 
 /** Die Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
-export type KnurlPattern = "straight" | "diamond";
+export type KnurlPattern = "straight" | "diamond" | "round";
 
 export type LoftProfileShape = "Oval" | "Rectangle" | "Triangle" | "Pentagon" | "Hexagon";
 

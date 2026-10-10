@@ -823,6 +823,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "gear.spur": "Stirnrad",
   "inspector.knurlPattern": "Rändelmuster",
   "knurl.straight": "Gerade",
+  "knurl.round": "Rund",
   "knurl.diamond": "Gekreuzt",
   "gear.helical": "Schrägrad",
   "gear.bevel": "Kegelrad",

@@ -91,6 +91,7 @@ const GEAR_PROFILE_OPTIONS = [
 
 const KNURL_PATTERN_OPTIONS = [
   { value: "straight", label: "knurl.straight" as MessageKey },
+  { value: "round", label: "knurl.round" as MessageKey },
   { value: "diamond", label: "knurl.diamond" as MessageKey },
 ];
 
@@ -231,7 +232,7 @@ function specialFieldsForShape(
       // Die Obergrenze haengt am Durchmesser: enger als 0,8 mm ringsherum
       // zeigt kein Schmelzschichtdrucker eine Rille.
       { type: "number", key: "knurlCount", label: t("prop.knurlCount"), defaultValue: defaults.knurlCount ?? DEFAULT_KNURL_COUNT, min: MIN_KNURL_COUNT, max: maxKnurlCount(dimensions.width), step: 1 },
-      { type: "number", key: "knurlDepth", label: t("prop.knurlDepth"), defaultValue: defaults.knurlDepth ?? DEFAULT_KNURL_DEPTH, min: MIN_KNURL_DEPTH, max: maxKnurlDepth(dimensions.width), unit: "mm" },
+      { type: "number", key: "knurlDepth", label: t("prop.knurlDepth"), defaultValue: defaults.knurlDepth ?? DEFAULT_KNURL_DEPTH, min: MIN_KNURL_DEPTH, max: maxKnurlDepth(dimensions.width, customization.knurlCount ?? defaults.knurlCount, pattern), unit: "mm" },
       { type: "number", key: "knurlChamfer", label: t("prop.knurlChamfer"), defaultValue: defaults.knurlChamfer ?? DEFAULT_KNURL_CHAMFER, min: 0, max: Math.max(0.05, maxKnurlChamfer(dimensions.width, dimensions.height)), unit: "mm" },
     ];
     if (pattern === "diamond") {

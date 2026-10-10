@@ -301,7 +301,7 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
     if (kind === "knurl") {
       entry.knurlPattern = source.knurlPattern === undefined
         ? fallbackEntry?.knurlPattern
-        : source.knurlPattern === "straight" || source.knurlPattern === "diamond"
+        : source.knurlPattern === "straight" || source.knurlPattern === "diamond" || source.knurlPattern === "round"
           ? source.knurlPattern
           : fallbackEntry?.knurlPattern;
       entry.knurlCount = optionalShapeNumber(source.knurlCount, fallbackEntry?.knurlCount, MIN_KNURL_COUNT, MAX_KNURL_COUNT, true);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createKnurlGeometry,
   knurlCorners,
+  knurlWave,
   knurlSettings,
   knurlTwist,
   maxKnurlChamfer,
@@ -12,6 +13,7 @@ import {
   normalizeKnurlPattern,
 } from "@/lib/knurlGeometry";
 import { validateClosedSolidTriangleSoup } from "@/lib/svgImport";
+import { roundWaveRadiusAt } from "@/lib/roundWave";
 
 function soup(geometry: ReturnType<typeof createKnurlGeometry>) {
   return Array.from(geometry.getAttribute("position").array as Float32Array);
@@ -160,5 +162,61 @@ describe("Die Fase an den Enden", () => {
     expect(knurlSettings({ width: 8, height: 40, knurlChamfer: 9 }).chamfer).toBeCloseTo(2, 9);
     // Ohne Angabe gibt es keine Fase - die Voreinstellung der Form setzt sie.
     expect(knurlSettings({ width: 20, height: 10 }).chamfer).toBe(0);
+  });
+});
+
+describe("Die runde Raendelung", () => {
+  const round = { width: 20, height: 15, knurlPattern: "round" as const, knurlCount: 24, knurlDepth: 0.8 };
+
+  /**
+   * Runde Rillen koennen nicht so tief wie V-Kerben: Zwei Boegen je Teilung
+   * bauchen am Fuss aus, wenn sie tiefer stehen als etwa die halbe Teilung -
+   * die Rille waere dort breiter als ihre Muendung. Bei 24 Rillen auf 20 mm
+   * ist die Teilung 2,618 mm, also bleibt die Tiefe unter 1,178.
+   */
+  it("bleibt flacher als 0,45 der Teilung", () => {
+    const pitch = (Math.PI * 20) / 24;
+    expect(maxKnurlDepth(20, 24, "round")).toBeCloseTo(pitch * 0.45, 9);
+    expect(maxKnurlDepth(20, 24, "straight")).toBeCloseTo(10 / 3, 9);
+    // Eine tiefere Angabe gibt nach.
+    expect(knurlSettings({ ...round, knurlDepth: 5 }).depth).toBeCloseTo(pitch * 0.45, 9);
+  });
+
+  it("ist ein geschlossener, nach aussen gewendeter Koerper", () => {
+    const positions = soup(createKnurlGeometry(round));
+    expect(() => validateClosedSolidTriangleSoup(positions, "round")).not.toThrow();
+    const volume = signedVolume(positions);
+    expect(volume).toBeGreaterThan(Math.PI * 9.2 * 9.2 * 15);
+    expect(volume).toBeLessThan(Math.PI * 100 * 15);
+  });
+
+  it("und bleibt mit Fase in seinen Massen", () => {
+    const positions = soup(createKnurlGeometry({ ...round, knurlChamfer: 1.5 }));
+    expect(() => validateClosedSolidTriangleSoup(positions, "round chamfered")).not.toThrow();
+    for (let i = 0; i < positions.length; i += 3) {
+      const y = positions[i + 1];
+      expect(Math.hypot(positions[i], positions[i + 2])).toBeLessThanOrEqual(10 - 1.5 + Math.min(y, 15 - y) + 1e-4);
+    }
+  });
+
+  /**
+   * Die Welle hat zwei Beschreibungen - die Ecken des Umrisses und den
+   * Halbmesser in einer Richtung - und sie muessen dieselbe Form meinen.
+   * Die eine zeichnet das Netz ohne Fase, die andere mit; wichen sie
+   * voneinander ab, waere der Griff mit Fase ein anderer als ohne.
+   */
+  it("beschreibt dieselbe Welle, ob abgefahren oder abgetastet", () => {
+    const wave = knurlWave(20, 24, 0.8);
+    let worst = 0;
+    knurlCorners(20, 24, 0.8, "round").forEach(({ angle, radius }) => {
+      worst = Math.max(worst, Math.abs(roundWaveRadiusAt(wave, angle) - radius));
+    });
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  /** Rund nimmt weniger weg als eine V-Kerbe derselben Tiefe: der Grat ist breiter. */
+  it("nimmt weniger weg als eine V-Kerbe derselben Tiefe", () => {
+    const straight = signedVolume(soup(createKnurlGeometry({ ...round, knurlPattern: "straight" })));
+    expect(signedVolume(soup(createKnurlGeometry(round)))).toBeGreaterThan(straight);
   });
 });

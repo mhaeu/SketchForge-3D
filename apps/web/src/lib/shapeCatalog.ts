@@ -303,7 +303,7 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
     return {
       knurlPattern: DEFAULT_KNURL_PATTERN,
       knurlCount: normalizeKnurlCount(DEFAULT_KNURL_COUNT, dimensions.width),
-      knurlDepth: normalizeKnurlDepth(DEFAULT_KNURL_DEPTH, dimensions.width),
+      knurlDepth: normalizeKnurlDepth(DEFAULT_KNURL_DEPTH, dimensions.width, DEFAULT_KNURL_COUNT, DEFAULT_KNURL_PATTERN),
       knurlAngle: DEFAULT_KNURL_ANGLE,
       knurlChamfer: normalizeKnurlChamfer(DEFAULT_KNURL_CHAMFER, dimensions.width, dimensions.height),
     };
@@ -541,7 +541,7 @@ export function makeShapeFromAsset(
     gearBacklash: asset.kind === "gear" ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, involuteGearModule(width, customization.teeth ?? DEFAULT_GEAR_TEETH)) : undefined,
     knurlPattern: asset.kind === "knurl" ? normalizeKnurlPattern(customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,
     knurlCount: asset.kind === "knurl" ? normalizeKnurlCount(customization.knurlCount ?? DEFAULT_KNURL_COUNT, width) : undefined,
-    knurlDepth: asset.kind === "knurl" ? normalizeKnurlDepth(customization.knurlDepth ?? DEFAULT_KNURL_DEPTH, width) : undefined,
+    knurlDepth: asset.kind === "knurl" ? normalizeKnurlDepth(customization.knurlDepth ?? DEFAULT_KNURL_DEPTH, width, customization.knurlCount ?? DEFAULT_KNURL_COUNT, customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,
     knurlAngle: asset.kind === "knurl" ? normalizeKnurlAngle(customization.knurlAngle ?? DEFAULT_KNURL_ANGLE) : undefined,
     knurlChamfer: asset.kind === "knurl" ? normalizeKnurlChamfer(customization.knurlChamfer ?? DEFAULT_KNURL_CHAMFER, width, height) : undefined,
     threadRole: asset.kind === "thread" ? normalizeThreadRole(customization.threadRole ?? DEFAULT_THREAD_ROLE) : undefined,

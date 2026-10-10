@@ -170,3 +170,41 @@ export function roundWaveCorners(wave: RoundWave): RoundWaveCorner[] {
   }
   return corners;
 }
+
+/**
+ * Der Halbmesser der Welle in Richtung `phi` - dort, wo dieser Strahl aus der
+ * Mitte sie trifft.
+ *
+ * Gebraucht wird das, wo nicht der Umriss abgefahren, sondern an einer
+ * bestimmten Richtung gefragt wird: die Fase der Raendelung schneidet als
+ * Kegel (`min(Umriss, Kegel)`), und die gekreuzte Raendelung legt zwei
+ * verdrehte Wellen uebereinander und nimmt die kleinere.
+ *
+ * Gerechnet wird der Schnitt des Strahls mit dem Kreis, auf dem das Stueck
+ * liegt: |t * d - c| = r. Beim Kopfbogen ist die Flaeche die **aeussere**
+ * Loesung, beim Lueckenbogen die innere - sein Mittelpunkt liegt weiter
+ * aussen als der Grund, den er beschreibt.
+ */
+export function roundWaveRadiusAt(wave: RoundWave, phi: number) {
+  const { teeth, toothCentre, toothRadius, gapCentre, gapRadius } = wave;
+  const step = (Math.PI * 2) / teeth;
+  const half = Math.PI / teeth;
+  // Der Winkel zur naechsten Zahnmitte, zwischen -half und +half.
+  const fromCentre = ((((phi - wave.firstCentre) % step) + step + half) % step) - half;
+  const towards = toothRadius / (toothRadius + gapRadius);
+  const touchX = toothCentre + (gapCentre * Math.cos(half) - toothCentre) * towards;
+  const touchZ = gapCentre * Math.sin(half) * towards;
+  const touchAngle = Math.atan2(touchZ, touchX);
+  const onTooth = Math.abs(fromCentre) <= touchAngle;
+  // Die Mitte des Stuecks, von der Zahnmitte aus gesehen.
+  const centreAngle = onTooth ? 0 : half;
+  const centreDistance = onTooth ? toothCentre : gapCentre;
+  const radius = onTooth ? toothRadius : gapRadius;
+  // Richtung des Strahls, relativ zur Mitte des Stuecks.
+  const angle = Math.abs(fromCentre) - centreAngle;
+  const along = centreDistance * Math.cos(angle);
+  const square = along * along - centreDistance * centreDistance + radius * radius;
+  if (square < 0) return onTooth ? wave.tipRadius : wave.rootRadius;
+  const root = Math.sqrt(square);
+  return onTooth ? along + root : along - root;
+}

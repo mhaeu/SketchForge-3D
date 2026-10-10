@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { KnurlPattern } from "@/types/sketchforge";
+import { roundWave, roundWaveCorners, roundWaveRadiusAt } from "@/lib/roundWave";
 
 /**
  * knurlGeometry.ts
@@ -38,7 +39,7 @@ export const MIN_KNURL_ANGLE = 10;
 export const MAX_KNURL_ANGLE = 60;
 
 export function normalizeKnurlPattern(value: unknown): KnurlPattern {
-  return value === "diamond" ? "diamond" : "straight";
+  return value === "diamond" || value === "round" ? value : "straight";
 }
 
 /**
@@ -58,14 +59,25 @@ export function normalizeKnurlCount(value: unknown, diameter?: number) {
   return Math.min(maxKnurlCount(diameter), Math.max(MIN_KNURL_COUNT, count));
 }
 
-/** Eine Rille darf ein Drittel des Wegs zur Achse gehen, und nie unter das Mindestmass. */
-export function maxKnurlDepth(diameter: number) {
-  return Math.max(MIN_KNURL_DEPTH, (diameter / 2) / 3);
+/**
+ * Wie tief eine Rille gehen darf: ein Drittel des Wegs zur Achse, und nie
+ * unter das Mindestmass.
+ *
+ * Runde Rillen koennen nicht so tief: Zwei Boegen je Teilung bauchen am Fuss
+ * aus, wenn sie tiefer stehen als etwa die halbe Teilung - die Rille waere
+ * dort breiter als ihre Muendung. Darum bleiben sie unter 0,45 der Teilung
+ * rund um den Griff; eine groessere Angabe gibt nach.
+ */
+export function maxKnurlDepth(diameter: number, count?: number, pattern?: unknown) {
+  const limit = Math.max(MIN_KNURL_DEPTH, (diameter / 2) / 3);
+  if (normalizeKnurlPattern(pattern) !== "round") return limit;
+  const pitch = (Math.PI * Math.max(0.001, diameter)) / normalizeKnurlCount(count, diameter);
+  return Math.max(MIN_KNURL_DEPTH, Math.min(limit, pitch * 0.45));
 }
 
-export function normalizeKnurlDepth(value: unknown, diameter: number) {
+export function normalizeKnurlDepth(value: unknown, diameter: number, count?: number, pattern?: unknown) {
   const depth = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_KNURL_DEPTH;
-  return Math.min(maxKnurlDepth(diameter), Math.max(MIN_KNURL_DEPTH, depth));
+  return Math.min(maxKnurlDepth(diameter, count, pattern), Math.max(MIN_KNURL_DEPTH, depth));
 }
 
 /** Wie steil die gekreuzten Rillen laufen, in Grad von der Achse. */
@@ -90,8 +102,23 @@ export function normalizeKnurlChamfer(value: unknown, diameter: number, height: 
 
 export type KnurlCorner = { angle: number; radius: number };
 
+/**
+ * Die Welle der runden Raendelung: Grate und Rillen gleich breit, Koepfe auf
+ * dem aeusseren Halbmesser, Gruende eine Rillentiefe darunter.
+ */
+export function knurlWave(diameter: number, count: number, depth: number) {
+  const radius = diameter / 2;
+  const grooves = normalizeKnurlCount(count, diameter);
+  const half = Math.PI / grooves;
+  // Gleich breit heisst: der Grat nimmt die Haelfte der halben Teilung ein.
+  return roundWave(grooves, radius, radius - depth, radius - depth / 2, half / 2, 0);
+}
+
 /** Die Ecken des Umrisses: Grate auf dem aeusseren Halbmesser, Rillengruende dazwischen. */
-export function knurlCorners(diameter: number, count: number, depth: number): KnurlCorner[] {
+export function knurlCorners(diameter: number, count: number, depth: number, pattern?: unknown): KnurlCorner[] {
+  if (normalizeKnurlPattern(pattern) === "round") {
+    return roundWaveCorners(knurlWave(diameter, count, depth)).map(({ angle, radiusX }) => ({ angle, radius: radiusX }));
+  }
   const radius = diameter / 2;
   const grooves = normalizeKnurlCount(count, diameter);
   const step = (Math.PI * 2) / grooves;
@@ -129,7 +156,7 @@ export function knurlSettings(shape: KnurlShapeFields) {
     height,
     pattern: normalizeKnurlPattern(shape.knurlPattern),
     count: normalizeKnurlCount(shape.knurlCount, diameter),
-    depth: normalizeKnurlDepth(shape.knurlDepth, diameter),
+    depth: normalizeKnurlDepth(shape.knurlDepth, diameter, shape.knurlCount, shape.knurlPattern),
     angle: normalizeKnurlAngle(shape.knurlAngle),
     chamfer: normalizeKnurlChamfer(shape.knurlChamfer, diameter, height),
   };
@@ -159,9 +186,9 @@ export function createKnurlGeometry(shape: KnurlShapeFields): THREE.BufferGeomet
   const positions: number[] = [];
   const indices: number[] = [];
 
-  if (pattern === "straight" && chamfer <= 0) {
+  if (pattern !== "diamond" && chamfer <= 0) {
     // Genau der Umriss, hochgezogen: ein Ring am Fuss, einer oben.
-    const corners = knurlCorners(diameter, count, depth);
+    const corners = knurlCorners(diameter, count, depth, pattern);
     [0, height].forEach((y) => corners.forEach(({ angle: a, radius: r }) => positions.push(Math.cos(a) * r, y, Math.sin(a) * r)));
     const n = corners.length;
     for (let i = 0; i < n; i += 1) {
@@ -202,7 +229,13 @@ export function createKnurlGeometry(shape: KnurlShapeFields): THREE.BufferGeomet
       for (let step = 0; step <= steps; step += 1) levels.push({ y: (step / steps) * chamfer, turn: 0 });
       for (let step = 0; step <= steps; step += 1) levels.push({ y: height - chamfer + (step / steps) * chamfer, turn: 0 });
     }
-    const outline = (phi: number) => outlineRadiusAt(phi, radius, depth, count);
+    /*
+     * Der Halbmesser in einer Richtung - fuer die Fase (die als Kegel
+     * schneidet) und fuer die gekreuzte Raendelung (zwei verdrehte Wellen,
+     * die kleinere gilt). Bei runden Rillen fragt derselbe Strahl die Welle.
+     */
+    const wave = pattern === "round" ? knurlWave(diameter, count, depth) : null;
+    const outline = (phi: number) => (wave ? roundWaveRadiusAt(wave, phi) : outlineRadiusAt(phi, radius, depth, count));
     // Die Fase ist ein Kegel unter 45 Grad: kein Punkt steht weiter aussen als
     // der volle Halbmesser minus der Fase, plus dem Abstand zum naeheren Ende.
     const cone = (y: number) => (chamfer > 0 ? radius - chamfer + Math.min(y, height - y) : Infinity);

@@ -209,10 +209,12 @@ export function cadModifierPrimitiveForProfileShape(shape: WorkplaneShape): CadM
   if (shape.kind !== "knurl") return null;
   const width = shapeWidth(shape);
   const settings = knurlSettings({ ...shape, width });
-  if (settings.pattern !== "straight") return null;
+  // Gerade und runde Rillen laufen laengs der Achse und sind damit ein
+  // hochgezogener Umriss. Die gekreuzten nicht - ihre Rillen sind Schrauben.
+  if (settings.pattern === "diamond") return null;
   if (!allFinitePositive([settings.diameter, settings.height])) return null;
   const loop: number[] = [];
-  knurlCorners(settings.diameter, settings.count, settings.depth).forEach(({ angle, radius }) => {
+  knurlCorners(settings.diameter, settings.count, settings.depth, settings.pattern).forEach(({ angle, radius }) => {
     loop.push(Math.cos(angle) * radius, Math.sin(angle) * radius);
   });
   return {

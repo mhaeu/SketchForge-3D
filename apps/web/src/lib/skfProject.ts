@@ -950,7 +950,7 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
     ["startAngle", "sweepAngle", "sides", "quality"].forEach((field) => finiteNumber(settings[field], `${label}.sketchRevolve.${field}`));
   }
   if (kind === "knurl") {
-    if (definition.knurlPattern !== undefined && !["straight", "diamond"].includes(definition.knurlPattern as string)) {
+    if (definition.knurlPattern !== undefined && !["straight", "diamond", "round"].includes(definition.knurlPattern as string)) {
       throw new Error(`${label}.knurlPattern is invalid`);
     }
     if (definition.knurlCount !== undefined) {
