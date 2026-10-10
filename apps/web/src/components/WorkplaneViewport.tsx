@@ -1359,6 +1359,9 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    gearProfile: shape.gearProfile,
+    gearPressureAngle: shape.gearPressureAngle,
+    gearBacklash: shape.gearBacklash,
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -1555,6 +1558,9 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    gearProfile: shape.gearProfile,
+    gearPressureAngle: shape.gearPressureAngle,
+    gearBacklash: shape.gearBacklash,
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -10413,6 +10419,9 @@ function createShapeObject(
         gearType: shape.gearType,
         helixAngle: shape.helixAngle,
         helixQuality: shape.helixQuality,
+        gearProfile: shape.gearProfile,
+        gearPressureAngle: shape.gearPressureAngle,
+        gearBacklash: shape.gearBacklash,
       })), material, shape);
       break;
     case "knurl":

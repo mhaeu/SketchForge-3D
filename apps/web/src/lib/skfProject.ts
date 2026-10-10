@@ -988,6 +988,17 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
       const helixAngle = finiteNumber(definition.helixAngle, `${label}.helixAngle`);
       if (helixAngle < -45 || helixAngle > 45) throw new Error(`${label}.helixAngle is outside the supported range`);
     }
+    if (definition.gearProfile !== undefined && !["simple", "involute"].includes(definition.gearProfile as string)) {
+      throw new Error(`${label}.gearProfile is invalid`);
+    }
+    if (definition.gearPressureAngle !== undefined) {
+      const pressure = finiteNumber(definition.gearPressureAngle, `${label}.gearPressureAngle`);
+      if (pressure < 14.5 || pressure > 30) throw new Error(`${label}.gearPressureAngle is outside the supported range`);
+    }
+    if (definition.gearBacklash !== undefined) {
+      const backlash = finiteNumber(definition.gearBacklash, `${label}.gearBacklash`);
+      if (backlash < 0 || backlash > 2) throw new Error(`${label}.gearBacklash is outside the supported range`);
+    }
     if (definition.helixQuality !== undefined) {
       const helixQuality = finiteNumber(definition.helixQuality, `${label}.helixQuality`);
       if (!Number.isInteger(helixQuality) || helixQuality < 4 || helixQuality > 32) {

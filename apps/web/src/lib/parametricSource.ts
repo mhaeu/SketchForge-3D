@@ -17,6 +17,7 @@ export const BODY_PARAMETER_KEYS = [
   "cornerFillet", "topBottomFillet", "roundedBoxQuality",
   "honeycombCellSize", "honeycombWallThickness", "honeycombFrameWidth",
   "teeth", "toothSize", "toothWidth", "centerHoleSize", "gearType", "helixAngle", "helixQuality",
+  "gearProfile", "gearPressureAngle", "gearBacklash",
   "knurlPattern", "knurlCount", "knurlDepth", "knurlAngle", "knurlChamfer",
   "threadRole", "threadHead", "threadDrive", "threadHand", "threadProfile", "threadDiameter",
   "threadPitch", "threadClearance", "threadQuality", "threadHeadHeight", "threadChamfer",

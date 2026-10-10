@@ -30,6 +30,11 @@ import {
   MIN_SPRING_WIRE,
 } from "@/lib/springGeometry";
 import {
+  MAX_GEAR_BACKLASH,
+  MAX_GEAR_PRESSURE_ANGLE,
+  MIN_GEAR_PRESSURE_ANGLE,
+} from "@/lib/gearGeometry";
+import {
   MAX_KNURL_ANGLE,
   MAX_KNURL_COUNT,
   MIN_KNURL_ANGLE,
@@ -285,6 +290,13 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
           : fallbackEntry?.gearType;
       entry.helixAngle = optionalShapeNumber(source.helixAngle, fallbackEntry?.helixAngle, -45, 45);
       entry.helixQuality = optionalShapeNumber(source.helixQuality, fallbackEntry?.helixQuality, 4, 32, true);
+      entry.gearProfile = source.gearProfile === undefined
+        ? fallbackEntry?.gearProfile
+        : source.gearProfile === "simple" || source.gearProfile === "involute"
+          ? source.gearProfile
+          : fallbackEntry?.gearProfile;
+      entry.gearPressureAngle = optionalShapeNumber(source.gearPressureAngle, fallbackEntry?.gearPressureAngle, MIN_GEAR_PRESSURE_ANGLE, MAX_GEAR_PRESSURE_ANGLE);
+      entry.gearBacklash = optionalShapeNumber(source.gearBacklash, fallbackEntry?.gearBacklash, 0, MAX_GEAR_BACKLASH);
     }
     if (kind === "knurl") {
       entry.knurlPattern = source.knurlPattern === undefined

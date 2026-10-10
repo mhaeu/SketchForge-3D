@@ -15,6 +15,20 @@ import {
   MIN_GEAR_HELIX_ANGLE,
   MIN_GEAR_HELIX_QUALITY,
   gearCenterHoleLimits,
+  involuteGearDiameter,
+  involuteGearMeasures,
+  MAX_GEAR_BACKLASH,
+  MAX_GEAR_MODULE,
+  MAX_GEAR_PRESSURE_ANGLE,
+  MAX_GEAR_TEETH,
+  MIN_GEAR_MODULE,
+  MIN_GEAR_PRESSURE_ANGLE,
+  MIN_GEAR_TEETH,
+  normalizeGearBacklash,
+  normalizeGearModule,
+  normalizeGearPressureAngle,
+  normalizeGearProfile,
+  normalizeGearTeeth,
   normalizeGearHelixAngle,
   normalizeGearHelixQuality,
   normalizeGearCenterHoleSize,
@@ -1110,6 +1124,93 @@ function getShapePropertiesWithAppLimits(
     ];
   }
 
+  if (shape.kind === "gear" && normalizeGearProfile(shape.gearProfile) === "involute") {
+    /*
+     * Ein Evolventenrad wird nach Modul und Zaehnezahl eingestellt, wie bei
+     * jedem Zahnradrechner - seine Groesse folgt daraus (Aussendurchmesser =
+     * Modul x (Zaehne + 2)) und nicht umgekehrt. Darum gibt es hier keine
+     * Breite und keine Tiefe: Wer daran zieht, aendert das Modul, und das
+     * steht als eigene Zahl da.
+     *
+     * Zahngroesse und Zahnbreite entfallen ebenso - die gehoeren zu den
+     * geraden Zaehnen, die ihre Form nicht aus dem Modul nehmen.
+     */
+    const measures = involuteGearMeasures(width, shape);
+    const teeth = measures.teeth;
+    const centerHoleLimits = gearCenterHoleLimits(width, depth, normalizeGearToothSize(shape.toothSize, width, depth));
+    const resized = (module: number, nextTeeth: number) => {
+      const diameter = involuteGearDiameter(module, nextTeeth);
+      return {
+        teeth: nextTeeth,
+        width: diameter,
+        depth: diameter,
+        size: diameter,
+        // Das Spiel haengt am Modul (hoechstens ein halbes) und rueckt mit.
+        gearBacklash: normalizeGearBacklash(shape.gearBacklash, module),
+        centerHoleSize: normalizeGearCenterHoleSize(shape.centerHoleSize, diameter, diameter, normalizeGearToothSize(shape.toothSize, diameter, diameter)),
+      };
+    };
+    return [
+      {
+        type: "select",
+        id: "gearProfile",
+        label: t("inspector.gearProfile"),
+        value: "involute",
+        options: [
+          { value: "involute", label: t("gear.profileInvolute") },
+          { value: "simple", label: t("gear.profileSimple") },
+        ],
+        onChange: (value) => onUpdate({ gearProfile: normalizeGearProfile(value) }),
+      },
+      {
+        id: "module",
+        label: t("prop.gearModule"),
+        value: measures.module,
+        min: MIN_GEAR_MODULE,
+        max: MAX_GEAR_MODULE,
+        step: 0.1,
+        onChange: (value) => onUpdate(resized(normalizeGearModule(value), teeth), { resizeAxis: "width" }),
+      },
+      {
+        id: "teeth",
+        label: t("inspector.teeth"),
+        value: teeth,
+        min: MIN_GEAR_TEETH,
+        max: MAX_GEAR_TEETH,
+        step: 1,
+        onChange: (value) => onUpdate(resized(measures.module, normalizeGearTeeth(value)), { resizeAxis: "width" }),
+      },
+      {
+        id: "pressureAngle",
+        label: t("prop.gearPressureAngle"),
+        value: normalizeGearPressureAngle(shape.gearPressureAngle),
+        min: MIN_GEAR_PRESSURE_ANGLE,
+        max: MAX_GEAR_PRESSURE_ANGLE,
+        step: 0.5,
+        onChange: (gearPressureAngle) => onUpdate({ gearPressureAngle }),
+      },
+      {
+        id: "backlash",
+        label: t("prop.gearBacklash"),
+        value: normalizeGearBacklash(shape.gearBacklash, measures.module),
+        min: 0,
+        max: Math.min(MAX_GEAR_BACKLASH, measures.module * 0.5),
+        step: 0.05,
+        onChange: (gearBacklash) => onUpdate({ gearBacklash }),
+      },
+      {
+        id: "centerHole",
+        label: t("prop.centerHole"),
+        value: normalizeGearCenterHoleSize(shape.centerHoleSize, width, depth, normalizeGearToothSize(shape.toothSize, width, depth)),
+        min: centerHoleLimits.min,
+        max: centerHoleLimits.max,
+        step: 0.1,
+        onChange: (centerHoleSize) => onUpdate({ centerHoleSize }),
+      },
+      { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
+  }
+
   if (shape.kind === "gear") {
     const setGearWidth = (value: number) => {
       const toothSize = normalizeGearToothSize(shape.toothSize, value, depth);
@@ -1128,6 +1229,17 @@ function getShapePropertiesWithAppLimits(
     const toothSize = normalizeGearToothSize(shape.toothSize ?? DEFAULT_GEAR_TOOTH_SIZE, width, depth);
     const centerHoleLimits = gearCenterHoleLimits(width, depth, toothSize);
     const properties: ShapePropertyConfig[] = [
+      {
+        type: "select",
+        id: "gearProfile",
+        label: t("inspector.gearProfile"),
+        value: "simple",
+        options: [
+          { value: "involute", label: t("gear.profileInvolute") },
+          { value: "simple", label: t("gear.profileSimple") },
+        ],
+        onChange: (value) => onUpdate({ gearProfile: normalizeGearProfile(value) }),
+      },
       {
         id: "teeth",
         label: t("inspector.teeth"),
@@ -1459,10 +1571,10 @@ export function ShapeInspector({
   const properties = withLinkToggles(getShapeProperties(shape, onUpdate, workspace, linkedAxes));
   const gearType = shape.kind === "gear" ? normalizeGearType(shape.gearType) : null;
   const primaryProperties = shape.kind === "gear"
-    ? properties.filter((property) => ["centerHole", "length", "width", "height"].includes(property.id))
+    ? properties.filter((property) => ["gearProfile", "centerHole", "length", "width", "height"].includes(property.id))
     : properties;
   const gearTeethProperties = shape.kind === "gear"
-    ? properties.filter((property) => ["teeth", "toothSize", "toothWidth"].includes(property.id))
+    ? properties.filter((property) => ["module", "teeth", "toothSize", "toothWidth", "pressureAngle", "backlash"].includes(property.id))
     : [];
   const gearHelixProperties = shape.kind === "gear"
     ? properties.filter((property) => ["helixAngle", "quality"].includes(property.id))

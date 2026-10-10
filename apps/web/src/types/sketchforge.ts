@@ -114,6 +114,12 @@ export type ShapeCustomization = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  /** Die Zahnform des Zahnrades. */
+  gearProfile?: GearProfile;
+  /** Evolventenzahn: der Eingriffswinkel, in Grad. */
+  gearPressureAngle?: number;
+  /** Evolventenzahn: das Spiel eines kaemmenden Paares, in mm. */
+  gearBacklash?: number;
   /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
   knurlPattern?: KnurlPattern;
   /** Raendelung: wie viele Rillen ringsherum. */
@@ -247,6 +253,13 @@ export type SketchProfile = {
 export type SketchOperation = "extrude" | "revolve" | "sweep";
 
 export type GearType = "spur" | "helical" | "bevel";
+
+/**
+ * Die Zahnform. "simple" sind gerade Flanken - was ein Zahnrad vor den
+ * Evolventenzaehnen hatte und was es behaelt, bis die Form umgestellt wird.
+ * "involute" kaemmt wirklich.
+ */
+export type GearProfile = "simple" | "involute";
 
 /** Die Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
 export type KnurlPattern = "straight" | "diamond";
@@ -473,6 +486,12 @@ export type WorkplaneShape = {
   gearType?: GearType;
   helixAngle?: number;
   helixQuality?: number;
+  /** Die Zahnform des Zahnrades. */
+  gearProfile?: GearProfile;
+  /** Evolventenzahn: der Eingriffswinkel, in Grad. */
+  gearPressureAngle?: number;
+  /** Evolventenzahn: das Spiel eines kaemmenden Paares, in mm. */
+  gearBacklash?: number;
   /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
   knurlPattern?: KnurlPattern;
   /** Raendelung: wie viele Rillen ringsherum. */

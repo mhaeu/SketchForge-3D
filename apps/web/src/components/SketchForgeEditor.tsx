@@ -2619,6 +2619,9 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
         gearType: shape.gearType,
         helixAngle: shape.helixAngle,
         helixQuality: shape.helixQuality,
+        gearProfile: shape.gearProfile,
+        gearPressureAngle: shape.gearPressureAngle,
+        gearBacklash: shape.gearBacklash,
       });
       break;
     case "thread":

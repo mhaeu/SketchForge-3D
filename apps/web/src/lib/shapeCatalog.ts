@@ -45,6 +45,14 @@ import {
   normalizeGearToothSize,
   normalizeGearToothWidth,
   normalizeGearType,
+  DEFAULT_GEAR_BACKLASH,
+  DEFAULT_GEAR_MODULE,
+  DEFAULT_GEAR_PRESSURE_ANGLE,
+  involuteGearDiameter,
+  involuteGearModule,
+  normalizeGearBacklash,
+  normalizeGearPressureAngle,
+  normalizeGearProfile,
 } from "@/lib/gearGeometry";
 import {
   DEFAULT_KNURL_ANGLE,
@@ -214,7 +222,12 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
   }
   const roundProfile = kind === "sphere" || kind === "torus" || kind === "ring" || kind === "halfSphere";
   const flatProfile = kind === "torus" || kind === "ring" || kind === "text" || kind === "gear";
-  const size = kind === "gear" ? 30 : kind === "loft" ? 24 : roundProfile ? 22 : 20;
+  /*
+   * Ein neues Zahnrad ist evolventisch, und dort folgt die Groesse dem
+   * Modul: Aussendurchmesser = Modul x (Zaehne + 2), also 2 x 14 = 28 bei
+   * zwoelf Zaehnen. Ein rundes Mass statt 30, damit das Modul genau 2 ist.
+   */
+  const size = kind === "gear" ? involuteGearDiameter(DEFAULT_GEAR_MODULE, DEFAULT_GEAR_TEETH) : kind === "loft" ? 24 : roundProfile ? 22 : 20;
   return {
     width: kind === "text" ? 86 : size,
     depth: kind === "text" ? 28 : size,
@@ -306,6 +319,11 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
       gearType: DEFAULT_GEAR_TYPE,
       helixAngle: DEFAULT_GEAR_HELIX_ANGLE,
       helixQuality: DEFAULT_GEAR_HELIX_QUALITY,
+      // Neue Zahnraeder haben Evolventenzaehne - die kaemmen. Alte behalten
+      // ihre geraden, bis man die Zahnform umstellt.
+      gearProfile: "involute",
+      gearPressureAngle: DEFAULT_GEAR_PRESSURE_ANGLE,
+      gearBacklash: DEFAULT_GEAR_BACKLASH,
     };
   }
   return {};
@@ -366,6 +384,9 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     gearType: shape.gearType,
     helixAngle: shape.helixAngle,
     helixQuality: shape.helixQuality,
+    gearProfile: shape.gearProfile,
+    gearPressureAngle: shape.gearPressureAngle,
+    gearBacklash: shape.gearBacklash,
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -515,6 +536,9 @@ export function makeShapeFromAsset(
     gearType: asset.kind === "gear" ? normalizeGearType(customization.gearType ?? DEFAULT_GEAR_TYPE) : undefined,
     helixAngle: asset.kind === "gear" ? normalizeGearHelixAngle(customization.helixAngle ?? DEFAULT_GEAR_HELIX_ANGLE) : undefined,
     helixQuality: asset.kind === "gear" ? normalizeGearHelixQuality(customization.helixQuality ?? DEFAULT_GEAR_HELIX_QUALITY) : undefined,
+    gearProfile: asset.kind === "gear" ? normalizeGearProfile(customization.gearProfile ?? "involute") : undefined,
+    gearPressureAngle: asset.kind === "gear" ? normalizeGearPressureAngle(customization.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE) : undefined,
+    gearBacklash: asset.kind === "gear" ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, involuteGearModule(width, customization.teeth ?? DEFAULT_GEAR_TEETH)) : undefined,
     knurlPattern: asset.kind === "knurl" ? normalizeKnurlPattern(customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,
     knurlCount: asset.kind === "knurl" ? normalizeKnurlCount(customization.knurlCount ?? DEFAULT_KNURL_COUNT, width) : undefined,
     knurlDepth: asset.kind === "knurl" ? normalizeKnurlDepth(customization.knurlDepth ?? DEFAULT_KNURL_DEPTH, width) : undefined,

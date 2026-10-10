@@ -4,6 +4,7 @@ import type { CadModifierPrimitivePart } from "@/lib/cadModifierTypes";
 import { cadTransformRequiresGeneralTransform } from "@/lib/cadModifierRuntime";
 import { mirrorSign, preservesFeatureSize, resizedImportedCoordinates, shapeDepth, shapeHasShapeDeform, shapeWidth } from "@/lib/workplaneShapes";
 import { knurlCorners, knurlSettings } from "@/lib/knurlGeometry";
+import { gearOutlineCorners, normalizeGearCenterHoleSize, normalizeGearProfile, normalizeGearType } from "@/lib/gearGeometry";
 
 export type BakedCadMetadataFrame = {
   centerX: number;
@@ -156,6 +157,38 @@ export function cadModifierPrimitiveForRoundShape(shape: WorkplaneShape): CadMod
 }
 
 /**
+ * Ein Stirnrad mit Evolventenzaehnen als hochgezogener Umriss - derselbe
+ * Umriss, aus dem auch sein Netz gebaut wird.
+ *
+ * Nur das Stirnrad: Ein Schraegrad verdreht sich ueber die Hoehe und ein
+ * Kegelrad verjuengt sich, und beides ist keine Hochziehung. Gerade Zaehne
+ * bleiben ebenfalls aussen vor - sie sind nicht nach Modul gebaut, und ihr
+ * alter Weg ueber das Netz funktioniert weiter.
+ */
+function involuteGearProfilePart(shape: WorkplaneShape): CadModifierPrimitivePart | null {
+  if (normalizeGearProfile(shape.gearProfile) !== "involute") return null;
+  if (normalizeGearType(shape.gearType) !== "spur") return null;
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  if (!allFinitePositive([width, depth, shape.height])) return null;
+  // Rund muss es sein: Ein ungleich gezogenes Rad ist kein Zahnrad mehr, und
+  // sein Umriss waere eine Ellipse mit Zaehnen.
+  if (Math.abs(width - depth) > 0.0005) return null;
+  const loop: number[] = [];
+  gearOutlineCorners(width, depth, shape).forEach(({ angle, radiusX, radiusZ }) => {
+    loop.push(Math.cos(angle) * radiusX, Math.sin(angle) * radiusZ);
+  });
+  const bore = normalizeGearCenterHoleSize(shape.centerHoleSize, width, depth, shape.toothSize);
+  return {
+    kind: "profileExtrusion",
+    loop,
+    bore: bore > 0 ? bore : undefined,
+    height: shape.height,
+    transform: primitivePlacementTransform(shape, shape.height),
+  };
+}
+
+/**
  * Formen, deren Grundflaeche ein Vieleck ist, als hochgezogener Umriss.
  *
  * Bis jetzt genau eine: die Raendelung mit geraden Rillen. Ihr Umriss ist der
@@ -170,6 +203,7 @@ export function cadModifierPrimitiveForRoundShape(shape: WorkplaneShape): CadMod
  */
 export function cadModifierPrimitiveForProfileShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
   if (shape.importedMesh || shape.groupedShapes?.length) return null;
+  if (shape.kind === "gear") return involuteGearProfilePart(shape);
   if (shape.kind !== "knurl") return null;
   const width = shapeWidth(shape);
   const settings = knurlSettings({ ...shape, width });

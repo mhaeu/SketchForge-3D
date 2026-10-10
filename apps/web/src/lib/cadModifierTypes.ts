@@ -47,7 +47,7 @@ export type CadModifierPrimitivePart =
    * Damit kommt eine Form mit vieleckiger Grundflaeche als genauer Koerper in
    * den Kern statt als Netz; siehe `cadProfileSolid.ts`.
    */
-  | { kind: "profileExtrusion"; loop: number[]; height: number; capChamfer?: { radius: number; size: number }; transform?: number[] };
+  | { kind: "profileExtrusion"; loop: number[]; bore?: number; height: number; capChamfer?: { radius: number; size: number }; transform?: number[] };
 
 export type CadModifierMeshPart = {
   positions?: Float32Array;

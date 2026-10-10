@@ -5,6 +5,7 @@ import { OcctKernel } from "occt-wasm";
 import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import { cadModifierPrimitiveForProfileShape } from "@/lib/cadBakeMetadata";
 import { createKnurlGeometry } from "@/lib/knurlGeometry";
+import { createGearGeometry } from "@/lib/gearGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 /**
@@ -62,6 +63,18 @@ function meshVolume(shape: WorkplaneShape) {
     volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
   }
   geometry.dispose();
+  return volume;
+}
+
+/** Der Rauminhalt einer three.js-Geometrie, aus ihrem Dreieckshaufen. */
+function closedMeshVolume(geometry: { getAttribute: (name: string) => { array: ArrayLike<number> }; index: unknown; toNonIndexed: () => typeof geometry; dispose: () => void }) {
+  const plain = geometry.index ? geometry.toNonIndexed() : geometry;
+  const positions = plain.getAttribute("position").array;
+  let volume = 0;
+  for (let index = 0; index + 8 < positions.length; index += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = Array.from(positions).slice(index, index + 9) as number[];
+    volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
   return volume;
 }
 
@@ -158,5 +171,94 @@ describe("Wo es keinen genauen Koerper gibt", () => {
   it("lehnt einen Umriss mit zu wenigen Punkten ab", () => {
     expect(() => buildProfileExtrusionSolid(cad, { loop: [0, 0, 1, 0], height: 10 })).toThrow();
     expect(() => buildProfileExtrusionSolid(cad, { loop: [0, 0, 1, 0, 1, 1], height: 0 })).toThrow();
+  }, 300000);
+});
+
+describe("Das Zahnrad als genauer Koerper", () => {
+  const gear = (overrides: Partial<WorkplaneShape> = {}): WorkplaneShape => ({
+    id: "g",
+    name: "Zahnrad",
+    kind: "gear",
+    color: "#6f7f8d",
+    x: 0,
+    z: 0,
+    elevation: 0,
+    size: 28,
+    width: 28,
+    depth: 28,
+    height: 6,
+    rotation: 0,
+    teeth: 12,
+    gearType: "spur",
+    gearProfile: "involute",
+    gearPressureAngle: 20,
+    gearBacklash: 0.2,
+    centerHoleSize: 6,
+    ...overrides,
+  } as WorkplaneShape);
+
+  /**
+   * Der Grund fuer die ganze Sache: Auf einem Netz scheitert eine Verrundung.
+   * Hier steht ein Koerper mit einer Flaeche je Flankenstueck - und einer
+   * echten Bohrung, keinem Vieleck.
+   */
+  it("ist ein gueltiger Koerper mit runder Bohrung", () => {
+    const solid = solidFor(gear());
+    expect(cad.isSolid(solid)).toBe(true);
+    expect(cad.isValid(solid)).toBe(true);
+    // Die Bohrung ist ein Zylinder, nicht ein Kranz von Ebenen.
+    const kinds = cad.getSubShapes(solid, "face").map((face) => cad.surfaceType(face));
+    expect(kinds.filter((kind) => kind === "cylinder")).toHaveLength(1);
+  }, 300000);
+
+  /**
+   * Und er hat den Rauminhalt, den das Netz zeichnet: Beide sitzen auf
+   * demselben Umriss. Die Bohrung weicht ab, weil der Koerper sie rund
+   * macht und das Netz als Vieleck - das sind Hundertstel eines Prozents.
+   */
+  it("trifft den Rauminhalt des gezeichneten Netzes", () => {
+    const shape = gear();
+    const exact = cad.getVolume(solidFor(shape));
+    const mesh = closedMeshVolume(createGearGeometry({
+      width: shape.width,
+      depth: shape.depth,
+      height: shape.height,
+      teeth: shape.teeth,
+      centerHoleSize: shape.centerHoleSize,
+      gearType: shape.gearType,
+      gearProfile: shape.gearProfile,
+      gearPressureAngle: shape.gearPressureAngle,
+      gearBacklash: shape.gearBacklash,
+    }));
+    expect(exact / mesh).toBeCloseTo(1, 3);
+  }, 300000);
+
+  /**
+   * Eine Zahnkante verrunden - und zwar eine im Zahnfuss, die Material
+   * **dazugibt**: Genau diese Rundung will man an einem gedruckten Zahnrad,
+   * weil der Zahn dort bricht. Geprueft wird darum, dass sich der Rauminhalt
+   * ueberhaupt aendert und der Koerper gueltig bleibt - nicht, dass er
+   * kleiner wird.
+   */
+  it("laesst eine Zahnkante verrunden", () => {
+    const solid = solidFor(gear());
+    const before = cad.getVolume(solid);
+    const edges = cad.getSubShapes(solid, "edge");
+    const filleted = cad.fillet(solid, [edges[0]], 0.2);
+    expect(cad.isSolid(filleted)).toBe(true);
+    expect(Math.abs(cad.getVolume(filleted) - before)).toBeGreaterThan(1e-6);
+  }, 300000);
+
+  /**
+   * Was nicht hochgezogen werden kann, bleibt ein Netz: ein Schraegrad
+   * verdreht sich ueber die Hoehe, ein Kegelrad verjuengt sich, und gerade
+   * Zaehne sind nicht nach Modul gebaut.
+   */
+  it("gibt null fuer Schraegrad, Kegelrad und gerade Zaehne", () => {
+    expect(cadModifierPrimitiveForProfileShape(gear({ gearType: "helical" }))).toBeNull();
+    expect(cadModifierPrimitiveForProfileShape(gear({ gearType: "bevel" }))).toBeNull();
+    expect(cadModifierPrimitiveForProfileShape(gear({ gearProfile: "simple" }))).toBeNull();
+    // Und fuer ein ungleich gezogenes Rad: das waere eine Ellipse mit Zaehnen.
+    expect(cadModifierPrimitiveForProfileShape(gear({ depth: 34 }))).toBeNull();
   }, 300000);
 });

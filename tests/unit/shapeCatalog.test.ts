@@ -43,15 +43,22 @@ describe("shape catalog", () => {
 
     expect(text).toMatchObject({ width: 86, depth: 28, height: 10, text: "TEXT", font: "Multilanguage" });
     expect(torus).toMatchObject({ size: 22, width: 22, depth: 22, height: 5 });
+    /*
+     * Ein neues Zahnrad ist evolventisch, und dort folgt die Groesse dem
+     * Modul: Aussendurchmesser = Modul x (Zaehne + 2), also 2 x 14 = 28.
+     * Vorher stand hier 30, eine Zahl ohne Modul dahinter.
+     */
     expect(gear).toMatchObject({
-      size: 30,
-      width: 30,
-      depth: 30,
+      size: 28,
+      width: 28,
+      depth: 28,
       height: 6,
       teeth: 12,
-      toothSize: 2.5,
       centerHoleSize: 6,
       gearType: "spur",
+      gearProfile: "involute",
+      gearPressureAngle: 20,
+      gearBacklash: 0.2,
       helixAngle: 22.5,
       helixQuality: 16,
     });

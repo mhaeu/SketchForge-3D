@@ -23,6 +23,12 @@ export type CadProfileLoop = readonly number[];
 
 export type CadProfileExtrusion = {
   loop: CadProfileLoop;
+  /**
+   * Eine runde Bohrung in der Grundflaeche, mittig - als echter Kreis und
+   * nicht als Vieleck. Das Netz zeichnet sie als Vieleck mit vielen Ecken;
+   * der genaue Koerper darf runder sein als das Bild, nur nicht kantiger.
+   */
+  bore?: number;
   height: number;
   /**
    * Die Fase von 45 Grad an beiden Enden: `size` weit, gemessen von `radius`
@@ -78,7 +84,13 @@ export function buildProfileExtrusionSolid(cad: OcctKernel, part: CadProfileExtr
   }
   if (!(Number.isFinite(part.height) && part.height > 0)) throw new Error("The profile has no height");
   const edges = points.map((point, index) => cad.makeLineEdge(point, points[(index + 1) % points.length]));
-  const solid = cad.extrude(cad.makeFace(cad.makeWire(edges)), 0, part.height, 0);
+  let face = cad.makeFace(cad.makeWire(edges));
+  const bore = part.bore;
+  if (bore !== undefined && bore > 0) {
+    const circle = cad.makeCircleEdge({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }, bore / 2);
+    face = cad.addHolesInFace(face, [cad.makeWire([circle])]);
+  }
+  const solid = cad.extrude(face, 0, part.height, 0);
   const chamfer = part.capChamfer;
   if (!chamfer || !(chamfer.size > 0) || !(chamfer.radius > chamfer.size)) return solid;
   const envelope = chamferEnvelope(cad, chamfer.radius, part.height, chamfer.size);
