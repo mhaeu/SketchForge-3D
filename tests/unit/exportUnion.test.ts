@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boundsOverlap, meshBounds, overlappingExportClusters, type ExportBounds } from "@/lib/exportUnion";
+import { boundsOverlap, holesReachingBounds, meshBounds, overlappingExportClusters, type ExportBounds } from "@/lib/exportUnion";
 
 /*
  * Magnetron hat gemeldet, dass zwei sich durchdringende Koerper als zwei
@@ -80,5 +80,41 @@ describe("overlappingExportClusters", () => {
 
   it("kommt mit einer leeren Szene zurecht", () => {
     expect(overlappingExportClusters([])).toEqual([]);
+  });
+});
+
+describe("Welche Loecher einen Koerper treffen", () => {
+  const bounds = (minX: number, maxX: number) => ({
+    minX, maxX, minY: 0, maxY: 10, minZ: -5, maxZ: 5,
+  });
+
+  /**
+   * Ein loses Loch wird aus den Koerpern geschnitten, die es trifft - gefragt
+   * ueber die Kaesten, damit ein Loch am anderen Ende der Platte keinen
+   * Verschnitt kostet.
+   */
+  it("nennt nur die Loecher, deren Kasten den Koerper beruehrt", () => {
+    const body = bounds(0, 20);
+    const holes = [bounds(5, 8), bounds(100, 110), bounds(18, 25)];
+    expect(holesReachingBounds(body, holes)).toEqual([0, 2]);
+  });
+
+  /**
+   * Derselbe Satz Loecher, zwei Koerper: Jeder bekommt nur die seinen. Ein
+   * Loch, das beide trifft, geht an beide - sonst fehlte es in einem.
+   */
+  it("verteilt dieselben Loecher auf mehrere Koerper", () => {
+    const holes = [bounds(5, 8), bounds(55, 58), bounds(18, 42)];
+    expect(holesReachingBounds(bounds(0, 20), holes)).toEqual([0, 2]);
+    expect(holesReachingBounds(bounds(40, 60), holes)).toEqual([1, 2]);
+  });
+
+  it("gibt nichts zurueck, wenn nichts trifft oder nichts zu messen ist", () => {
+    expect(holesReachingBounds(bounds(0, 20), [bounds(100, 110)])).toEqual([]);
+    expect(holesReachingBounds(bounds(0, 20), [])).toEqual([]);
+    // Ein Koerper ohne Kasten: nichts zu vergleichen, also nichts zu schneiden.
+    expect(holesReachingBounds(null, [bounds(0, 20)])).toEqual([]);
+    // Und ein Loch ohne Kasten zaehlt nicht mit.
+    expect(holesReachingBounds(bounds(0, 20), [null, bounds(5, 8)])).toEqual([1]);
   });
 });

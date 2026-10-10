@@ -42,7 +42,7 @@ import {
   normalizeLoftTopSize,
 } from "@/lib/loftGeometry";
 import { regularPolygonFootprintScale } from "@/lib/regularPolygonFootprint";
-import { meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
+import { holesReachingBounds, meshBounds, overlappingExportClusters } from "@/lib/exportUnion";
 import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
 import { workplaneAlignRotation, workplaneCentringShift } from "@/lib/workplaneArrange";
 import { getLanguage, t, translateIfKey, type MessageKey } from "@/lib/i18n";
@@ -3151,7 +3151,7 @@ async function importedShapeFromImage(file: File): Promise<WorkplaneShape> {
   };
 }
 
-async function toSvg(shapes: WorkplaneShape[], title: string) {
+async function toSvg(shapes: WorkplaneShape[], holes: readonly WorkplaneShape[], title: string) {
   const runtime = await getManifoldRuntime();
   const layers: SvgProjectionLayer[] = [];
 
@@ -3159,9 +3159,21 @@ async function toSvg(shapes: WorkplaneShape[], title: string) {
     const created: ManifoldSolid[] = [];
     const projectedObjects: unknown[] = [];
     try {
-      const solid = shapeToManifoldSolid(runtime, shape, created);
-      if (!solid || solid.status() !== "NoError" || solid.numTri() < 1) {
+      const body = shapeToManifoldSolid(runtime, shape, created);
+      if (!body || body.status() !== "NoError" || body.numTri() < 1) {
         throw new Error(t("status.svgOutlineFailed", { name: shape.name }));
+      }
+      /*
+       * Dieselbe Regel wie bei den Netzen: Ein mitgehendes Loch wird
+       * geschnitten. Im Umriss von oben sieht man es als Insel - und ohne den
+       * Schnitt faende man im SVG eine Flaeche, die der Druck nicht hat.
+       */
+      const cutter = holes.length > 0 ? shapesToManifoldUnion(runtime, holes.map(paddedCutterShape), created, true) : null;
+      let solid = body;
+      if (cutter) {
+        const carved = body.subtract(cutter);
+        created.push(carved);
+        if (carved.status() === "NoError" && carved.numTri() > 0) solid = carved;
       }
 
       const topView = solid.rotate([90, 0, 0]);
@@ -4990,7 +5002,11 @@ function manifoldMeshToMeshData(mesh: InstanceType<ManifoldToplevel["Mesh"]>, na
 async function exportSolidVolume(source: readonly WorkplaneShape[]) {
   const solids = source.filter((shape) => !shape.hole && isSolidShape(shape));
   if (solids.length === 0) return { volumeMm3: 0, solids: 0, bodies: 0, unionFailed: 0 };
-  const { meshes, failed } = await unionOverlappingExportMeshes(solids, solids.map(meshForShape));
+  // Die Loecher zaehlen mit: Sonst schaetzte das Fenster Material fuer einen
+  // Koerper, den die Datei so nicht enthaelt.
+  const holes = source.filter((shape) => shape.hole && isSolidShape(shape) && !shape.hidden);
+  const carved = await cutLooseExportHoles(solids, holes, solids.map(meshForShape));
+  const { meshes, failed } = await unionOverlappingExportMeshes(solids, carved.meshes);
   const volumeMm3 = meshes.reduce((sum, mesh) => sum + closedMeshVolume(mesh.vertices, mesh.faces), 0);
   return { volumeMm3, solids: solids.length, bodies: meshes.length, unionFailed: failed };
 }
@@ -5005,6 +5021,66 @@ function formatEstimateNumber(value: number, digits: number) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+}
+
+/**
+ * Lose Loecher aus den Koerpern schneiden, die sie treffen.
+ *
+ * Ein Loch, das nicht gruppiert wurde, fiel bisher aus STL, OBJ und 3MF
+ * heraus - `exportTargetShapes` liess es weg - waehrend die STEP-Ausfuhr es
+ * schon schnitt. Dasselbe Modell gab also je nach Format ein Loch oder
+ * keines, und die Filamentschaetzung rechnete ohne.
+ *
+ * Jetzt gilt eine Regel: Jedes mitgehende sichtbare Loch wird geschnitten, so
+ * wie Gruppieren es schneiden wuerde. Gerechnet wird im Manifold-Kern, mit
+ * demselben Lauf wie das Verschmelzen der Ausfuhr.
+ *
+ * Geschnitten wird je Koerper und nur gegen die Loecher, deren Kasten ihn
+ * ueberhaupt beruehrt. Dass das dasselbe ergibt wie erst vereinigen und dann
+ * schneiden, ist Mengenlehre: (A u B) \ H = (A \ H) u (B \ H).
+ */
+async function cutLooseExportHoles(solids: WorkplaneShape[], holes: readonly WorkplaneShape[], meshes: MeshData[]) {
+  if (holes.length === 0) return { meshes, cut: 0, failed: 0 };
+  const holeBounds = holes.map((hole) => meshBounds(meshForShape(hole).vertices));
+  const runtime = await getManifoldRuntime().catch(() => null);
+  if (!runtime) return { meshes, cut: 0, failed: holes.length };
+  const result: MeshData[] = [];
+  let cut = 0;
+  let failed = 0;
+  meshes.forEach((mesh, index) => {
+    const reaching = holesReachingBounds(meshBounds(mesh.vertices), holeBounds).map((holeIndex) => holes[holeIndex]);
+    if (reaching.length === 0) {
+      result.push(mesh);
+      return;
+    }
+    const created: ManifoldSolid[] = [];
+    let carved: MeshData | null = null;
+    try {
+      const body = shapeToManifoldSolid(runtime, solids[index], created);
+      const cutter = shapesToManifoldUnion(runtime, reaching.map(paddedCutterShape), created, true);
+      if (body && cutter) {
+        const carvedSolid = body.subtract(cutter);
+        created.push(carvedSolid);
+        if (carvedSolid.status() === "NoError" && carvedSolid.numTri() > 0) {
+          carved = manifoldMeshToMeshData(carvedSolid.getMesh(), mesh.name);
+        }
+      }
+    } catch {
+      carved = null;
+    } finally {
+      Array.from(new Set(created)).forEach(disposeManifold);
+    }
+    if (carved && carved.faces.length > 0) {
+      result.push(carved);
+      cut += 1;
+    } else {
+      // Lieber der ungeschnittene Koerper als keiner - und eine Meldung
+      // darueber, damit niemand das Loch stillschweigend vermisst.
+      result.push(mesh);
+      failed += 1;
+    }
+  });
+  return { meshes: result, cut, failed };
 }
 
 async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: MeshData[]) {
@@ -11541,6 +11617,20 @@ export function SketchForgeEditor({
     () => (hasSelection ? selectedShapes : shapes).filter((shape) => !shape.hole && isSolidShape(shape)),
     [hasSelection, selectedShapes, shapes],
   );
+  /**
+   * Die Loecher, die mitgehen - sichtbar, und bei einer Auswahl nur die
+   * ausgewaehlten. Sie werden nicht ausgefuehrt, sondern aus den Koerpern
+   * geschnitten, die sie treffen (siehe `cutLooseExportHoles`).
+   */
+  const exportHoleShapes = useMemo(
+    () => (hasSelection ? selectedShapes : shapes).filter((shape) => shape.hole && isSolidShape(shape) && !shape.hidden),
+    [hasSelection, selectedShapes, shapes],
+  );
+  /** Was die Schaetzung ansieht: die Koerper und die Loecher, die mitgehen. */
+  const exportEstimateShapes = useMemo(
+    () => [...exportTargetShapes, ...exportHoleShapes],
+    [exportHoleShapes, exportTargetShapes],
+  );
 
   const exportDesign = useCallback((format: DirectExportFormat, exportName: string) => {
     const exportable = exportTargetShapes;
@@ -11566,7 +11656,7 @@ export function SketchForgeEditor({
     };
     if (format === "svg") {
       setNotice(t("status.buildingSvg"));
-      void toSvg(exportable, exportName.trim() || projectName)
+      void toSvg(exportable, exportHoleShapes, exportName.trim() || projectName)
         .then((content) => downloadTextFile(projectExportFileName(exportName, "svg"), content, "image/svg+xml;charset=utf-8"))
         .then((result) => finishNotice("SVG", result))
         .catch((error: unknown) => failNotice("SVG", error));
@@ -11574,17 +11664,25 @@ export function SketchForgeEditor({
     }
     const meshes = exportable.map(meshForShape);
     const label = format === "stl" ? "STL" : "OBJ";
-    void unionOverlappingExportMeshes(exportable, meshes)
-      .then(async ({ meshes: ready, merged, failed }) => {
+    // Erst die Loecher schneiden, dann Durchdringungen verschmelzen. Welche
+    // Reihenfolge, ist Mengenlehre - aber so bleibt je Koerper weniger zu
+    // rechnen.
+    void cutLooseExportHoles(exportable, exportHoleShapes, meshes)
+      .then(async (carved) => {
+        if (carved.failed > 0) setNotice(t("status.exportHoleFailed"));
+        return { ...(await unionOverlappingExportMeshes(exportable, carved.meshes)), holesCut: carved.cut, holesFailed: carved.failed };
+      })
+      .then(async ({ meshes: ready, merged, failed, holesFailed }) => {
         const result = format === "stl"
           ? await downloadBlobFile(projectExportFileName(exportName, "stl"), new Blob([exportMeshesToStl(ready)], { type: "model/stl" }))
           : await downloadTextFile(projectExportFileName(exportName, "obj"), exportMeshesToObj(ready), "text/plain");
-        if (failed > 0) setNotice(t("status.exportUnionFailed"));
+        if (holesFailed > 0) setNotice(t("status.exportHoleFailed"));
+        else if (failed > 0) setNotice(t("status.exportUnionFailed"));
         else if (merged > 0) setNotice(t("status.exportUnioned", { count: merged, label }));
         else finishNotice(label, result);
       })
       .catch((error: unknown) => failNotice(label, error));
-  }, [exportTargetShapes, hasSelection, projectName]);
+  }, [exportHoleShapes, exportTargetShapes, hasSelection, projectName]);
 
   const exportStepDesign = useCallback(async (exportName: string) => {
     if (stepExporting) {
@@ -12687,7 +12785,7 @@ export function SketchForgeEditor({
           projectName={projectName}
           shapeCount={exportableShapeCount}
           scopeLabel={exportScopeLabel}
-          estimateShapes={exportTargetShapes}
+          estimateShapes={exportEstimateShapes}
           onEstimatePrint={exportSolidVolume}
           onClose={() => setTopPanel(null)}
           onExport={exportDesign}

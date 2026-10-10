@@ -680,6 +680,7 @@ export const MESSAGES_EN = {
   "status.exportFailed": "Could not export {label}",
   "status.exportUnioned": "Saved as {label} - {count} overlapping bodies were merged",
   "status.exportUnionFailed": "Overlapping bodies could not be merged - they are in the file separately",
+  "status.exportHoleFailed": "A hole could not be cut from the bodies - the file holds them uncut",
   "status.exportStepFailed": "Could not export STEP",
   "status.exportStepNothing": "Nothing here can be written as STEP — use STL instead",
   "status.exportStepSkippedOne": " · 1 shape skipped that STEP cannot hold",

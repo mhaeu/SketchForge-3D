@@ -85,3 +85,28 @@ export function overlappingExportClusters(
   }
   return gruppen;
 }
+
+/**
+ * Welche Loecher diesen Koerper ueberhaupt treffen.
+ *
+ * Gefragt wird ueber die Kaesten, nicht ueber die Netze: Ein Loch am anderen
+ * Ende der Platte soll keinen Verschnitt kosten. Das ist dieselbe Abkuerzung,
+ * mit der die STEP-Ausfuhr ihre Loecher sucht - und sie darf nur in diese
+ * Richtung irren: Ein Kasten, der sich beruehrt, ohne dass die Koerper es tun,
+ * kostet einen Verschnitt, der nichts aendert. Umgekehrt darf sie nie irren,
+ * sonst fehlte ein Loch in der Datei.
+ *
+ * `null` als Kasten heisst "nicht messbar" - so ein Koerper oder Loch zaehlt
+ * nicht mit, denn ohne Kasten gibt es nichts zu vergleichen.
+ */
+export function holesReachingBounds(
+  body: ExportBounds | null,
+  holes: ReadonlyArray<ExportBounds | null>,
+): number[] {
+  if (!body) return [];
+  const reaching: number[] = [];
+  holes.forEach((hole, index) => {
+    if (hole && boundsOverlap(body, hole)) reaching.push(index);
+  });
+  return reaching;
+}

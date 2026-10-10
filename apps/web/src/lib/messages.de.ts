@@ -734,6 +734,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.exportFailed": "{label} konnte nicht exportiert werden",
   "status.exportUnioned": "Als {label} gespeichert - {count} überlappende Körper wurden dabei verschmolzen",
   "status.exportUnionFailed": "Überlappende Körper ließen sich nicht verschmelzen - sie stehen einzeln in der Datei",
+  "status.exportHoleFailed": "Ein Loch ließ sich nicht aus den Körpern schneiden - die Datei enthält sie ungeschnitten",
   "status.exportStepFailed": "STEP konnte nicht exportiert werden",
   "status.exportStepNothing": "Kein Körper eignet sich für STEP — hierfür ist STL der Weg",
   "status.exportStepSkippedOne": " · 1 Form übersprungen, die STEP nicht abbilden kann",
