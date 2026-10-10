@@ -358,7 +358,11 @@ type WorkplaneViewportProps = {
   workspaceSettingsKey?: string | null;
   showProjectNameInToolbar?: boolean;
   onShowProjectNameInToolbarChange?: (show: boolean) => void;
-  onAddShape: (shape: ShapeAsset, point?: PlacementPoint) => void;
+  /**
+   * `surface` ist gesetzt, wenn die Form auf der Flaeche eines Koerpers
+   * landet - dann gilt deren Lage und nicht die der Arbeitsebene.
+   */
+  onAddShape: (shape: ShapeAsset, point?: PlacementPoint, surface?: { point: PlacementPoint; normal: PlacementPoint }) => void;
   onAlignAnchorChange: (id: string) => void;
   onAlignPreview: (axis: AlignAxis, target: AlignTarget) => void;
   onAlignPreviewClear: () => void;
@@ -7242,10 +7246,25 @@ export function WorkplaneViewport({
       if (!asset) {
         return;
       }
+      /*
+       * Liegt ein Koerper unter dem Zeiger, setzt sich die neue Form auf
+       * **seine** Flaeche - auch auf eine schraege - und nicht auf die
+       * Arbeitsebene darunter. Wie in Tinkercad: Man legt einen Knopf auf
+       * einen Deckel, statt ihn danach von Hand hochzuschieben.
+       *
+       * Genommen wird der Punkt, auf den gezeigt wird, nicht die Mitte der
+       * Flaeche - die Form soll dort landen, wo man sie hinfallen laesst.
+       */
+      const picked = pickShapeTriangles(event.clientX, event.clientY);
+      const face = picked ? planarFace(picked.positions, picked.triangle) : null;
+      if (picked && face) {
+        onAddShape(asset, picked.point, { point: picked.point, normal: face.normal });
+        return;
+      }
       const point = toPlacementWorkplanePoint(event.clientX, event.clientY);
       onAddShape(asset, point ?? placementWorkplaneRef.current.origin);
     },
-    [onAddShape, toPlacementWorkplanePoint],
+    [onAddShape, pickShapeTriangles, toPlacementWorkplanePoint],
   );
 
   const resetView = useCallback(() => {

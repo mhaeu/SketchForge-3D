@@ -112,24 +112,39 @@ describe("Runde Zaehne am Zahnrad", () => {
       }
       return within;
     };
-    const overlap = (one: readonly Point[], other: readonly Point[]) =>
-      one.filter((point) => inside(point, other)).length + other.filter((point) => inside(point, one)).length;
+    /*
+     * Gezaehlt wird zwischen den **ganzen** Vielecken; gefiltert werden nur
+     * die Punkte, die ueberhaupt in der Naehe der Beruehrung liegen - ein
+     * Punkt am anderen Ende kann nicht im Gegenrad stecken. Ohne das lief
+     * diese Pruefung in die Zeitsperre.
+     */
+    const overlap = (one: readonly Point[], other: readonly Point[], band: { from: number; to: number }) => {
+      const near = (points: readonly Point[]) => points.filter((point) => point.x > band.from && point.x < band.to);
+      return near(one).filter((point) => inside(point, other)).length
+        + near(other).filter((point) => inside(point, one)).length;
+    };
 
     const a = gear(20);
     const b = gear(30);
     const distance = involuteCentreDistance(module, 20, 30);
     expect(distance).toBeCloseTo(50, 9);
     const polyA = polygon(a, 0, 0);
-    let least = Number.POSITIVE_INFINITY;
-    for (let step = 0; step < 180; step += 1) {
-      least = Math.min(least, overlap(polyA, polygon(b, ((Math.PI * 2) / 30) * (step / 180), distance)));
-    }
-    expect(least).toBe(0);
+    const pitchTurn = (Math.PI * 2) / 30;
+    /** Erst grob die ganze Zahnteilung ab, dann fein um die beste Stelle. */
+    const leastOverlap = (gap: number) => {
+      const band = { from: module * 20 * 0.35, to: gap - module * 30 * 0.35 };
+      let best = { overlap: Number.POSITIVE_INFINITY, turn: 0 };
+      const look = (turn: number) => {
+        const found = overlap(polyA, polygon(b, turn, gap), band);
+        if (found < best.overlap) best = { overlap: found, turn };
+      };
+      for (let step = 0; step < 60; step += 1) look((pitchTurn * step) / 60);
+      const coarse = best.turn;
+      for (let step = -10; step <= 10; step += 1) look(coarse + (pitchTurn * step) / 600);
+      return best.overlap;
+    };
+    expect(leastOverlap(distance)).toBe(0);
     // Gegenprobe: einen Millimeter zu nah geht es nicht mehr.
-    let tooClose = Number.POSITIVE_INFINITY;
-    for (let step = 0; step < 180; step += 1) {
-      tooClose = Math.min(tooClose, overlap(polyA, polygon(b, ((Math.PI * 2) / 30) * (step / 180), distance - 1)));
-    }
-    expect(tooClose).toBeGreaterThan(0);
+    expect(leastOverlap(distance - 1)).toBeGreaterThan(0);
   });
 });

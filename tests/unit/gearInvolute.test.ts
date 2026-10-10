@@ -64,10 +64,19 @@ function pointInPolygon(point: Point, polygon: readonly Point[]) {
   return inside;
 }
 
-/** Wie viele Punkte des einen Umrisses im anderen liegen - also wie weit sie sich ueberdecken. */
-function overlapCount(one: readonly Point[], other: readonly Point[]) {
-  return one.filter((point) => pointInPolygon(point, other)).length
-    + other.filter((point) => pointInPolygon(point, one)).length;
+/**
+ * Wie viele Punkte des einen Umrisses im anderen liegen - also wie weit sie
+ * sich ueberdecken.
+ *
+ * `band` grenzt ein, **welche Punkte** gefragt werden: Ein Punkt am anderen
+ * Ende des Rades kann nicht im Gegenrad stecken, und ohne diese Grenze laeuft
+ * die Suche ueber alle Verdrehungen in die Zeitsperre. Die Vielecke selbst
+ * bleiben ganz - eine Auswahl von Punkten ist kein Vieleck.
+ */
+function overlapCount(one: readonly Point[], other: readonly Point[], band?: { from: number; to: number }) {
+  const near = (points: readonly Point[]) => (band ? points.filter((point) => point.x > band.from && point.x < band.to) : points);
+  return near(one).filter((point) => pointInPolygon(point, other)).length
+    + near(other).filter((point) => pointInPolygon(point, one)).length;
 }
 
 function distanceToSegment(point: Point, a: Point, b: Point) {
@@ -187,16 +196,20 @@ describe("Zwei Zahnraeder, die kaemmen sollen", () => {
     const b = gear(teethB, module);
     const polyA = outlinePolygon(a);
     const contactA = polyA.filter((point) => point.x > module * teethA * 0.35);
+    const band = { from: module * teethA * 0.35, to: distance - module * teethB * 0.35 };
     let best = { overlap: Number.POSITIVE_INFINITY, gap: Number.POSITIVE_INFINITY, turn: 0 };
     const pitchTurn = (Math.PI * 2) / teethB;
-    for (let step = 0; step < 180; step += 1) {
-      const turn = (pitchTurn * step) / 180;
+    const look = (turn: number) => {
       const polyB = outlinePolygon(b, turn, distance);
-      const overlap = overlapCount(polyA, polyB);
-      if (overlap > best.overlap) continue;
+      const overlap = overlapCount(polyA, polyB, band);
+      if (overlap > best.overlap) return;
       const gap = closestApproach(contactA, polyB);
       if (overlap < best.overlap || gap < best.gap) best = { overlap, gap, turn };
-    }
+    };
+    // Erst grob die ganze Zahnteilung ab, dann fein um die beste Stelle.
+    for (let step = 0; step < 60; step += 1) look((pitchTurn * step) / 60);
+    const coarse = best.turn;
+    for (let step = -10; step <= 10; step += 1) look(coarse + (pitchTurn * step) / 600);
     return best;
   }
 

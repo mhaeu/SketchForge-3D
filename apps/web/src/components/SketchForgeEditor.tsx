@@ -8501,11 +8501,24 @@ export function SketchForgeEditor({
   }, []);
 
   const addShape = useCallback(
-    (asset: ShapeAsset, point?: PlacementPoint) => {
+    (asset: ShapeAsset, point?: PlacementPoint, surface?: { point: PlacementPoint; normal: PlacementPoint }) => {
       const shape = makeShapeFromAsset(asset, undefined, workspaceSettingsRef.current.shapeCustomizations[asset.kind]);
+      /*
+       * Faellt die Form auf die Flaeche eines Koerpers, gilt deren Lage: Aus
+       * der Normale und einem Hinweis fuer die Querrichtung entsteht eine
+       * Ebene, und die Form stellt sich darauf - dieselbe Rechnung, mit der
+       * eine Arbeitsebene auf einer Flaeche sitzt.
+       *
+       * Der Hinweis ist die x-Achse der geltenden Arbeitsebene. Bei einer
+       * Flaeche, die parallel zu ihr liegt - der haeufigste Fall, der Deckel
+       * eines Kastens - kommt damit genau dieselbe Lage heraus wie vorher.
+       */
+      const target = surface
+        ? placementWorkplaneFromSurface(surface.point, surface.normal, placementWorkplane.xAxis)
+        : placementWorkplane;
       const nextShape = {
         ...shape,
-        ...placementPatchForNewShape(shape, placementWorkplane, point ?? placementWorkplane.origin),
+        ...placementPatchForNewShape(shape, target, point ?? target.origin),
       };
       commitShapes([...shapes, nextShape], nextShape.id, `${asset.name} added`);
     },
