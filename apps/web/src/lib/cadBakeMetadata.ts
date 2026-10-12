@@ -5,6 +5,7 @@ import { cadTransformRequiresGeneralTransform } from "@/lib/cadModifierRuntime";
 import { mirrorSign, preservesFeatureSize, resizedImportedCoordinates, shapeDepth, shapeHasShapeDeform, shapeWidth } from "@/lib/workplaneShapes";
 import { knurlCorners, knurlSettings } from "@/lib/knurlGeometry";
 import { rackOutlineCorners } from "@/lib/rackGeometry";
+import { RING_GEAR_OUTER_SIDES, ringGearInnerCorners, ringGearMeasures } from "@/lib/ringGearGeometry";
 import { gearOutlineCorners, normalizeGearCenterHoleSize, normalizeGearProfile, normalizeGearType } from "@/lib/gearGeometry";
 
 export type BakedCadMetadataFrame = {
@@ -228,10 +229,45 @@ function rackProfilePart(shape: WorkplaneShape): CadModifierPrimitivePart | null
   };
 }
 
+/**
+ * Das Hohlrad als hochgezogener Ring: aussen der Kranz, innen die Zahnreihe
+ * als Loch.
+ *
+ * Der aeussere Kreis wird als Vieleck gelegt und nicht als Kreis, damit der
+ * genaue Koerper derselbe ist wie das Netz - eine runde Aussenkante waere ein
+ * anderer Rauminhalt als die 96 Ecken im Bild, und nach einer Verrundung
+ * spraenge die Ansicht.
+ */
+function ringGearProfilePart(shape: WorkplaneShape): CadModifierPrimitivePart | null {
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  if (!allFinitePositive([width, depth, shape.height])) return null;
+  // Rund muss er sein: Ein ungleich gezogener Ring ist kein Hohlrad mehr.
+  if (Math.abs(width - depth) > 0.0005) return null;
+  const measures = ringGearMeasures(width, shape);
+  const loop: number[] = [];
+  for (let step = 0; step < RING_GEAR_OUTER_SIDES; step += 1) {
+    const angle = (step / RING_GEAR_OUTER_SIDES) * Math.PI * 2;
+    loop.push(Math.cos(angle) * measures.outerRadius, Math.sin(angle) * measures.outerRadius);
+  }
+  const holeLoop: number[] = [];
+  ringGearInnerCorners(width, shape).forEach(({ x, z }) => {
+    holeLoop.push(x, z);
+  });
+  return {
+    kind: "profileExtrusion",
+    loop,
+    holeLoop,
+    height: shape.height,
+    transform: primitivePlacementTransform(shape, shape.height),
+  };
+}
+
 export function cadModifierPrimitiveForProfileShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
   if (shape.importedMesh || shape.groupedShapes?.length) return null;
   if (shape.kind === "gear") return involuteGearProfilePart(shape);
   if (shape.kind === "rack") return rackProfilePart(shape);
+  if (shape.kind === "ringGear") return ringGearProfilePart(shape);
   if (shape.kind !== "knurl") return null;
   const width = shapeWidth(shape);
   const settings = knurlSettings({ ...shape, width });

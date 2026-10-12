@@ -29,6 +29,11 @@ export type CadProfileExtrusion = {
    * der genaue Koerper darf runder sein als das Bild, nur nicht kantiger.
    */
   bore?: number;
+  /**
+   * Ein Loch aus geraden Stuecken - fuer ein Hohlrad, dessen Loch die
+   * Zahnreihe ist. Es laeuft wie `loop`: Paare aus x und z, geschlossen.
+   */
+  holeLoop?: CadProfileLoop;
   height: number;
   /**
    * Die Fase von 45 Grad an beiden Enden: `size` weit, gemessen von `radius`
@@ -89,6 +94,15 @@ export function buildProfileExtrusionSolid(cad: OcctKernel, part: CadProfileExtr
   if (bore !== undefined && bore > 0) {
     const circle = cad.makeCircleEdge({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }, bore / 2);
     face = cad.addHolesInFace(face, [cad.makeWire([circle])]);
+  }
+  if (part.holeLoop) {
+    const holePoints = loopPoints(part.holeLoop);
+    if (holePoints.length < 3) throw new Error("The hole needs at least three points");
+    if (!holePoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.z))) {
+      throw new Error("The hole has a point that is not a number");
+    }
+    const holeEdges = holePoints.map((point, index) => cad.makeLineEdge(point, holePoints[(index + 1) % holePoints.length]));
+    face = cad.addHolesInFace(face, [cad.makeWire(holeEdges)]);
   }
   const solid = cad.extrude(face, 0, part.height, 0);
   const chamfer = part.capChamfer;

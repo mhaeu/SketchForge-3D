@@ -17,6 +17,7 @@ import {
   MIN_GEAR_PRESSURE_ANGLE,
 } from "@/lib/gearGeometry";
 import { DEFAULT_RACK_TEETH, MAX_RACK_TEETH, MIN_RACK_TEETH } from "@/lib/rackGeometry";
+import { DEFAULT_RING_GEAR_TEETH, MIN_RING_RIM, normalizeRingRim, ringGearModule } from "@/lib/ringGearGeometry";
 import {
   DEFAULT_KNURL_ANGLE,
   DEFAULT_KNURL_CHAMFER,
@@ -137,7 +138,7 @@ const THREAD_PROFILE_OPTIONS = [
   { value: "round", label: "thread.profileRound" as MessageKey },
 ];
 
-type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "gearPressureAngle" | "gearBacklash" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality" | "knurlCount" | "knurlDepth" | "knurlAngle" | "knurlChamfer";
+type ShapeSpecialNumberKey = "ringRim" | "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "gearPressureAngle" | "gearBacklash" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality" | "knurlCount" | "knurlDepth" | "knurlAngle" | "knurlChamfer";
 type ShapeSpecialField =
   | { type: "number"; key: ShapeSpecialNumberKey; label: string; defaultValue: number; min: number; max: number; step?: number; unit?: string }
   | { type: "select"; key: "font" | "gearType" | "gearProfile" | "knurlPattern" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
@@ -233,6 +234,16 @@ function specialFieldsForShape(
       { type: "number", key: "threadQuality", label: t("prop.quality"), defaultValue: defaults.threadQuality ?? DEFAULT_THREAD_QUALITY, min: MIN_THREAD_QUALITY, max: MAX_THREAD_QUALITY, step: 6 },
     );
     return fields;
+  }
+  if (kind === "ringGear") {
+    // Wie beim Rad, dazu der Kranz. Das Modul steckt im Aussendurchmesser,
+    // und der ist oben schon eine der drei Abmessungen.
+    return [
+      { type: "number", key: "teeth", label: t("inspector.teeth"), defaultValue: defaults.teeth ?? DEFAULT_RING_GEAR_TEETH, min: 6, max: 64, step: 1 },
+      { type: "number", key: "ringRim", label: t("prop.ringRim"), defaultValue: defaults.ringRim ?? normalizeRingRim(undefined, ringGearModule(dimensions.width, defaults.teeth ?? DEFAULT_RING_GEAR_TEETH, defaults.ringRim)), min: MIN_RING_RIM, max: Math.max(MIN_RING_RIM, dimensions.width / 4), unit: "mm" },
+      { type: "number", key: "gearPressureAngle", label: t("prop.gearPressureAngle"), defaultValue: defaults.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE, min: MIN_GEAR_PRESSURE_ANGLE, max: MAX_GEAR_PRESSURE_ANGLE, unit: "deg" },
+      { type: "number", key: "gearBacklash", label: t("prop.gearBacklash"), defaultValue: defaults.gearBacklash ?? DEFAULT_GEAR_BACKLASH, min: 0, max: MAX_GEAR_BACKLASH, unit: "mm" },
+    ];
   }
   if (kind === "rack") {
     /*

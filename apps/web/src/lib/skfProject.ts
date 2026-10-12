@@ -31,7 +31,7 @@ export const SKF_LIMITS = {
 
 const SHAPE_KINDS = new Set([
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "rack", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
+  "halfSphere", "torus", "tube", "gear", "rack", "ringGear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
   "counterbore", "countersink", "teardrop",
 ]);
 
@@ -948,6 +948,16 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
   if (definition.sketchRevolve !== undefined) {
     const settings = objectRecord(definition.sketchRevolve, `${label}.sketchRevolve`);
     ["startAngle", "sweepAngle", "sides", "quality"].forEach((field) => finiteNumber(settings[field], `${label}.sketchRevolve.${field}`));
+  }
+  if (kind === "ringGear") {
+    if (definition.teeth !== undefined) {
+      const teeth = finiteNumber(definition.teeth, `${label}.teeth`);
+      if (!Number.isInteger(teeth) || teeth < 6 || teeth > 64) throw new Error(`${label}.teeth is outside the supported range`);
+    }
+    if (definition.ringRim !== undefined) {
+      const rim = finiteNumber(definition.ringRim, `${label}.ringRim`);
+      if (rim <= 0) throw new Error(`${label}.ringRim must be positive`);
+    }
   }
   if (kind === "rack") {
     // Die Zahnstange fuehrt dieselben drei Zahlen wie das Rad; ihr Modul

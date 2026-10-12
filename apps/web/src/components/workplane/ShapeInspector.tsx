@@ -50,6 +50,14 @@ import {
   rackPinionLimitTeeth,
 } from "@/lib/rackGeometry";
 import {
+  MIN_RING_RIM,
+  normalizeRingRim,
+  RING_GEAR_MIN_TEETH_DIFFERENCE,
+  ringGearMeasures,
+  ringGearModule,
+  ringGearOuterDiameter,
+} from "@/lib/ringGearGeometry";
+import {
   knurlSettings,
   MAX_KNURL_ANGLE,
   maxKnurlChamfer,
@@ -751,6 +759,100 @@ function getShapePropertiesWithAppLimits(
       { id: "length", label: t("prop.length"), value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
+  }
+
+  if (shape.kind === "ringGear") {
+    /*
+     * Das Hohlrad folgt dem Modul wie das Rad, und sein Aussendurchmesser
+     * folgt aus Modul, Zaehnezahl und Kranz: `m (z + 2,5) + 2 Kranz`. Beide
+     * Zahlen stehen als Regler da - oft ist der Aussendurchmesser das
+     * Gegebene (er muss in ein Gehaeuse), dann rueckt das Modul mit.
+     */
+    const measures = ringGearMeasures(width, shape);
+    const sized = (module: number, teeth: number, rim: number) => {
+      const diameter = ringGearOuterDiameter(module, teeth, rim);
+      return {
+        teeth,
+        ringRim: rim,
+        width: diameter,
+        depth: diameter,
+        size: diameter,
+        // Das Spiel haengt am Modul (hoechstens ein halbes) und rueckt mit.
+        gearBacklash: normalizeGearBacklash(shape.gearBacklash, module),
+      };
+    };
+    /*
+     * Welches Rad in diesen Ring passt - die Zahl, die man beim
+     * Eingriffswinkel wissen will, und darum steht sie in seiner
+     * Beschriftung. Zwei Grenzen, beide gemessen: Das Rad braucht genug
+     * Zaehne, um nicht unterschnitten zu sein (`2 / sin^2(a)`, dieselbe Zahl
+     * wie bei der Zahnstange), und die Zaehnezahlen muessen sich um
+     * mindestens zehn unterscheiden, sonst stossen die Zahnkoepfe aneinander.
+     */
+    const smallest = Math.ceil(rackPinionLimitTeeth(shape.gearPressureAngle));
+    const largest = Math.max(smallest, measures.teeth - RING_GEAR_MIN_TEETH_DIFFERENCE);
+    return [
+      {
+        id: "module",
+        label: t("prop.gearModule"),
+        value: measures.module,
+        min: MIN_GEAR_MODULE,
+        max: MAX_GEAR_MODULE,
+        step: 0.1,
+        onChange: (value) => onUpdate(sized(normalizeGearModule(value), measures.teeth, measures.rim), { resizeAxis: "width" }),
+      },
+      {
+        id: "teeth",
+        label: t("inspector.teeth"),
+        value: measures.teeth,
+        min: MIN_GEAR_TEETH,
+        max: MAX_GEAR_TEETH,
+        step: 1,
+        onChange: (value) => onUpdate(sized(measures.module, normalizeGearTeeth(value), measures.rim), { resizeAxis: "width" }),
+      },
+      {
+        id: "diameter",
+        label: t("prop.diameter"),
+        value: measures.outerRadius * 2,
+        min: ringGearOuterDiameter(MIN_GEAR_MODULE, measures.teeth, MIN_RING_RIM),
+        max: ringGearOuterDiameter(MAX_GEAR_MODULE, measures.teeth, measures.rim),
+        onChange: (value) => onUpdate(
+          sized(ringGearModule(value, measures.teeth, measures.rim), measures.teeth, measures.rim),
+          { resizeAxis: "width" },
+        ),
+      },
+      {
+        id: "ringRim",
+        label: t("prop.ringRim"),
+        value: measures.rim,
+        min: MIN_RING_RIM,
+        max: Math.max(MIN_RING_RIM, measures.pitchRadius),
+        step: 0.1,
+        onChange: (value) => onUpdate(
+          sized(measures.module, measures.teeth, normalizeRingRim(value, measures.module)),
+          { resizeAxis: "width" },
+        ),
+      },
+      { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+      {
+        id: "pressureAngle",
+        label: `${t("prop.gearPressureAngle")} — ${t("prop.ringPinionTeeth", { from: smallest, to: largest })}`,
+        value: normalizeGearPressureAngle(shape.gearPressureAngle),
+        min: MIN_GEAR_PRESSURE_ANGLE,
+        max: MAX_GEAR_PRESSURE_ANGLE,
+        step: 0.5,
+        onChange: (gearPressureAngle: number) => onUpdate({ gearPressureAngle }),
+      },
+      {
+        id: "backlash",
+        label: t("prop.gearBacklash"),
+        value: normalizeGearBacklash(shape.gearBacklash, measures.module),
+        min: 0,
+        max: Math.min(MAX_GEAR_BACKLASH, measures.module * 0.5),
+        step: 0.05,
+        onChange: (gearBacklash) => onUpdate({ gearBacklash }),
+      },
     ];
   }
 

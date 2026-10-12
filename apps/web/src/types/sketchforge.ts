@@ -17,6 +17,7 @@ export type ShapeKind =
   | "tube"
   | "gear"
   | "rack"
+  | "ringGear"
   | "knurl"
   | "thread"
   | "spring"
@@ -121,6 +122,8 @@ export type ShapeCustomization = {
   gearPressureAngle?: number;
   /** Evolventenzahn: das Spiel eines kaemmenden Paares, in mm. */
   gearBacklash?: number;
+  /** Hohlrad: der Kranz hinter dem Zahnfuss, in mm. */
+  ringRim?: number;
   /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
   knurlPattern?: KnurlPattern;
   /** Raendelung: wie viele Rillen ringsherum. */
@@ -493,6 +496,8 @@ export type WorkplaneShape = {
   gearPressureAngle?: number;
   /** Evolventenzahn: das Spiel eines kaemmenden Paares, in mm. */
   gearBacklash?: number;
+  /** Hohlrad: der Kranz hinter dem Zahnfuss, in mm. */
+  ringRim?: number;
   /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
   knurlPattern?: KnurlPattern;
   /** Raendelung: wie viele Rillen ringsherum. */

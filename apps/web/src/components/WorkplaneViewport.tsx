@@ -29,6 +29,7 @@ import type { ChallengeTutorialId } from "@/lib/challenges";
 import { cadModifierPrimitiveForBakedShape, cadTransformFromMatrix, cadTransformToMatrix } from "@/lib/cadBakeMetadata";
 import { createGearGeometry } from "@/lib/gearGeometry";
 import { createRackGeometry } from "@/lib/rackGeometry";
+import { createRingGearGeometry } from "@/lib/ringGearGeometry";
 import { createKnurlGeometry } from "@/lib/knurlGeometry";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
@@ -170,6 +171,7 @@ const SHAPE_KINDS = new Set<ShapeAsset["kind"]>([
   "tube",
   "gear",
   "rack",
+  "ringGear",
   "knurl",
   "ring",
   "wedge",
@@ -1374,6 +1376,7 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     gearProfile: shape.gearProfile,
     gearPressureAngle: shape.gearPressureAngle,
     gearBacklash: shape.gearBacklash,
+    ringRim: shape.ringRim,
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -1573,6 +1576,7 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     gearProfile: shape.gearProfile,
     gearPressureAngle: shape.gearPressureAngle,
     gearBacklash: shape.gearBacklash,
+    ringRim: shape.ringRim,
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -10463,6 +10467,18 @@ function createShapeObject(
         gearBacklash: shape.gearBacklash,
       })), material, shape);
       break;
+    case "ringGear":
+      // Rund wie das Zahnrad: Die Breite ist der Aussendurchmesser, die Tiefe
+      // folgt daraus.
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createRingGearGeometry({
+        width,
+        height,
+        teeth: shape.teeth,
+        gearPressureAngle: shape.gearPressureAngle,
+        gearBacklash: shape.gearBacklash,
+        ringRim: shape.ringRim,
+      })), material, shape);
+      break;
     case "rack":
       addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createRackGeometry({
         width,
@@ -10803,7 +10819,7 @@ function addShapeEdgeDecorations(group: THREE.Group, mesh: THREE.Mesh, prepared:
   const complexEdges =
     shape.kind === "mesh" ||
     Boolean(shape.importedMesh) ||
-    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "rack", "knurl", "wedge", "loft", "polygon"].includes(shape.kind);
+    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "rack", "ringGear", "knurl", "wedge", "loft", "polygon"].includes(shape.kind);
   const importedTriangleCount = shape.importedMesh?.triangleCount ?? 0;
   const skipHeavyImportedEdges = Boolean(shape.importedMesh) && importedTriangleCount > IMPORTED_SELECTED_EDGE_TRIANGLE_LIMIT;
   if ((group.userData.showEdges || complexEdges) && !skipHeavyImportedEdges) {

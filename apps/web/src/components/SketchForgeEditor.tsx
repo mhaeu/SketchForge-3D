@@ -22,6 +22,7 @@ import { manifoldWasmBase64 } from "@/generated/manifoldWasmBase64";
 import { sphereTessellation } from "@/lib/sphereTessellation";
 import { createGearGeometry } from "@/lib/gearGeometry";
 import { createRackGeometry } from "@/lib/rackGeometry";
+import { createRingGearGeometry } from "@/lib/ringGearGeometry";
 import { groupedContentScale, scaleGroupedVertices } from "@/lib/groupScale";
 import { dropSplitSlivers, unionSplitManifoldComponents } from "@/lib/manifoldSplit";
 import { modelSplitPlane, snapSplitPositionToVertices, splitAxisLabel, splitOrientationForNormal, splitPlaneIntersectsPoints, splitShapeFromWorldPositions, NO_SPLIT_ROTATION, type ModelSplitPlane, type SplitRotation } from "@/lib/modelSplit";
@@ -2625,6 +2626,16 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
         gearProfile: shape.gearProfile,
         gearPressureAngle: shape.gearPressureAngle,
         gearBacklash: shape.gearBacklash,
+      });
+      break;
+    case "ringGear":
+      geometry = createRingGearGeometry({
+        width,
+        height,
+        teeth: shape.teeth,
+        gearPressureAngle: shape.gearPressureAngle,
+        gearBacklash: shape.gearBacklash,
+        ringRim: shape.ringRim,
       });
       break;
     case "rack":

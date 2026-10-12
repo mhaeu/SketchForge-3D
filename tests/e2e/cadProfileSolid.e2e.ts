@@ -5,8 +5,9 @@ import { OcctKernel } from "occt-wasm";
 import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import { cadModifierPrimitiveForProfileShape } from "@/lib/cadBakeMetadata";
 import { createKnurlGeometry } from "@/lib/knurlGeometry";
-import { createGearGeometry } from "@/lib/gearGeometry";
+import { createGearGeometry, involuteToothCentre } from "@/lib/gearGeometry";
 import { createRackGeometry, minRackDepth, rackLength, rackMeasures } from "@/lib/rackGeometry";
+import { createRingGearGeometry, ringGearMeasures, ringGearOuterDiameter } from "@/lib/ringGearGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 /**
@@ -70,10 +71,12 @@ function meshVolume(shape: WorkplaneShape) {
 /** Der Rauminhalt einer three.js-Geometrie, aus ihrem Dreieckshaufen. */
 function closedMeshVolume(geometry: { getAttribute: (name: string) => { array: ArrayLike<number> }; index: unknown; toNonIndexed: () => typeof geometry; dispose: () => void }) {
   const plain = geometry.index ? geometry.toNonIndexed() : geometry;
-  const positions = plain.getAttribute("position").array;
+  // Einmal in eine Zahlenreihe, nicht je Dreieck: `Array.from` auf dem ganzen
+  // Feld in der Schleife macht aus Millisekunden Sekunden.
+  const positions = Array.from(plain.getAttribute("position").array);
   let volume = 0;
   for (let index = 0; index + 8 < positions.length; index += 9) {
-    const [ax, ay, az, bx, by, bz, cx, cy, cz] = Array.from(positions).slice(index, index + 9) as number[];
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = positions.slice(index, index + 9);
     volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
   }
   return volume;
@@ -335,5 +338,113 @@ describe("Die Zahnstange als genauer Koerper", () => {
     const filleted = cad.fillet(solid, [edges[0]], 0.2);
     expect(cad.isSolid(filleted)).toBe(true);
     expect(Math.abs(cad.getVolume(filleted) - before)).toBeGreaterThan(1e-6);
+  }, 300000);
+});
+
+describe("Das Hohlrad als genauer Koerper", () => {
+  const ring = (overrides: Partial<WorkplaneShape> = {}): WorkplaneShape => {
+    const diameter = ringGearOuterDiameter(2, 30, undefined);
+    return {
+      id: "h",
+      name: "Hohlrad",
+      kind: "ringGear",
+      color: "#6f7f8d",
+      x: 0,
+      z: 0,
+      elevation: 0,
+      size: diameter,
+      width: diameter,
+      depth: diameter,
+      height: 6,
+      rotation: 0,
+      teeth: 30,
+      gearPressureAngle: 20,
+      gearBacklash: 0.2,
+      ...overrides,
+    } as WorkplaneShape;
+  };
+
+  /**
+   * Aussen der Kranz als Vieleck mit 96 Ecken, innen die Zahnreihe als Loch -
+   * zwei Umrisse in einer Flaeche. Das Loch ist kein Kreis, und darum geht es
+   * hier: Es ist der erste Koerper, dessen Loch ein gezeichneter Umriss ist.
+   */
+  it("ist ein gueltiger Koerper mit einem gezahnten Loch", () => {
+    const solid = solidFor(ring());
+    expect(cad.isSolid(solid)).toBe(true);
+    expect(cad.isValid(solid)).toBe(true);
+    const kinds = cad.getSubShapes(solid, "face").map((face) => cad.surfaceType(face));
+    expect(kinds.every((kind) => kind === "plane")).toBe(true);
+    // 96 Kranzflaechen, 30 x 30 Flaechen der Zahnreihe und zwei Deckel.
+    expect(kinds).toHaveLength(96 + 30 * 30 + 2);
+  }, 300000);
+
+  /**
+   * Und er ist derselbe Koerper wie der gezeichnete: beide auf demselben
+   * Umriss und demselben Loch. Zur Probe liegt der Rauminhalt zwischen dem
+   * Ring bis zum Fusskreis und dem bis zum Kopfkreis - die Zahnreihe fuellt
+   * das Band dazwischen etwa zur Haelfte.
+   */
+  it("hat denselben Rauminhalt wie das gezeichnete Netz", () => {
+    const shape = ring();
+    const exact = cad.getVolume(solidFor(shape));
+    const mesh = closedMeshVolume(createRingGearGeometry({
+      width: shape.width,
+      height: shape.height,
+      teeth: shape.teeth,
+      gearPressureAngle: shape.gearPressureAngle,
+      gearBacklash: shape.gearBacklash,
+      ringRim: shape.ringRim,
+    }));
+    expect(exact).toBeCloseTo(mesh, 3);
+    const measures = ringGearMeasures(shape.width, shape);
+    const band = (radius: number) => Math.PI * (measures.outerRadius ** 2 - radius ** 2) * shape.height;
+    expect(exact).toBeGreaterThan(band(measures.rootRadius));
+    expect(exact).toBeLessThan(band(measures.tipRadius));
+  }, 300000);
+
+  /**
+   * Der Grund fuer die ganze Sache: Eine Kante der Zahnreihe laesst sich
+   * verrunden. An einem gedruckten Hohlrad ist das der Zahnfuss.
+   */
+  /**
+   * Der Grund fuer die ganze Sache: Die Kante im Zahnfuss laesst sich
+   * verrunden - genau die, an der ein gedruckter Zahn bricht.
+   *
+   * Gesucht wird sie nach ihrer Lage: senkrecht, so lang wie der Ring hoch
+   * ist, und auf dem Fusskreis. Die Mitte des Lueckengrundes bleibt dabei
+   * aussen vor, und das ist kein Mangel: Dort treffen zwei Sehnen desselben
+   * Kreises aufeinander, der Knick ist fast 180 Grad, und OpenCascade legt an
+   * eine so glatte Kante keine Rundung ("no suitable edges"). Gemessen: von
+   * drei Kanten je Zahnfuss nehmen zwei eine Rundung von 0,2 mm, die mittlere
+   * nicht. Dasselbe gilt fuer die Kanten zwischen zwei Flankenstuecken - und
+   * das ist richtig so, denn eine Flanke ist keine Kante.
+   */
+  it("laesst die Kante im Zahnfuss verrunden", () => {
+    const shape = ring();
+    const solid = solidFor(shape);
+    const before = cad.getVolume(solid);
+    const measures = ringGearMeasures(shape.width, shape);
+    const spaceCentres = Array.from({ length: measures.teeth }, (_, index) => involuteToothCentre(measures.teeth, index));
+    const roots = cad.getSubShapes(solid, "edge").filter((edge) => {
+      if (Math.abs(cad.getLength(edge) - shape.height) > 1e-6) return false;
+      const box = cad.getBoundingBox(edge);
+      const x = (box.xmin + box.xmax) / 2;
+      const z = (box.zmin + box.zmax) / 2;
+      if (Math.abs(Math.hypot(x, z) - measures.rootRadius) > 1e-6) return false;
+      // Die Mitte des Lueckengrundes ist keine Kante, sondern ein Punkt auf
+      // einem fast geraden Stueck - sie bleibt aussen vor.
+      const angle = (Math.atan2(z, x) + Math.PI * 2) % (Math.PI * 2);
+      return spaceCentres.every((centre) => Math.abs(angle - centre % (Math.PI * 2)) > 1e-6);
+    });
+    expect(roots).toHaveLength(measures.teeth * 2);
+    const filleted = cad.fillet(solid, [roots[0]], 0.2);
+    expect(cad.isSolid(filleted)).toBe(true);
+    // Eine Rundung im Fuss gibt Material **dazu** - genau darum will man sie.
+    expect(cad.getVolume(filleted)).toBeGreaterThan(before);
+  }, 300000);
+
+  it("gibt null fuer einen ungleich gezogenen Ring", () => {
+    expect(cadModifierPrimitiveForProfileShape(ring({ depth: 80 }))).toBeNull();
   }, 300000);
 });

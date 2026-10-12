@@ -19,6 +19,7 @@ export const BODY_PARAMETER_KEYS = [
   "teeth", "toothSize", "toothWidth", "centerHoleSize", "gearType", "helixAngle", "helixQuality",
   "gearProfile", "gearPressureAngle", "gearBacklash",
   "knurlPattern", "knurlCount", "knurlDepth", "knurlAngle", "knurlChamfer",
+  "ringRim",
   "threadRole", "threadHead", "threadDrive", "threadHand", "threadProfile", "threadDiameter",
   "threadPitch", "threadClearance", "threadQuality", "threadHeadHeight", "threadChamfer",
   "threadHeadChamfer",

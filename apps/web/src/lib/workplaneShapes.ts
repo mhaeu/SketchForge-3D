@@ -168,7 +168,7 @@ export function shapeTaperDimensions(shape: WorkplaneShape) {
  * eigenen Werten, nicht aus Breite und Tiefe der Grundflaeche.
  */
 export function shapeSupportsTaper(kind: WorkplaneShape["kind"]) {
-  return kind !== "gear" && kind !== "rack" && kind !== "knurl" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
+  return kind !== "gear" && kind !== "rack" && kind !== "ringGear" && kind !== "knurl" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
 }
 
 /**
@@ -630,7 +630,7 @@ export function fallbackSolidColor(shape: WorkplaneShape) {
   if (shape.kind === "sphere") return "#0098c7";
   if (shape.kind === "cone") return "#6e2786";
   if (shape.kind === "pyramid") return "#f2cf10";
-  if (shape.kind === "gear" || shape.kind === "rack") return "#6f7f8d";
+  if (shape.kind === "gear" || shape.kind === "rack" || shape.kind === "ringGear") return "#6f7f8d";
   if (shape.kind === "knurl") return "#7a8a99";
   if (shape.kind === "loft") return "#5b5ce2";
   return "#d41721";
@@ -770,6 +770,7 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.gearType === b.gearType &&
     a.helixAngle === b.helixAngle &&
     a.helixQuality === b.helixQuality &&
+    a.ringRim === b.ringRim &&
     a.knurlPattern === b.knurlPattern &&
     a.knurlCount === b.knurlCount &&
     a.knurlDepth === b.knurlDepth &&

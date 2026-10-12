@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rackMeasures } from "@/lib/rackGeometry";
+import { ringGearMeasures } from "@/lib/ringGearGeometry";
 import type { ShapeAsset } from "@/types/sketchforge";
 import { makeShapeFromAsset, sceneShape, toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
@@ -158,7 +159,7 @@ describe("shapes from the extended palette", () => {
 
   it("offers every kind in the palette", () => {
     const kinds = toolbarShapeAssets.map((asset) => asset.kind);
-    ["ellipse", "polygon", "thread", "spring", "ruler", "knurl", "rack"].forEach((kind) => {
+    ["ellipse", "polygon", "thread", "spring", "ruler", "knurl", "rack", "ringGear"].forEach((kind) => {
       expect(kinds).toContain(kind);
     });
   });
@@ -202,6 +203,24 @@ describe("shapes from the extended palette", () => {
     expect(shape.height).toBe(6);
     expect(shape.gearPressureAngle).toBe(20);
     expect(shape.gearBacklash).toBeCloseTo(0.2, 9);
+  });
+
+  /**
+   * Das Hohlrad kommt mit Modul 2, 30 Zaehnen und anderthalb Modul Kranz in
+   * die Szene: Fusskreis 65 mm, aussen 71 mm.
+   */
+  it("stellt das Hohlrad mit Kranz hin", () => {
+    const shape = makeShapeFromAsset(assetFor("ringGear"));
+    expect(shape.kind).toBe("ringGear");
+    expect(shape.teeth).toBe(30);
+    expect(shape.width).toBeCloseTo(71, 9);
+    expect(shape.depth).toBeCloseTo(71, 9);
+    expect(shape.ringRim).toBeCloseTo(3, 9);
+    const measures = ringGearMeasures(shape.width, shape);
+    expect(measures.module).toBeCloseTo(2, 9);
+    // Kopfkreis innen, Fusskreis aussen - daran erkennt man ein Hohlrad.
+    expect(measures.tipRadius).toBeLessThan(measures.pitchRadius);
+    expect(measures.rootRadius).toBeGreaterThan(measures.pitchRadius);
   });
 
   it("inserts the polygon as a regular hexagon", () => {

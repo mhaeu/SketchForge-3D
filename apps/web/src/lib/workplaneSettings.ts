@@ -42,6 +42,7 @@ import {
   MIN_KNURL_DEPTH,
 } from "@/lib/knurlGeometry";
 import { MAX_RACK_TEETH, MIN_RACK_TEETH } from "@/lib/rackGeometry";
+import { MIN_RING_RIM } from "@/lib/ringGearGeometry";
 
 export const DEFAULT_SNAP_GRID: GridSize = "1.0 mm";
 export const MIN_CUSTOM_SHAPE_DIMENSION = 0.01;
@@ -161,7 +162,7 @@ export function snapGridStep(size: GridSize) {
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
 const customizableShapeKinds: ShapeKind[] = [
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "rack", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
+  "halfSphere", "torus", "tube", "gear", "rack", "ringGear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
   "mesh", "loft", "counterbore", "countersink", "teardrop",
 ];
 
@@ -298,6 +299,13 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
           : fallbackEntry?.gearProfile;
       entry.gearPressureAngle = optionalShapeNumber(source.gearPressureAngle, fallbackEntry?.gearPressureAngle, MIN_GEAR_PRESSURE_ANGLE, MAX_GEAR_PRESSURE_ANGLE);
       entry.gearBacklash = optionalShapeNumber(source.gearBacklash, fallbackEntry?.gearBacklash, 0, MAX_GEAR_BACKLASH);
+    }
+    if (kind === "ringGear") {
+      // Wie beim Rad, dazu der Kranz. Das Modul steckt im Aussendurchmesser.
+      entry.teeth = optionalShapeNumber(source.teeth, fallbackEntry?.teeth, 6, 64, true);
+      entry.gearPressureAngle = optionalShapeNumber(source.gearPressureAngle, fallbackEntry?.gearPressureAngle, MIN_GEAR_PRESSURE_ANGLE, MAX_GEAR_PRESSURE_ANGLE);
+      entry.gearBacklash = optionalShapeNumber(source.gearBacklash, fallbackEntry?.gearBacklash, 0, MAX_GEAR_BACKLASH);
+      entry.ringRim = optionalShapeNumber(source.ringRim, fallbackEntry?.ringRim, MIN_RING_RIM, MAX_CUSTOM_SHAPE_DIMENSION / 2);
     }
     if (kind === "rack") {
       // Die Zahnstange teilt sich die drei Zahlen mit dem Rad; ihr Modul

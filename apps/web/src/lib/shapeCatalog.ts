@@ -69,6 +69,7 @@ import {
   normalizeKnurlPattern,
 } from "@/lib/knurlGeometry";
 import { DEFAULT_RACK_TEETH, minRackDepth, normalizeRackTeeth, rackLength, rackModule } from "@/lib/rackGeometry";
+import { DEFAULT_RING_GEAR_TEETH, normalizeRingRim, ringGearModule, ringGearOuterDiameter } from "@/lib/ringGearGeometry";
 import { THREAD_ASSET_PRESETS, createThreadShapeFields, isThreadAssetId } from "@/lib/threadShape";
 import {
   DEFAULT_THREAD_CLEARANCE,
@@ -131,6 +132,7 @@ const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   ruler: "shape.ruler",
   gear: "shape.gear",
   rack: "shape.rack",
+  ringGear: "shape.ringGear",
   knurl: "shape.knurl",
   loft: "shape.loft",
   counterbore: "shape.counterbore",
@@ -170,6 +172,9 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   // Die Zahnstange steht neben dem Zahnrad: Beide werden nach Modul
   // eingestellt, und zusammen sind sie ein Antrieb.
   { id: "rack", name: "Rack", src: "assets/sketchforge/shape-icons-gray/rack.svg", menuIcon: "assets/sketchforge/shape-icons-gray/rack.svg", kind: "rack", color: "#6f7f8d" },
+  // Und das Hohlrad dazu: Hohlrad, Planeten und Sonne sind ein
+  // Planetengetriebe, und alle drei kommen aus demselben Modul.
+  { id: "ringGear", name: "Ring gear", src: "assets/sketchforge/shape-icons-gray/ring-gear.svg", menuIcon: "assets/sketchforge/shape-icons-gray/ring-gear.svg", kind: "ringGear", color: "#6f7f8d" },
   { id: "knurl", name: "Knurl", src: "assets/sketchforge/shape-icons-gray/knurl.png", menuIcon: "assets/sketchforge/shape-icons-gray/knurl.png", kind: "knurl", color: "#7a8a99" },
   { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
   // Die drei Bohrformen. Sie sind zum Abziehen gedacht - hinstellen, mit dem
@@ -219,6 +224,15 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
     // Bewusst ungleiche Vorgabe, damit sich die Ellipse beim Einfuegen sofort
     // vom kreisrunden Zylinder unterscheidet.
     return { width: 26, depth: 16, height: 20 };
+  }
+  if (kind === "ringGear") {
+    /*
+     * Ein Hohlrad mit Modul 2 und 30 Zaehnen: Der Fusskreis liegt bei
+     * 2 x 32,5 = 65 mm, dazu ein Kranz von anderthalb Modul auf jeder Seite
+     * macht 71 mm aussen. 6 mm hoch wie ein neues Zahnrad.
+     */
+    const diameter = ringGearOuterDiameter(DEFAULT_GEAR_MODULE, DEFAULT_RING_GEAR_TEETH, undefined);
+    return { width: diameter, depth: diameter, height: 6 };
   }
   if (kind === "rack") {
     /*
@@ -325,6 +339,15 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
       knurlChamfer: normalizeKnurlChamfer(DEFAULT_KNURL_CHAMFER, dimensions.width, dimensions.height),
     };
   }
+  if (kind === "ringGear") {
+    // Wie beim Rad, dazu der Kranz. Das Modul steckt im Aussendurchmesser.
+    return {
+      teeth: DEFAULT_RING_GEAR_TEETH,
+      gearPressureAngle: DEFAULT_GEAR_PRESSURE_ANGLE,
+      gearBacklash: DEFAULT_GEAR_BACKLASH,
+      ringRim: normalizeRingRim(undefined, DEFAULT_GEAR_MODULE),
+    };
+  }
   if (kind === "rack") {
     // Dieselben drei Zahlen wie beim Rad - Zaehnezahl, Eingriffswinkel,
     // Spiel. Das Modul steckt in der Laenge.
@@ -413,6 +436,7 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     gearProfile: shape.gearProfile,
     gearPressureAngle: shape.gearPressureAngle,
     gearBacklash: shape.gearBacklash,
+    ringRim: shape.ringRim,
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -514,7 +538,9 @@ export function makeShapeFromAsset(
   const size = Math.max(width, depth);
   const gearTeeth = asset.kind === "gear"
     ? normalizeGearTeeth(customization.teeth ?? DEFAULT_GEAR_TEETH)
-    : asset.kind === "rack" ? normalizeRackTeeth(customization.teeth ?? DEFAULT_RACK_TEETH) : undefined;
+    : asset.kind === "ringGear"
+      ? normalizeGearTeeth(customization.teeth ?? DEFAULT_RING_GEAR_TEETH)
+      : asset.kind === "rack" ? normalizeRackTeeth(customization.teeth ?? DEFAULT_RACK_TEETH) : undefined;
   const gearToothSize = asset.kind === "gear" ? normalizeGearToothSize(customization.toothSize ?? DEFAULT_GEAR_TOOTH_SIZE, width, depth) : undefined;
   const threadDiameter = asset.kind === "thread" ? normalizeThreadDiameter(customization.threadDiameter ?? DEFAULT_THREAD_DIAMETER) : undefined;
 
@@ -565,12 +591,17 @@ export function makeShapeFromAsset(
     helixAngle: asset.kind === "gear" ? normalizeGearHelixAngle(customization.helixAngle ?? DEFAULT_GEAR_HELIX_ANGLE) : undefined,
     helixQuality: asset.kind === "gear" ? normalizeGearHelixQuality(customization.helixQuality ?? DEFAULT_GEAR_HELIX_QUALITY) : undefined,
     gearProfile: asset.kind === "gear" ? normalizeGearProfile(customization.gearProfile ?? "involute") : undefined,
-    gearPressureAngle: asset.kind === "gear" || asset.kind === "rack" ? normalizeGearPressureAngle(customization.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE) : undefined,
+    gearPressureAngle: asset.kind === "gear" || asset.kind === "rack" || asset.kind === "ringGear" ? normalizeGearPressureAngle(customization.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE) : undefined,
     gearBacklash: asset.kind === "gear"
       ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, involuteGearModule(width, customization.teeth ?? DEFAULT_GEAR_TEETH))
       : asset.kind === "rack"
         ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, rackModule(width, customization.teeth ?? DEFAULT_RACK_TEETH))
-        : undefined,
+        : asset.kind === "ringGear"
+          ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, ringGearModule(width, customization.teeth ?? DEFAULT_RING_GEAR_TEETH, customization.ringRim))
+          : undefined,
+    ringRim: asset.kind === "ringGear"
+      ? normalizeRingRim(customization.ringRim, ringGearModule(width, customization.teeth ?? DEFAULT_RING_GEAR_TEETH, customization.ringRim))
+      : undefined,
     knurlPattern: asset.kind === "knurl" ? normalizeKnurlPattern(customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,
     knurlCount: asset.kind === "knurl" ? normalizeKnurlCount(customization.knurlCount ?? DEFAULT_KNURL_COUNT, width) : undefined,
     knurlDepth: asset.kind === "knurl" ? normalizeKnurlDepth(customization.knurlDepth ?? DEFAULT_KNURL_DEPTH, width, customization.knurlCount ?? DEFAULT_KNURL_COUNT, customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,

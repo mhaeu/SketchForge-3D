@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="ring-gear-face" x1="18" y1="14" x2="76" y2="82" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f0f3f5"/>
+      <stop offset="1" stop-color="#9aa5ad"/>
+    </linearGradient>
+    <filter id="ring-gear-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#34434d" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <!-- Ein Kranz mit Zaehnen nach innen: Das ist der Unterschied zum Zahnrad,
+       und man sieht ihn sofort. Die Zaehne sind innen spitz und aussen
+       breit - so sitzt ein Hohlradzahn wirklich. -->
+  <g filter="url(#ring-gear-shadow)">
+    <path fill="url(#ring-gear-face)" stroke="#66747e" stroke-width="2.5" stroke-linejoin="round"
+          d="M48 6a42 42 0 100 84 42 42 0 100-84Z"/>
+    <path fill="#ffffff" stroke="#66747e" stroke-width="2.2" stroke-linejoin="round"
+          d="M48 20 L52.2 25.8 L60 24 L62.3 31.6 L70.2 32.5 L69.7 40.4 L76.6 44.2 L73.1 51.4 L77.2 58.1 L71.2 63.2 L71.9 71.1 L64.1 71.9 L60.6 79.2 L53.4 75.7 L46.4 79.6 L41.5 73.3 L33.6 73.8 L32.9 66 L25.7 62.3 L29.3 55.2 L25.5 48.2 L31.8 43.4 L31.4 35.5 L39.2 34.9 L43 27.7 Z"/>
+  </g>
+</svg>
