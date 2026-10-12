@@ -532,6 +532,36 @@ export function ToolbarMateFacesIcon(props: IconProps) {
 }
 
 /**
+ * Aufnehmen und absetzen: eine schraege Platte und darueber die aufgenommene
+ * Auswahl - gestrichelt, weil sie noch in der Hand ist - mit dem Pfeil nach
+ * unten auf die Flaeche. Sie steht schon so schraeg wie die Platte: Darum
+ * geht es, sie legt sich flaechig darauf.
+ */
+export function ToolbarSetDownIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M4 32 L40 20 L44 26 L8 38 Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M4 32 L40 20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <rect
+        x="-7"
+        y="-7"
+        width="14"
+        height="14"
+        rx="2"
+        transform="translate(23 9) rotate(-18)"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeDasharray="3.4 3.2"
+        opacity="0.7"
+      />
+      <path d="M23 19 v3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M19.8 21.5 h6.4 L23 25.6 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
  * Punkt auf Punkt setzen: zwei Koerper, an jedem eine gezeigte Ecke, und ein
  * Pfeil, der die eine auf die andere bringt. Der wandernde Koerper ist
  * gestrichelt - er steht noch nicht da, wo er hin soll.

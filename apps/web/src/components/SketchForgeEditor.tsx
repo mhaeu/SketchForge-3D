@@ -89,6 +89,7 @@ import {
   ToolbarHollowIcon,
   ToolbarSplitIcon,
   ToolbarMateFacesIcon,
+  ToolbarSetDownIcon,
   ToolbarLayFlatIcon,
   ToolbarObjectListIcon,
   ToolbarOpenGroupIcon,
@@ -205,6 +206,7 @@ import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
 import { mateMotion, mateTurnDegrees, type MateFacePick, type MateMode } from "@/lib/mateFaces";
+import { selectionCentre, setDownRotation, setDownTranslation } from "@/lib/setDownOnFace";
 import { bodiesTooTall } from "@/lib/buildVolume";
 import { toolbarDensityFor, TOOLBAR_BASE_ICON_SIZE } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
@@ -6608,6 +6610,11 @@ export function SketchForgeEditor({
    */
   const [snapTarget, setSnapTarget] = useState<SnapTarget>("auto");
   const [layFlatMode, setLayFlatMode] = useState(false);
+  /**
+   * Das Aufnehmen: Die Auswahl ist in der Hand, und der naechste Klick auf
+   * eine Flaeche sagt, wo sie wieder hinsoll.
+   */
+  const [setDownMode, setSetDownMode] = useState(false);
   const [objectListOpen, setObjectListOpen] = useState(false);
   /*
    * Die geoeffnete Gruppe: ihre Kennung, wie sie vorher aussah, und welche
@@ -9024,6 +9031,106 @@ export function SketchForgeEditor({
     // Klickpaar zusammenfindet.
     setMateTool({ ...current, source: null, error: null });
   }, [commitShapes, selectedIds, shapes]);
+
+  /**
+   * Aufnehmen und absetzen.
+   *
+   * Die Auswahl ist das, was wandert - der Klick sagt nur, wohin. Das ist der
+   * Unterschied zum Flachlegen und zum Aneinanderlegen, bei denen der Klick
+   * auch den Koerper benennt: Hier hat man die Auswahl schon in der Hand.
+   */
+  const toggleSetDownTool = useCallback(() => {
+    if (setDownMode) {
+      setSetDownMode(false);
+      setNotice(t("status.setDownCancelled"));
+      return;
+    }
+    if (selectedShapes.filter((shape) => !shape.locked).length === 0) {
+      setNotice(t(hasSelection ? "status.setDownLocked" : "status.selectShapeFirst"));
+      return;
+    }
+    // Ein Zeigewerkzeug zur Zeit: zwei fragen gleichzeitig nach einer Flaeche.
+    setSnapMode(null);
+    setSnapAnchor(null);
+    setPivotMode(false);
+    setAlignMode(false);
+    setMirrorMode(false);
+    setLayFlatMode(false);
+    setPatternTool(null);
+    setMateTool(null);
+    setSplitTool(null);
+    setSetDownMode(true);
+    setNotice(t("status.setDownPick"));
+  }, [hasSelection, selectedShapes, setDownMode]);
+
+  /**
+   * Der Klick, der die Auswahl absetzt.
+   *
+   * Gerechnet wird wie beim Flachlegen: erst die Drehung, dann - am gedrehten
+   * Netz gemessen - die Verschiebung. Nur gilt beides fuer die ganze Auswahl,
+   * und das Ziel ist die angeklickte Flaeche statt der Arbeitsebene.
+   */
+  const setSelectionDownOnFace = useCallback((picked: {
+    shapeId: string;
+    centre: { x: number; y: number; z: number };
+    normal: { x: number; y: number; z: number };
+  }) => {
+    const moving = shapes.filter((shape) => selectedIds.includes(shape.id) && !shape.locked).map((shape) => shape.id);
+    if (moving.length === 0) {
+      setNotice(t("status.setDownLocked"));
+      return;
+    }
+    if (moving.includes(picked.shapeId)) {
+      /*
+       * Auf sich selbst setzt sich nichts ab, und auf einen mitwandernden
+       * Nachbarn auch nicht: Die Zielflaeche wandert dann mit, und das
+       * Ergebnis haengt davon ab, in welcher Reihenfolge gerechnet wurde.
+       */
+      setNotice(t("status.setDownSameBody"));
+      return;
+    }
+    const wanted = new Set(moving);
+    const movingVertices = (list: ReadonlyArray<WorkplaneShape>) => list
+      .filter((shape) => wanted.has(shape.id))
+      .flatMap((shape) => meshForShape(shape).vertices.map(([x, y, z]) => ({ x, y, z })));
+    const rotation = setDownRotation(placementWorkplane, picked.normal);
+    const pivot = selectionCentre(movingVertices(shapes));
+    if (!rotation || !pivot) {
+      setNotice(t("status.setDownNoFace"));
+      return;
+    }
+    const angle = mateTurnDegrees(rotation);
+    const turned = angle < 0.05
+      ? shapes
+      : shapes.map((shape) => (wanted.has(shape.id)
+          ? canonicalizeShape({
+              ...shape,
+              ...rotatedGeometryShapePatch(shape, rotation, new THREE.Vector3(pivot.x, pivot.y, pivot.z)),
+            })
+          : shape));
+    /*
+     * Erst drehen, dann messen: Wie tief die Auswahl danach liegt, steht
+     * nicht in den Winkeln, sondern in ihrem gedrehten Netz.
+     */
+    const translation = setDownTranslation({ point: picked.centre, normal: picked.normal }, movingVertices(turned));
+    if (!translation) {
+      setNotice(t("status.setDownNoFace"));
+      return;
+    }
+    commitShapes(
+      turned.map((shape) => (wanted.has(shape.id)
+        ? {
+            ...shape,
+            x: cleanNearZero(shape.x + translation.x),
+            z: cleanNearZero(shape.z + translation.z),
+            elevation: cleanNearZero((shape.elevation ?? 0) + translation.y),
+          }
+        : shape)),
+      moving,
+      angle < 0.05 ? t("status.setDownStraight") : t("status.setDownDone", { angle: Number(angle.toFixed(1)) }),
+    );
+    setSetDownMode(false);
+  }, [commitShapes, placementWorkplane, selectedIds, shapes]);
 
   const missSnapPoint = useCallback((reason: "nothing" | "target") => {
     setNotice(t(reason === "target" ? "status.snapNoTarget" : "status.snapNothingThere"));
@@ -12136,6 +12243,11 @@ export function SketchForgeEditor({
           setNotice("");
           return;
         }
+        if (setDownMode) {
+          setSetDownMode(false);
+          setNotice(t("status.setDownCancelled"));
+          return;
+        }
         if (snapMode || pivotMode || layFlatMode) {
           setSnapMode(null);
           setSnapAnchor(null);
@@ -12304,6 +12416,9 @@ export function SketchForgeEditor({
       } else if (key === "d" && hasSelection) {
         event.preventDefault();
         dropSelectedToWorkplane();
+      } else if (key === "c" && hasSelection) {
+        event.preventDefault();
+        toggleSetDownTool();
       } else if (key === "h") {
         event.preventDefault();
         setSelectionHoleMode(true);
@@ -12352,9 +12467,11 @@ export function SketchForgeEditor({
     // Ohne diese hielte der Zuhoerer den Wert vom Anheften fest, und Escape
     // legte das Zeigewerkzeug nie ab.
     layFlatMode,
+    setDownMode,
     snapMode,
     splitTool,
     toggleHidden,
+    toggleSetDownTool,
     toggleMirrorMode,
     toggleLocked,
     toggleSelectedSketchImageLock,
@@ -12479,6 +12596,8 @@ export function SketchForgeEditor({
         layFlatActive={layFlatMode}
         onMateFaces={toggleMateFaces}
         mateFacesActive={Boolean(mateTool)}
+        onSetDown={toggleSetDownTool}
+        setDownActive={setDownMode}
         onSnapPoints={() => toggleSnapTool("point")}
         onSnapPointToWorkplane={() => toggleSnapTool("workplane")}
         snapMode={snapMode}
@@ -12578,6 +12697,8 @@ export function SketchForgeEditor({
           layFlatMode={layFlatMode}
           onLayFlatPick={layFlatOnFace}
           mateFacesMode={Boolean(mateTool)}
+          setDownMode={setDownMode}
+          onSetDownPick={setSelectionDownOnFace}
           onMateFacePick={pickMateFace}
           snapAnchor={snapAnchor}
           onSnapPick={takeSnapPoint}
@@ -13057,6 +13178,8 @@ function SecondaryToolbar({
   layFlatActive,
   onMateFaces,
   mateFacesActive,
+  onSetDown,
+  setDownActive,
   onSnapPoints,
   onSnapPointToWorkplane,
   snapMode,
@@ -13170,6 +13293,8 @@ function SecondaryToolbar({
   layFlatActive: boolean;
   onMateFaces: () => void;
   mateFacesActive: boolean;
+  onSetDown: () => void;
+  setDownActive: boolean;
   onSnapPoints: () => void;
   onSnapPointToWorkplane: () => void;
   snapMode: SnapMode | null;
@@ -13483,6 +13608,9 @@ function SecondaryToolbar({
     // Neben dem Flachlegen, weil es dieselbe Frage stellt: welche Flaeche?
     // Nur ist das Ziel hier die Flaeche eines anderen Koerpers.
     { label: t("editor.tool.mateFaces"), icon: ToolbarMateFacesIcon, action: onMateFaces, enabled: canSnapToWorkplane, active: mateFacesActive },
+    // Und daneben das Aufnehmen: dieselbe Frage noch einmal, nur dass die
+    // Auswahl schon in der Hand ist und der Klick allein das Ziel nennt.
+    { label: t("editor.tool.setDown"), icon: ToolbarSetDownIcon, action: onSetDown, enabled: hasSelection, active: setDownActive },
     { label: t("editor.tool.centerOnWorkplane"), icon: ToolbarCenterOnWorkplaneIcon, action: onCenterOnWorkplane, enabled: hasSelection },
     { label: t("editor.tool.alignToWorkplane"), icon: ToolbarAlignToWorkplaneIcon, action: onAlignToWorkplane, enabled: hasSelection },
     // Diese beiden brauchen keine Auswahl: Der Klick sagt, welcher Koerper

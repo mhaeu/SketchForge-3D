@@ -339,6 +339,12 @@ type WorkplaneViewportProps = {
   /** Und dasselbe fuers Aneinanderlegen - dort zweimal: erst die bewegte Flaeche, dann die andere. */
   mateFacesMode?: boolean;
   onMateFacePick?: (picked: { shapeId: string; centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
+  /**
+   * Und dasselbe fuers Absetzen der aufgenommenen Auswahl. Hier nennt der
+   * Klick nur das Ziel - was wandert, steht schon fest.
+   */
+  setDownMode?: boolean;
+  onSetDownPick?: (picked: { shapeId: string; centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
   /** Die Ebene, die das Teilen gerade vorschlaegt. */
   splitPreview?: { normal: [number, number, number]; origin: [number, number, number]; size: number } | null;
   /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
@@ -3674,6 +3680,8 @@ export function WorkplaneViewport({
   onSplitFacePick,
   mateFacesMode = false,
   onMateFacePick,
+  setDownMode = false,
+  onSetDownPick,
   splitPreview = null,
   snapAnchor = null,
   onSnapPick,
@@ -3762,12 +3770,17 @@ export function WorkplaneViewport({
   splitPickModeRef.current = splitPickMode;
   const mateFacesModeRef = useRef(mateFacesMode);
   mateFacesModeRef.current = mateFacesMode;
+  const setDownModeRef = useRef(setDownMode);
+  setDownModeRef.current = setDownMode;
   /*
-   * Drei Werkzeuge stellen dieselbe Frage - welche Flaeche? - und nur die
+   * Vier Werkzeuge stellen dieselbe Frage - welche Flaeche? - und nur die
    * Antwort geht woandershin. Diese Abfrage steht darum an einer Stelle,
-   * damit ein viertes nicht vier Ketten von Oder-Abfragen verlaengert.
+   * damit ein fuenftes nicht fuenf Ketten von Oder-Abfragen verlaengert.
    */
-  const facePickActive = () => layFlatModeRef.current || splitPickModeRef.current || mateFacesModeRef.current;
+  const facePickActive = () => layFlatModeRef.current
+    || splitPickModeRef.current
+    || mateFacesModeRef.current
+    || setDownModeRef.current;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4659,8 +4672,10 @@ export function WorkplaneViewport({
   }, [pivotMode, snapMode]);
 
   useEffect(() => {
-    if (!layFlatMode && !splitPickMode && !mateFacesMode) syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
-  }, [isCutAwayPoint, layFlatMode, mateFacesMode, splitPickMode]);
+    if (!layFlatMode && !splitPickMode && !mateFacesMode && !setDownMode) {
+      syncLayFlatHover(threeRef.current, resolvedThemeRef.current, isCutAwayPoint, shapesRef.current, null, null);
+    }
+  }, [isCutAwayPoint, layFlatMode, mateFacesMode, setDownMode, splitPickMode]);
 
   useEffect(() => {
     const state = threeRef.current;
@@ -4673,6 +4688,7 @@ export function WorkplaneViewport({
       && !snapMode
       && !layFlatMode
       && !mateFacesMode
+      && !setDownMode
       && !rulerMode
       && !rulerDeleteMode
       && !rulerMoveMode
@@ -4682,7 +4698,7 @@ export function WorkplaneViewport({
       state.transformGuideLayer.visible = visible;
       state.needsRender = true;
     }
-  }, [activeTransformKind, alignMode, layFlatMode, mateFacesMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, snapMode, workplaneMode]);
+  }, [activeTransformKind, alignMode, layFlatMode, mateFacesMode, mirrorMode, modifierActive, rulerDeleteMode, rulerMode, rulerMoveMode, setDownMode, snapMode, workplaneMode]);
 
   useEffect(() => {
     window.sketchforgePerf = {
@@ -6580,10 +6596,12 @@ export function WorkplaneViewport({
         const picked = pickShapeTriangles(event.clientX, event.clientY);
         const face = picked ? planarFace(picked.positions, picked.triangle) : null;
         if (picked && face) {
-          // Dieselbe Frage, drei Antworten: flachlegen, die Schnittebene auf
-          // diese Flaeche legen, oder sie an eine andere legen.
+          // Dieselbe Frage, vier Antworten: flachlegen, die Schnittebene auf
+          // diese Flaeche legen, sie an eine andere legen, oder die
+          // aufgenommene Auswahl darauf absetzen.
           if (splitPickModeRef.current) onSplitFacePick?.({ centre: face.centre, normal: face.normal });
           else if (mateFacesModeRef.current) onMateFacePick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
+          else if (setDownModeRef.current) onSetDownPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
           else onLayFlatPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
         } else onSnapMiss?.(picked ? "target" : "nothing");
         return;
@@ -7788,7 +7806,7 @@ export function WorkplaneViewport({
         )}
       </div>
 
-      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode || mateFacesMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
+      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode || mateFacesMode || setDownMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
         <div className="workplane-plane">
           <div
             className="three-workplane-host"
@@ -7815,7 +7833,7 @@ export function WorkplaneViewport({
               onCommit={commitMoveDimension}
             />
           ) : null}
-          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !layFlatMode && !mateFacesMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
+          {!workplaneMode && transformOverlay && !alignMode && !mirrorMode && !snapMode && !layFlatMode && !mateFacesMode && !setDownMode && !rulerMode && !rulerDeleteMode && !rulerMoveMode && !modifierActive ? (
             <TransformOverlay
               box={transformOverlay}
               measureKey={pinnedMeasureKey ?? hoverMeasureKey}
