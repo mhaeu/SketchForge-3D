@@ -4,6 +4,7 @@ import type { CadModifierPrimitivePart } from "@/lib/cadModifierTypes";
 import { cadTransformRequiresGeneralTransform } from "@/lib/cadModifierRuntime";
 import { mirrorSign, preservesFeatureSize, resizedImportedCoordinates, shapeDepth, shapeHasShapeDeform, shapeWidth } from "@/lib/workplaneShapes";
 import { knurlCorners, knurlSettings } from "@/lib/knurlGeometry";
+import { rackOutlineCorners } from "@/lib/rackGeometry";
 import { gearOutlineCorners, normalizeGearCenterHoleSize, normalizeGearProfile, normalizeGearType } from "@/lib/gearGeometry";
 
 export type BakedCadMetadataFrame = {
@@ -203,9 +204,34 @@ function involuteGearProfilePart(shape: WorkplaneShape): CadModifierPrimitivePar
  * kein hochgezogener Umriss. (Layerling hat es versucht - der Kern braucht
  * dort 43 s fuer 30 Rillen.)
  */
+/**
+ * Die Zahnstange als hochgezogener Umriss.
+ *
+ * Derselbe Umriss, aus dem auch ihr Netz gebaut wird - dieselben Ecken, also
+ * derselbe Koerper, nur exakt. Damit laesst sich ihr Zahnkopf verrunden oder
+ * fasen, und das ist bei einer gedruckten Zahnstange keine Zierde: Eine
+ * Verrundung im Zahnfuss ist die Stelle, an der ein Zahn sonst bricht.
+ */
+function rackProfilePart(shape: WorkplaneShape): CadModifierPrimitivePart | null {
+  const width = shapeWidth(shape);
+  const depth = shapeDepth(shape);
+  if (!allFinitePositive([width, depth, shape.height])) return null;
+  const loop: number[] = [];
+  rackOutlineCorners(width, depth, shape).forEach(({ x, z }) => {
+    loop.push(x, z);
+  });
+  return {
+    kind: "profileExtrusion",
+    loop,
+    height: shape.height,
+    transform: primitivePlacementTransform(shape, shape.height),
+  };
+}
+
 export function cadModifierPrimitiveForProfileShape(shape: WorkplaneShape): CadModifierPrimitivePart | null {
   if (shape.importedMesh || shape.groupedShapes?.length) return null;
   if (shape.kind === "gear") return involuteGearProfilePart(shape);
+  if (shape.kind === "rack") return rackProfilePart(shape);
   if (shape.kind !== "knurl") return null;
   const width = shapeWidth(shape);
   const settings = knurlSettings({ ...shape, width });

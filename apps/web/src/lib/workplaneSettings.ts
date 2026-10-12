@@ -41,6 +41,7 @@ import {
   MIN_KNURL_COUNT,
   MIN_KNURL_DEPTH,
 } from "@/lib/knurlGeometry";
+import { MAX_RACK_TEETH, MIN_RACK_TEETH } from "@/lib/rackGeometry";
 
 export const DEFAULT_SNAP_GRID: GridSize = "1.0 mm";
 export const MIN_CUSTOM_SHAPE_DIMENSION = 0.01;
@@ -160,7 +161,7 @@ export function snapGridStep(size: GridSize) {
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
 const customizableShapeKinds: ShapeKind[] = [
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
+  "halfSphere", "torus", "tube", "gear", "rack", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
   "mesh", "loft", "counterbore", "countersink", "teardrop",
 ];
 
@@ -295,6 +296,13 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
         : source.gearProfile === "simple" || source.gearProfile === "involute" || source.gearProfile === "round"
           ? source.gearProfile
           : fallbackEntry?.gearProfile;
+      entry.gearPressureAngle = optionalShapeNumber(source.gearPressureAngle, fallbackEntry?.gearPressureAngle, MIN_GEAR_PRESSURE_ANGLE, MAX_GEAR_PRESSURE_ANGLE);
+      entry.gearBacklash = optionalShapeNumber(source.gearBacklash, fallbackEntry?.gearBacklash, 0, MAX_GEAR_BACKLASH);
+    }
+    if (kind === "rack") {
+      // Die Zahnstange teilt sich die drei Zahlen mit dem Rad; ihr Modul
+      // steckt in der Laenge und braucht darum keine eigene Vorgabe.
+      entry.teeth = optionalShapeNumber(source.teeth, fallbackEntry?.teeth, MIN_RACK_TEETH, MAX_RACK_TEETH, true);
       entry.gearPressureAngle = optionalShapeNumber(source.gearPressureAngle, fallbackEntry?.gearPressureAngle, MIN_GEAR_PRESSURE_ANGLE, MAX_GEAR_PRESSURE_ANGLE);
       entry.gearBacklash = optionalShapeNumber(source.gearBacklash, fallbackEntry?.gearBacklash, 0, MAX_GEAR_BACKLASH);
     }

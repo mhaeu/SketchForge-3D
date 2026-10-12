@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { rackMeasures } from "@/lib/rackGeometry";
 import type { ShapeAsset } from "@/types/sketchforge";
 import { makeShapeFromAsset, sceneShape, toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { cadModifierPrimitiveForRoundShape } from "@/lib/cadBakeMetadata";
@@ -157,7 +158,7 @@ describe("shapes from the extended palette", () => {
 
   it("offers every kind in the palette", () => {
     const kinds = toolbarShapeAssets.map((asset) => asset.kind);
-    ["ellipse", "polygon", "thread", "spring", "ruler", "knurl"].forEach((kind) => {
+    ["ellipse", "polygon", "thread", "spring", "ruler", "knurl", "rack"].forEach((kind) => {
       expect(kinds).toContain(kind);
     });
   });
@@ -182,6 +183,25 @@ describe("shapes from the extended palette", () => {
     expect(shape.knurlCount).toBe(30);
     expect(shape.knurlDepth).toBeCloseTo(0.6, 9);
     expect(shape.knurlChamfer).toBeCloseTo(0.5, 9);
+  });
+
+  /**
+   * Die Zahnstange kommt mit Modul 2 und zwoelf Zaehnen in die Szene, und
+   * ihre Laenge ist **genau** zwoelf Teilungen: 12 x 2 x pi = 75,398 mm. Auf
+   * dieser Zahl beruht, dass zwei Zahnstangen hintereinander eine
+   * durchgehende Zahnreihe ergeben.
+   */
+  it("stellt die Zahnstange auf genau zwoelf Teilungen", () => {
+    const shape = makeShapeFromAsset(assetFor("rack"));
+    expect(shape.kind).toBe("rack");
+    expect(shape.teeth).toBe(12);
+    expect(shape.width).toBeCloseTo(12 * 2 * Math.PI, 9);
+    expect(rackMeasures(shape.width, shape.depth, shape).module).toBeCloseTo(2, 9);
+    // Die Tiefe ist das Wenigste, in dem Zahn (2,25 Modul) und Ruecken (1) Platz haben.
+    expect(shape.depth).toBeCloseTo(6.5, 9);
+    expect(shape.height).toBe(6);
+    expect(shape.gearPressureAngle).toBe(20);
+    expect(shape.gearBacklash).toBeCloseTo(0.2, 9);
   });
 
   it("inserts the polygon as a regular hexagon", () => {

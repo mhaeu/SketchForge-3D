@@ -6,6 +6,7 @@ import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import { cadModifierPrimitiveForProfileShape } from "@/lib/cadBakeMetadata";
 import { createKnurlGeometry } from "@/lib/knurlGeometry";
 import { createGearGeometry } from "@/lib/gearGeometry";
+import { createRackGeometry, minRackDepth, rackLength, rackMeasures } from "@/lib/rackGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 /**
@@ -260,5 +261,79 @@ describe("Das Zahnrad als genauer Koerper", () => {
     expect(cadModifierPrimitiveForProfileShape(gear({ gearProfile: "simple" }))).toBeNull();
     // Und fuer ein ungleich gezogenes Rad: das waere eine Ellipse mit Zaehnen.
     expect(cadModifierPrimitiveForProfileShape(gear({ depth: 34 }))).toBeNull();
+  }, 300000);
+});
+
+describe("Die Zahnstange als genauer Koerper", () => {
+  const rack = (overrides: Partial<WorkplaneShape> = {}): WorkplaneShape => ({
+    id: "r",
+    name: "Zahnstange",
+    kind: "rack",
+    color: "#6f7f8d",
+    x: 0,
+    z: 0,
+    elevation: 0,
+    size: rackLength(2, 12),
+    width: rackLength(2, 12),
+    depth: minRackDepth(2),
+    height: 6,
+    rotation: 0,
+    teeth: 12,
+    gearPressureAngle: 20,
+    gearBacklash: 0.2,
+    ...overrides,
+  } as WorkplaneShape);
+
+  /**
+   * Der Umriss hat vier Ecken je Zahn und vier fuer den Rahmen - bei zwoelf
+   * Zaehnen also 52 Kanten und mit zwei Deckeln 54 Flaechen. Das ist kein
+   * Netz, das ist ein Koerper.
+   */
+  it("ist ein gueltiger Koerper aus wenigen Flaechen", () => {
+    const solid = solidFor(rack());
+    expect(cad.isSolid(solid)).toBe(true);
+    expect(cad.isValid(solid)).toBe(true);
+    expect(cad.getSubShapes(solid, "face")).toHaveLength(54);
+    // Lauter Ebenen: Die Zahnstange hat keine gekruemmte Flaeche.
+    const kinds = cad.getSubShapes(solid, "face").map((face) => cad.surfaceType(face));
+    expect(kinds.every((kind) => kind === "plane")).toBe(true);
+  }, 300000);
+
+  /**
+   * Und er ist derselbe Koerper wie der gezeichnete: Beide sitzen auf den
+   * Ecken aus `rackOutlineCorners`. Zur Probe auch von Hand gerechnet - ein
+   * Ruecken plus zwoelf Trapeze, beides mal die Hoehe.
+   */
+  it("hat denselben Rauminhalt wie das gezeichnete Netz", () => {
+    const shape = rack();
+    const exact = cad.getVolume(solidFor(shape));
+    const mesh = closedMeshVolume(createRackGeometry({
+      width: shape.width,
+      depth: shape.depth,
+      height: shape.height,
+      teeth: shape.teeth,
+      gearPressureAngle: shape.gearPressureAngle,
+      gearBacklash: shape.gearBacklash,
+    }));
+    expect(exact).toBeCloseTo(mesh, 3);
+
+    const measures = rackMeasures(shape.width, shape.depth, shape);
+    const back = measures.length * (measures.rootLine - measures.backLine);
+    const teeth = measures.teeth * (measures.tipHalf + measures.rootHalf) * (measures.tipLine - measures.rootLine);
+    expect(exact).toBeCloseTo((back + teeth) * shape.height, 6);
+  }, 300000);
+
+  /**
+   * Der Grund fuer die ganze Sache: Eine Kante im Zahnfuss laesst sich
+   * verrunden. Bei einer gedruckten Zahnstange ist das keine Zierde - dort
+   * bricht der Zahn.
+   */
+  it("laesst eine Kante im Zahnfuss verrunden", () => {
+    const solid = solidFor(rack());
+    const before = cad.getVolume(solid);
+    const edges = cad.getSubShapes(solid, "edge");
+    const filleted = cad.fillet(solid, [edges[0]], 0.2);
+    expect(cad.isSolid(filleted)).toBe(true);
+    expect(Math.abs(cad.getVolume(filleted) - before)).toBeGreaterThan(1e-6);
   }, 300000);
 });

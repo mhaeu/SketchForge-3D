@@ -31,7 +31,7 @@ export const SKF_LIMITS = {
 
 const SHAPE_KINDS = new Set([
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
-  "halfSphere", "torus", "tube", "gear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
+  "halfSphere", "torus", "tube", "gear", "rack", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron", "mesh", "loft",
   "counterbore", "countersink", "teardrop",
 ]);
 
@@ -948,6 +948,14 @@ function validateShapeDefinition(definition: Record<string, unknown>, label: str
   if (definition.sketchRevolve !== undefined) {
     const settings = objectRecord(definition.sketchRevolve, `${label}.sketchRevolve`);
     ["startAngle", "sweepAngle", "sides", "quality"].forEach((field) => finiteNumber(settings[field], `${label}.sketchRevolve.${field}`));
+  }
+  if (kind === "rack") {
+    // Die Zahnstange fuehrt dieselben drei Zahlen wie das Rad; ihr Modul
+    // steckt in der Laenge und wird darum nicht eigens geprueft.
+    if (definition.teeth !== undefined) {
+      const teeth = finiteNumber(definition.teeth, `${label}.teeth`);
+      if (!Number.isInteger(teeth) || teeth < 2 || teeth > 120) throw new Error(`${label}.teeth is outside the supported range`);
+    }
   }
   if (kind === "knurl") {
     if (definition.knurlPattern !== undefined && !["straight", "diamond", "round"].includes(definition.knurlPattern as string)) {

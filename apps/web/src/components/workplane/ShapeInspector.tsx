@@ -39,6 +39,17 @@ import {
   gearToothPitch,
 } from "@/lib/gearGeometry";
 import {
+  MAX_RACK_TEETH,
+  MIN_RACK_TEETH,
+  minRackDepth,
+  normalizeRackDepth,
+  normalizeRackTeeth,
+  rackLength,
+  rackMeasures,
+  rackModule,
+  rackPinionLimitTeeth,
+} from "@/lib/rackGeometry";
+import {
   knurlSettings,
   MAX_KNURL_ANGLE,
   maxKnurlChamfer,
@@ -740,6 +751,92 @@ function getShapePropertiesWithAppLimits(
       { id: "length", label: t("prop.length"), value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+    ];
+  }
+
+  if (shape.kind === "rack") {
+    /*
+     * Die Zahnstange wird wie das Zahnrad nach Modul und Zaehnezahl
+     * eingestellt, und ihre Laenge folgt daraus: genau Zaehne x Teilung. Die
+     * Laenge steht trotzdem als eigener Regler da, denn oft ist sie das
+     * Gegebene ("ich brauche 100 mm") - dann rueckt das Modul mit.
+     *
+     * Die Tiefe hat ein Mindestmass (Zahn und Ruecken), und sie rueckt mit dem
+     * Modul mit: Sonst stuende da eine Zahl, die der Koerper nicht einhaelt.
+     */
+    const measures = rackMeasures(width, depth, shape);
+    const resized = (module: number, teeth: number) => ({
+      teeth,
+      width: rackLength(module, teeth),
+      size: resizedShapeSize(rackLength(module, teeth), normalizeRackDepth(depth, module)),
+      depth: normalizeRackDepth(depth, module),
+      gearBacklash: normalizeGearBacklash(shape.gearBacklash, module),
+    });
+    const limit = Math.ceil(rackPinionLimitTeeth(shape.gearPressureAngle));
+    return [
+      {
+        id: "module",
+        label: t("prop.gearModule"),
+        value: measures.module,
+        min: MIN_GEAR_MODULE,
+        max: MAX_GEAR_MODULE,
+        step: 0.1,
+        onChange: (value) => onUpdate(resized(normalizeGearModule(value), measures.teeth), { resizeAxis: "width" }),
+      },
+      {
+        id: "teeth",
+        label: t("inspector.teeth"),
+        value: measures.teeth,
+        min: MIN_RACK_TEETH,
+        max: MAX_RACK_TEETH,
+        step: 1,
+        onChange: (value) => onUpdate(resized(measures.module, normalizeRackTeeth(value)), { resizeAxis: "width" }),
+      },
+      {
+        id: "length",
+        label: t("prop.length"),
+        value: measures.length,
+        min: rackLength(MIN_GEAR_MODULE, measures.teeth),
+        max: rackLength(MAX_GEAR_MODULE, measures.teeth),
+        onChange: (value) => onUpdate(resized(rackModule(value, measures.teeth), measures.teeth), { resizeAxis: "width" }),
+      },
+      {
+        id: "depth",
+        // Die Stange liegt flach, die Zaehne zeigen nach hinten: Von oben
+        // gesehen ist diese Abmessung ihre Breite, die Hoehe die Dicke.
+        label: t("prop.width"),
+        value: measures.depth,
+        min: minRackDepth(measures.module),
+        max: 160,
+        onChange: (value) => onUpdate({
+          depth: normalizeRackDepth(value, measures.module),
+          size: resizedShapeSize(width, normalizeRackDepth(value, measures.module)),
+        }, { resizeAxis: "depth" }),
+      },
+      { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
+      {
+        id: "pressureAngle",
+        /*
+         * Die Zaehnezahl, ab der ein Rad auf dieser Stange sauber laeuft,
+         * steht in der Beschriftung - das ist die Zahl, die man beim
+         * Eingriffswinkel wissen will, und ein weiterer Winkel senkt sie.
+         */
+        label: `${t("prop.gearPressureAngle")} — ${t("prop.rackPinionTeeth", { teeth: limit })}`,
+        value: normalizeGearPressureAngle(shape.gearPressureAngle),
+        min: MIN_GEAR_PRESSURE_ANGLE,
+        max: MAX_GEAR_PRESSURE_ANGLE,
+        step: 0.5,
+        onChange: (gearPressureAngle: number) => onUpdate({ gearPressureAngle }),
+      },
+      {
+        id: "backlash",
+        label: t("prop.gearBacklash"),
+        value: normalizeGearBacklash(shape.gearBacklash, measures.module),
+        min: 0,
+        max: Math.min(MAX_GEAR_BACKLASH, measures.module * 0.5),
+        step: 0.05,
+        onChange: (gearBacklash) => onUpdate({ gearBacklash }),
+      },
     ];
   }
 

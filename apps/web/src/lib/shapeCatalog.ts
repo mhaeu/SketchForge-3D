@@ -68,6 +68,7 @@ import {
   normalizeKnurlDepth,
   normalizeKnurlPattern,
 } from "@/lib/knurlGeometry";
+import { DEFAULT_RACK_TEETH, minRackDepth, normalizeRackTeeth, rackLength, rackModule } from "@/lib/rackGeometry";
 import { THREAD_ASSET_PRESETS, createThreadShapeFields, isThreadAssetId } from "@/lib/threadShape";
 import {
   DEFAULT_THREAD_CLEARANCE,
@@ -129,6 +130,7 @@ const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   spring: "shape.spring",
   ruler: "shape.ruler",
   gear: "shape.gear",
+  rack: "shape.rack",
   knurl: "shape.knurl",
   loft: "shape.loft",
   counterbore: "shape.counterbore",
@@ -165,6 +167,9 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   { id: "spring", name: "Spring", src: "assets/sketchforge/shape-icons-gray/spring.png", menuIcon: "assets/sketchforge/shape-icons-gray/spring.png", kind: "spring", color: "#18b99a" },
   { id: "ruler", name: "Ruler", src: "assets/sketchforge/shape-icons-gray/ruler.png", menuIcon: "assets/sketchforge/shape-icons-gray/ruler.png", kind: "ruler", color: "#f2e4b8" },
   { id: "gear", name: "Gear", src: "assets/sketchforge/gear-types/spur.png", menuIcon: "assets/sketchforge/gear-types/spur.png", kind: "gear", color: "#6f7f8d" },
+  // Die Zahnstange steht neben dem Zahnrad: Beide werden nach Modul
+  // eingestellt, und zusammen sind sie ein Antrieb.
+  { id: "rack", name: "Rack", src: "assets/sketchforge/shape-icons-gray/rack.svg", menuIcon: "assets/sketchforge/shape-icons-gray/rack.svg", kind: "rack", color: "#6f7f8d" },
   { id: "knurl", name: "Knurl", src: "assets/sketchforge/shape-icons-gray/knurl.png", menuIcon: "assets/sketchforge/shape-icons-gray/knurl.png", kind: "knurl", color: "#7a8a99" },
   { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
   // Die drei Bohrformen. Sie sind zum Abziehen gedacht - hinstellen, mit dem
@@ -214,6 +219,18 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
     // Bewusst ungleiche Vorgabe, damit sich die Ellipse beim Einfuegen sofort
     // vom kreisrunden Zylinder unterscheidet.
     return { width: 26, depth: 16, height: 20 };
+  }
+  if (kind === "rack") {
+    /*
+     * Eine Zahnstange mit Modul 2 und zwoelf Zaehnen: Die Laenge ist genau
+     * zwoelf Teilungen (75,4 mm), die Tiefe das Wenigste, in dem Zahn und
+     * Ruecken Platz haben (6,5 mm), und 6 mm hoch wie ein neues Zahnrad.
+     */
+    return {
+      width: rackLength(DEFAULT_GEAR_MODULE, DEFAULT_RACK_TEETH),
+      depth: minRackDepth(DEFAULT_GEAR_MODULE),
+      height: 6,
+    };
   }
   if (kind === "knurl") {
     // Ein Griff zum Anfassen: 20 mm dick, 15 hoch. Nicht aus der runden Reihe
@@ -306,6 +323,15 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
       knurlDepth: normalizeKnurlDepth(DEFAULT_KNURL_DEPTH, dimensions.width, DEFAULT_KNURL_COUNT, DEFAULT_KNURL_PATTERN),
       knurlAngle: DEFAULT_KNURL_ANGLE,
       knurlChamfer: normalizeKnurlChamfer(DEFAULT_KNURL_CHAMFER, dimensions.width, dimensions.height),
+    };
+  }
+  if (kind === "rack") {
+    // Dieselben drei Zahlen wie beim Rad - Zaehnezahl, Eingriffswinkel,
+    // Spiel. Das Modul steckt in der Laenge.
+    return {
+      teeth: DEFAULT_RACK_TEETH,
+      gearPressureAngle: DEFAULT_GEAR_PRESSURE_ANGLE,
+      gearBacklash: DEFAULT_GEAR_BACKLASH,
     };
   }
   if (kind === "gear") {
@@ -486,7 +512,9 @@ export function makeShapeFromAsset(
     : threadFootprint?.depth ?? customization.depth ?? defaults.depth;
   const height = customization.height ?? (threadDefaults ? threadNaturalHeight(threadDefaults) : defaults.height);
   const size = Math.max(width, depth);
-  const gearTeeth = asset.kind === "gear" ? normalizeGearTeeth(customization.teeth ?? DEFAULT_GEAR_TEETH) : undefined;
+  const gearTeeth = asset.kind === "gear"
+    ? normalizeGearTeeth(customization.teeth ?? DEFAULT_GEAR_TEETH)
+    : asset.kind === "rack" ? normalizeRackTeeth(customization.teeth ?? DEFAULT_RACK_TEETH) : undefined;
   const gearToothSize = asset.kind === "gear" ? normalizeGearToothSize(customization.toothSize ?? DEFAULT_GEAR_TOOTH_SIZE, width, depth) : undefined;
   const threadDiameter = asset.kind === "thread" ? normalizeThreadDiameter(customization.threadDiameter ?? DEFAULT_THREAD_DIAMETER) : undefined;
 
@@ -537,8 +565,12 @@ export function makeShapeFromAsset(
     helixAngle: asset.kind === "gear" ? normalizeGearHelixAngle(customization.helixAngle ?? DEFAULT_GEAR_HELIX_ANGLE) : undefined,
     helixQuality: asset.kind === "gear" ? normalizeGearHelixQuality(customization.helixQuality ?? DEFAULT_GEAR_HELIX_QUALITY) : undefined,
     gearProfile: asset.kind === "gear" ? normalizeGearProfile(customization.gearProfile ?? "involute") : undefined,
-    gearPressureAngle: asset.kind === "gear" ? normalizeGearPressureAngle(customization.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE) : undefined,
-    gearBacklash: asset.kind === "gear" ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, involuteGearModule(width, customization.teeth ?? DEFAULT_GEAR_TEETH)) : undefined,
+    gearPressureAngle: asset.kind === "gear" || asset.kind === "rack" ? normalizeGearPressureAngle(customization.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE) : undefined,
+    gearBacklash: asset.kind === "gear"
+      ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, involuteGearModule(width, customization.teeth ?? DEFAULT_GEAR_TEETH))
+      : asset.kind === "rack"
+        ? normalizeGearBacklash(customization.gearBacklash ?? DEFAULT_GEAR_BACKLASH, rackModule(width, customization.teeth ?? DEFAULT_RACK_TEETH))
+        : undefined,
     knurlPattern: asset.kind === "knurl" ? normalizeKnurlPattern(customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,
     knurlCount: asset.kind === "knurl" ? normalizeKnurlCount(customization.knurlCount ?? DEFAULT_KNURL_COUNT, width) : undefined,
     knurlDepth: asset.kind === "knurl" ? normalizeKnurlDepth(customization.knurlDepth ?? DEFAULT_KNURL_DEPTH, width, customization.knurlCount ?? DEFAULT_KNURL_COUNT, customization.knurlPattern ?? DEFAULT_KNURL_PATTERN) : undefined,

@@ -7,7 +7,16 @@ import { HexColorInput, HexColorPicker } from "react-colorful";
 import { APP_THEME_OPTIONS, type AppThemePreference } from "@/lib/appTheme";
 import { LANGUAGES, LANGUAGE_NAMES, setLanguage, t, type MessageKey } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-import { gearCenterHoleLimits, gearToothPitch } from "@/lib/gearGeometry";
+import {
+  DEFAULT_GEAR_BACKLASH,
+  DEFAULT_GEAR_PRESSURE_ANGLE,
+  gearCenterHoleLimits,
+  gearToothPitch,
+  MAX_GEAR_BACKLASH,
+  MAX_GEAR_PRESSURE_ANGLE,
+  MIN_GEAR_PRESSURE_ANGLE,
+} from "@/lib/gearGeometry";
+import { DEFAULT_RACK_TEETH, MAX_RACK_TEETH, MIN_RACK_TEETH } from "@/lib/rackGeometry";
 import {
   DEFAULT_KNURL_ANGLE,
   DEFAULT_KNURL_CHAMFER,
@@ -128,7 +137,7 @@ const THREAD_PROFILE_OPTIONS = [
   { value: "round", label: "thread.profileRound" as MessageKey },
 ];
 
-type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality" | "knurlCount" | "knurlDepth" | "knurlAngle" | "knurlChamfer";
+type ShapeSpecialNumberKey = "steps" | "sides" | "bevel" | "segments" | "topRadius" | "baseRadius" | "teeth" | "toothSize" | "toothWidth" | "centerHoleSize" | "helixAngle" | "helixQuality" | "gearPressureAngle" | "gearBacklash" | "threadDiameter" | "threadPitch" | "threadClearance" | "threadQuality" | "springTurns" | "springWire" | "springQuality" | "knurlCount" | "knurlDepth" | "knurlAngle" | "knurlChamfer";
 type ShapeSpecialField =
   | { type: "number"; key: ShapeSpecialNumberKey; label: string; defaultValue: number; min: number; max: number; step?: number; unit?: string }
   | { type: "select"; key: "font" | "gearType" | "gearProfile" | "knurlPattern" | "threadRole" | "threadHead" | "threadDrive" | "threadHand" | "threadProfile"; label: string; defaultValue: string; options: Array<{ value: string; label: string }> }
@@ -224,6 +233,18 @@ function specialFieldsForShape(
       { type: "number", key: "threadQuality", label: t("prop.quality"), defaultValue: defaults.threadQuality ?? DEFAULT_THREAD_QUALITY, min: MIN_THREAD_QUALITY, max: MAX_THREAD_QUALITY, step: 6 },
     );
     return fields;
+  }
+  if (kind === "rack") {
+    /*
+     * Zaehnezahl, Eingriffswinkel und Spiel - dasselbe wie beim Rad. Das
+     * Modul steht hier nicht: Es steckt in der Laenge, und die Laenge ist
+     * oben schon eine der drei Abmessungen.
+     */
+    return [
+      { type: "number", key: "teeth", label: t("inspector.teeth"), defaultValue: defaults.teeth ?? DEFAULT_RACK_TEETH, min: MIN_RACK_TEETH, max: MAX_RACK_TEETH, step: 1 },
+      { type: "number", key: "gearPressureAngle", label: t("prop.gearPressureAngle"), defaultValue: defaults.gearPressureAngle ?? DEFAULT_GEAR_PRESSURE_ANGLE, min: MIN_GEAR_PRESSURE_ANGLE, max: MAX_GEAR_PRESSURE_ANGLE, unit: "deg" },
+      { type: "number", key: "gearBacklash", label: t("prop.gearBacklash"), defaultValue: defaults.gearBacklash ?? DEFAULT_GEAR_BACKLASH, min: 0, max: MAX_GEAR_BACKLASH, unit: "mm" },
+    ];
   }
   if (kind === "knurl") {
     const pattern = customization.knurlPattern ?? defaults.knurlPattern ?? DEFAULT_KNURL_PATTERN;

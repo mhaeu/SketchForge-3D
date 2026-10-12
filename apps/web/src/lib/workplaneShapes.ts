@@ -163,12 +163,12 @@ export function shapeTaperDimensions(shape: WorkplaneShape) {
 }
 
 /**
- * Arten, die eine Verjuengung ueberhaupt annehmen. Zahnrad, Gewinde, Feder und
- * Raendelung kennen sie nicht: ihre Form kommt aus ihren eigenen Werten, nicht
- * aus Breite und Tiefe der Grundflaeche.
+ * Arten, die eine Verjuengung ueberhaupt annehmen. Zahnrad, Zahnstange,
+ * Gewinde, Feder und Raendelung kennen sie nicht: ihre Form kommt aus ihren
+ * eigenen Werten, nicht aus Breite und Tiefe der Grundflaeche.
  */
 export function shapeSupportsTaper(kind: WorkplaneShape["kind"]) {
-  return kind !== "gear" && kind !== "knurl" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
+  return kind !== "gear" && kind !== "rack" && kind !== "knurl" && kind !== "thread" && kind !== "spring" && kind !== "ruler" && kind !== "roundedBox" && kind !== "honeycomb";
 }
 
 /**
@@ -630,7 +630,7 @@ export function fallbackSolidColor(shape: WorkplaneShape) {
   if (shape.kind === "sphere") return "#0098c7";
   if (shape.kind === "cone") return "#6e2786";
   if (shape.kind === "pyramid") return "#f2cf10";
-  if (shape.kind === "gear") return "#6f7f8d";
+  if (shape.kind === "gear" || shape.kind === "rack") return "#6f7f8d";
   if (shape.kind === "knurl") return "#7a8a99";
   if (shape.kind === "loft") return "#5b5ce2";
   return "#d41721";

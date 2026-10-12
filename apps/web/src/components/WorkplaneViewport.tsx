@@ -28,6 +28,7 @@ import type { AppThemePreference, ResolvedAppTheme } from "@/lib/appTheme";
 import type { ChallengeTutorialId } from "@/lib/challenges";
 import { cadModifierPrimitiveForBakedShape, cadTransformFromMatrix, cadTransformToMatrix } from "@/lib/cadBakeMetadata";
 import { createGearGeometry } from "@/lib/gearGeometry";
+import { createRackGeometry } from "@/lib/rackGeometry";
 import { createKnurlGeometry } from "@/lib/knurlGeometry";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
@@ -168,6 +169,7 @@ const SHAPE_KINDS = new Set<ShapeAsset["kind"]>([
   "torus",
   "tube",
   "gear",
+  "rack",
   "knurl",
   "ring",
   "wedge",
@@ -10461,6 +10463,16 @@ function createShapeObject(
         gearBacklash: shape.gearBacklash,
       })), material, shape);
       break;
+    case "rack":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createRackGeometry({
+        width,
+        depth,
+        height,
+        teeth: shape.teeth,
+        gearPressureAngle: shape.gearPressureAngle,
+        gearBacklash: shape.gearBacklash,
+      })), material, shape);
+      break;
     case "knurl":
       // Die Raendelung ist rund: Breite ist ihr Durchmesser, die Tiefe folgt
       // daraus. Was ein ungleiches Mass daraus macht, macht die Skalierung.
@@ -10791,7 +10803,7 @@ function addShapeEdgeDecorations(group: THREE.Group, mesh: THREE.Mesh, prepared:
   const complexEdges =
     shape.kind === "mesh" ||
     Boolean(shape.importedMesh) ||
-    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "knurl", "wedge", "loft", "polygon"].includes(shape.kind);
+    ["cone", "pyramid", "roof", "roundRoof", "halfSphere", "torus", "tube", "ring", "gear", "rack", "knurl", "wedge", "loft", "polygon"].includes(shape.kind);
   const importedTriangleCount = shape.importedMesh?.triangleCount ?? 0;
   const skipHeavyImportedEdges = Boolean(shape.importedMesh) && importedTriangleCount > IMPORTED_SELECTED_EDGE_TRIANGLE_LIMIT;
   if ((group.userData.showEdges || complexEdges) && !skipHeavyImportedEdges) {

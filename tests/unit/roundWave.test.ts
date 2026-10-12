@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { roundToothArcs, roundWave, roundWaveCorners } from "@/lib/roundWave";
 import { gearOutlineCorners, involuteCentreDistance, roundGearMeasures, ROUND_GEAR_ADDENDUM, ROUND_GEAR_DEDENDUM } from "@/lib/gearGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
+import { overlapCount, type OutlinePoint } from "./support/outlineOverlap";
 
 /**
  * Die runde Welle: Boegen ueber den Koepfen, Boegen in den Luecken, und jeder
@@ -97,32 +98,11 @@ describe("Runde Zaehne am Zahnrad", () => {
    * Umrisse gegeneinander gedreht und auf Ueberdeckung geprueft werden.
    */
   it("kaemmt mit einem zweiten runden Rad desselben Moduls", () => {
-    type Point = { x: number; z: number };
-    const polygon = (shape: WorkplaneShape, turn: number, offsetX: number): Point[] =>
+    const polygon = (shape: WorkplaneShape, turn: number, offsetX: number): OutlinePoint[] =>
       gearOutlineCorners(shape.width, shape.depth, shape).map(({ angle, radiusX, radiusZ }) => ({
         x: Math.cos(angle + turn) * radiusX + offsetX,
         z: Math.sin(angle + turn) * radiusZ,
       }));
-    const inside = (point: Point, poly: readonly Point[]) => {
-      let within = false;
-      for (let index = 0, previous = poly.length - 1; index < poly.length; previous = index, index += 1) {
-        const a = poly[index];
-        const b = poly[previous];
-        if ((a.z > point.z) !== (b.z > point.z) && point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z) + a.x) within = !within;
-      }
-      return within;
-    };
-    /*
-     * Gezaehlt wird zwischen den **ganzen** Vielecken; gefiltert werden nur
-     * die Punkte, die ueberhaupt in der Naehe der Beruehrung liegen - ein
-     * Punkt am anderen Ende kann nicht im Gegenrad stecken. Ohne das lief
-     * diese Pruefung in die Zeitsperre.
-     */
-    const overlap = (one: readonly Point[], other: readonly Point[], band: { from: number; to: number }) => {
-      const near = (points: readonly Point[]) => points.filter((point) => point.x > band.from && point.x < band.to);
-      return near(one).filter((point) => inside(point, other)).length
-        + near(other).filter((point) => inside(point, one)).length;
-    };
 
     const a = gear(20);
     const b = gear(30);
@@ -135,7 +115,7 @@ describe("Runde Zaehne am Zahnrad", () => {
       const band = { from: module * 20 * 0.35, to: gap - module * 30 * 0.35 };
       let best = { overlap: Number.POSITIVE_INFINITY, turn: 0 };
       const look = (turn: number) => {
-        const found = overlap(polyA, polygon(b, turn, gap), band);
+        const found = overlapCount(polyA, polygon(b, turn, gap), band);
         if (found < best.overlap) best = { overlap: found, turn };
       };
       for (let step = 0; step < 60; step += 1) look((pitchTurn * step) / 60);

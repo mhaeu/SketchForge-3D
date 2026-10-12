@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="rack-face" x1="14" y1="34" x2="82" y2="74" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f0f3f5"/>
+      <stop offset="1" stop-color="#9aa5ad"/>
+    </linearGradient>
+    <filter id="rack-shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#34434d" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <!-- Vier Zaehne mit geraden Flanken auf einem Ruecken: Das ist die
+       Zahnstange. Die Flanken stehen schraeg, wie der Eingriffswinkel es
+       verlangt - genau daran erkennt man sie neben dem Zahnrad. -->
+  <path fill="url(#rack-face)" stroke="#66747e" stroke-width="2.5" stroke-linejoin="round" filter="url(#rack-shadow)"
+        d="M8 46 h6 l4-14 h8 l4 14 h8 l4-14 h8 l4 14 h8 l4-14 h8 l4 14 h6 v26 H8 Z"/>
+  <path fill="none" stroke="#7a8790" stroke-width="2" d="M8 56 H88"/>
+</svg>

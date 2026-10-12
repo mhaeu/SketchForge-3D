@@ -16,6 +16,7 @@ export type ShapeKind =
   | "torus"
   | "tube"
   | "gear"
+  | "rack"
   | "knurl"
   | "thread"
   | "spring"

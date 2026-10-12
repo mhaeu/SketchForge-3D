@@ -11,6 +11,7 @@ import {
   normalizeGearProfile,
 } from "@/lib/gearGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
+import { closestApproach, overlapCount, type OutlinePoint as Point } from "./support/outlineOverlap";
 
 /**
  * Kaemmen zwei Zahnraeder?
@@ -43,69 +44,12 @@ const gear = (teeth: number, module: number, overrides: Partial<WorkplaneShape> 
   ...overrides,
 } as WorkplaneShape);
 
-type Point = { x: number; z: number };
-
 /** Der Umriss als Vieleck, gedreht um `turn` und nach `offsetX` geschoben. */
 function outlinePolygon(shape: WorkplaneShape, turn = 0, offsetX = 0): Point[] {
   return gearOutlineCorners(shape.width, shape.depth, shape).map(({ angle, radiusX, radiusZ }) => ({
     x: Math.cos(angle + turn) * radiusX + offsetX,
     z: Math.sin(angle + turn) * radiusZ,
   }));
-}
-
-function pointInPolygon(point: Point, polygon: readonly Point[]) {
-  let inside = false;
-  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
-    const a = polygon[index];
-    const b = polygon[previous];
-    if ((a.z > point.z) !== (b.z > point.z)
-      && point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-  }
-  return inside;
-}
-
-/**
- * Wie viele Punkte des einen Umrisses im anderen liegen - also wie weit sie
- * sich ueberdecken.
- *
- * `band` grenzt ein, **welche Punkte** gefragt werden: Ein Punkt am anderen
- * Ende des Rades kann nicht im Gegenrad stecken, und ohne diese Grenze laeuft
- * die Suche ueber alle Verdrehungen in die Zeitsperre. Die Vielecke selbst
- * bleiben ganz - eine Auswahl von Punkten ist kein Vieleck.
- */
-function overlapCount(one: readonly Point[], other: readonly Point[], band?: { from: number; to: number }) {
-  const near = (points: readonly Point[]) => (band ? points.filter((point) => point.x > band.from && point.x < band.to) : points);
-  return near(one).filter((point) => pointInPolygon(point, other)).length
-    + near(other).filter((point) => pointInPolygon(point, one)).length;
-}
-
-function distanceToSegment(point: Point, a: Point, b: Point) {
-  const abx = b.x - a.x;
-  const abz = b.z - a.z;
-  const lengthSquared = abx * abx + abz * abz;
-  const share = lengthSquared > 0
-    ? Math.max(0, Math.min(1, ((point.x - a.x) * abx + (point.z - a.z) * abz) / lengthSquared))
-    : 0;
-  return Math.hypot(point.x - (a.x + abx * share), point.z - (a.z + abz * share));
-}
-
-/**
- * Der kleinste Abstand von diesen Punkten zu den Kanten des Vielecks.
- *
- * `points` darf eine Auswahl sein - etwa nur die Zaehne an der Beruehrung -,
- * `polygon` **nie**: Aus einer Auswahl von Punkten ein Vieleck zu machen gibt
- * eine Form, die es nicht gibt. Genau daran ist mein erster Messanlauf
- * gescheitert: Er hielt 12 Zaehne fuer klemmend, und das war die Auswahl, die
- * als Vieleck gelesen wurde.
- */
-function closestApproach(points: readonly Point[], polygon: readonly Point[]) {
-  let closest = Number.POSITIVE_INFINITY;
-  points.forEach((point) => {
-    for (let index = 0; index < polygon.length; index += 1) {
-      closest = Math.min(closest, distanceToSegment(point, polygon[index], polygon[(index + 1) % polygon.length]));
-    }
-  });
-  return closest;
 }
 
 describe("Die Masse eines Evolventenrades", () => {
