@@ -6,6 +6,7 @@ import {
   CAD_MODIFIER_RUNTIME_BASE,
   cadModifierBaseDeflection,
   cadModifierCandidateEdge,
+  cadModifierEdgeFacesCamera,
   cadModifierPrepareTimeoutMs,
   cadModifierTessellationDeflection,
   isCadModifierKernelExhausted,
@@ -303,5 +304,50 @@ describe("Eine wieder aufgenommene Kantenauswahl", () => {
     expect(resumed.edgeIds).toEqual([]);
     expect(resumed.sharpAngle).toBe(25);
     expect(resumed.missing).toBe(2);
+  });
+});
+
+/**
+ * Nur sichtbare Kanten: Die Ansicht zeichnete jede Kante durch den Koerper
+ * hindurch, wie ein Roentgenbild. Welche vorn liegt, steht in den beiden
+ * Flaechen, die sie teilen.
+ */
+describe("Eine Kante von der Kamera aus", () => {
+  const camera = { x: 0, y: 0, z: 100 };
+  const origin = { x: 0, y: 0, z: 0 };
+
+  it("liegt vorn, wenn eine ihrer Flaechen zur Kamera zeigt", () => {
+    // Die Vorderkante eines Kastens: eine Flaeche nach vorn, eine nach oben.
+    expect(cadModifierEdgeFacesCamera([0, 0, 1, 0, 1, 0], origin, camera)).toBe(true);
+  });
+
+  it("liegt hinten, wenn beide Flaechen wegzeigen", () => {
+    // Die Hinterkante: eine Flaeche nach hinten, eine nach hinten-unten.
+    expect(cadModifierEdgeFacesCamera([0, 0, -1, 0, -0.7, -0.7], origin, camera)).toBe(false);
+  });
+
+  /**
+   * Eine Flaeche, die der Kamera genau ihre Kante zeigt, zaehlt noch als vorn -
+   * sonst flackerte der Umriss eines Zylinders beim Drehen.
+   */
+  it("zaehlt eine Flaeche von der Seite noch als vorn", () => {
+    expect(cadModifierEdgeFacesCamera([0, 1, 0, 0, -1, 0], origin, camera)).toBe(true);
+  });
+
+  /**
+   * Die Richtung haengt am Ort der Kante, nicht nur an der Normale: Dieselbe
+   * Kante liegt links von der Kamera vorn und rechts von ihr hinten.
+   */
+  it("rechnet mit der Richtung zur Kamera und nicht mit einer festen Achse", () => {
+    // Beide Flaechen zeigen nach +x, eine davon schraeg.
+    const normals = [1, 0, 0, 0.7, 0.7, 0];
+    expect(cadModifierEdgeFacesCamera(normals, { x: 50, y: 0, z: 0 }, { x: 0, y: 0, z: 0 })).toBe(false);
+    expect(cadModifierEdgeFacesCamera(normals, { x: -50, y: 0, z: 0 }, { x: 0, y: 0, z: 0 })).toBe(true);
+  });
+
+  /** Ohne Normalen gilt die Kante als sichtbar - lieber zu viel zeigen. */
+  it("laesst eine Kante ohne Normalen stehen", () => {
+    expect(cadModifierEdgeFacesCamera(undefined, origin, camera)).toBe(true);
+    expect(cadModifierEdgeFacesCamera([0, 0, 1], origin, camera)).toBe(true);
   });
 });

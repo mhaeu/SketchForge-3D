@@ -300,6 +300,8 @@ type EdgeModifierSession = {
   quality: CadModifierQuality;
   tangentChain: boolean;
   preserveEdgeSize: boolean;
+  /** Nur die Kanten zeigen, die von der Kamera aus vorn liegen. */
+  onlyVisibleEdges: boolean;
   busy: boolean;
   prepared: boolean;
   error: string | null;
@@ -9852,6 +9854,7 @@ export function SketchForgeEditor({
       quality: "standard",
       tangentChain: defaultCadModifierTangentChain(appliedEdgeTreatmentCount),
       preserveEdgeSize: selectedShape.edgeResizeMode === "preserve",
+      onlyVisibleEdges: false,
       busy: true,
       prepared: false,
       error: null,
@@ -10025,6 +10028,7 @@ export function SketchForgeEditor({
       kind,
       edges: response.edges,
       selectedEdgeIds,
+      onlyVisibleEdges: false,
       amount,
       sharpAngle,
       chamferAngle,
@@ -13017,6 +13021,7 @@ export function SketchForgeEditor({
           modifierActive={Boolean(edgeModifier)}
           modifierPreviewActive={Boolean(edgeModifier?.preview)}
           modifierEdges={edgeModifier?.edges.filter((edge) => modifierCandidateEdgeIds.includes(edge.id)) ?? []}
+          modifierOnlyVisibleEdges={Boolean(edgeModifier?.onlyVisibleEdges)}
           modifierHighlightedEdgeIds={modifierAvailableEdgeIds}
           selectedModifierEdgeIds={edgeModifier?.selectedEdgeIds ?? []}
           onModifierEdgeToggle={toggleModifierEdge}
@@ -13174,6 +13179,8 @@ export function SketchForgeEditor({
           workspace={workspaceSettings}
           tangentChain={edgeModifier.tangentChain}
           preserveEdgeSize={edgeModifier.preserveEdgeSize}
+          onlyVisibleEdges={edgeModifier.onlyVisibleEdges}
+          onOnlyVisibleEdgesChange={(value) => setEdgeModifier((current) => current ? { ...current, onlyVisibleEdges: value } : current)}
           targetName={selectedShape?.name ?? "Object"}
           groupedCount={selectedShape?.groupedShapes?.length ?? 0}
           appliedFeatureCount={selectedEdgeFeatureCount}

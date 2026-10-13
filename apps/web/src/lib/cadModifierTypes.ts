@@ -17,6 +17,12 @@ export type CadModifierEdge = {
   angle: number;
   boundary: boolean;
   manifold: boolean;
+  /**
+   * Die beiden Flaechennormalen an dieser Kante, nach aussen zeigend - sechs
+   * Zahlen. Dafuer, dass die Ansicht nur die Kanten zeigen kann, die von der
+   * Kamera aus vorn liegen.
+   */
+  faceNormals?: number[];
 };
 
 export type CadModifierQuality = "draft" | "standard" | "fine";

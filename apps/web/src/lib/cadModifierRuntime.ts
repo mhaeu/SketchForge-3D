@@ -255,3 +255,44 @@ export function resumedEdgeSelection(
     missing: edgeIds.length - kept.length,
   };
 }
+
+/**
+ * Liegt diese Kante von der Kamera aus vorn?
+ *
+ * Die Antwort steht in den beiden Flaechen, die sie teilen: Zeigt eine davon
+ * zur Kamera, ist die Kante eine Kante des sichtbaren Umrisses; zeigen beide
+ * weg, liegt sie auf der Rueckseite des Koerpers.
+ *
+ * Das ist die Frage, die der Schalter "nur sichtbare Kanten" stellt. Gerechnet
+ * wird sie mit zwei Skalarprodukten und nicht mit einem Strahl je Kante - bei
+ * dreihundert Kanten und einer Kamera, die sich bewegt, ist das der
+ * Unterschied zwischen beilaeufig und ruckelnd.
+ *
+ * Die Grenze gehoert dazu: Eine Kante, deren Flaeche zur Kamera zeigt, die
+ * aber hinter einem **anderen** Teil desselben Koerpers liegt - in einer
+ * Tasche, hinter einem Steg -, gilt hier als sichtbar. Weggenommen wird die
+ * Rueckseite, nicht jede Verdeckung. Ohne Normalen (eine Randkante, eine
+ * Kante mit nur einer Flaeche) gilt die Kante als sichtbar: lieber zu viel
+ * zeigen als eine waehlbare Kante verstecken.
+ */
+export function cadModifierEdgeFacesCamera(
+  faceNormals: ReadonlyArray<number> | undefined,
+  point: { x: number; y: number; z: number },
+  cameraPosition: { x: number; y: number; z: number },
+) {
+  if (!faceNormals || faceNormals.length < 6) return true;
+  const toCamera = {
+    x: cameraPosition.x - point.x,
+    y: cameraPosition.y - point.y,
+    z: cameraPosition.z - point.z,
+  };
+  const length = Math.hypot(toCamera.x, toCamera.y, toCamera.z);
+  if (!(length > 0)) return true;
+  for (let offset = 0; offset + 2 < faceNormals.length; offset += 3) {
+    const facing = (faceNormals[offset] * toCamera.x + faceNormals[offset + 1] * toCamera.y + faceNormals[offset + 2] * toCamera.z) / length;
+    // Eine Flaeche, die der Kamera genau die Kante zeigt, zaehlt noch als
+    // vorn: Sonst flackerte der Umriss eines Zylinders beim Drehen.
+    if (facing > -0.01) return true;
+  }
+  return false;
+}

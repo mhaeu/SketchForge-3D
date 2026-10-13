@@ -66,6 +66,7 @@ import { mergedDimensionPatch } from "@/lib/cornerDimensions";
 import { triangleTouchesRect, type ScreenRect } from "@/lib/screenRectHit";
 import { toggledMarqueeSelection } from "@/lib/marqueeSelection";
 import { dragAxisLock } from "@/lib/dragAxisLock";
+import { cadModifierEdgeFacesCamera } from "@/lib/cadModifierRuntime";
 import { planarFace } from "@/lib/rotationPivot";
 import { shapeWorldBounds } from "@/lib/cutTools";
 import {
@@ -417,6 +418,8 @@ type WorkplaneViewportProps = {
   modifierActive?: boolean;
   modifierPreviewActive?: boolean;
   modifierEdges?: CadModifierEdge[];
+  /** Nur die Kanten zeigen, die von der Kamera aus vorn liegen. */
+  modifierOnlyVisibleEdges?: boolean;
   modifierHighlightedEdgeIds?: number[];
   selectedModifierEdgeIds?: number[];
   onModifierEdgeToggle?: (id: number, singleEdge: boolean) => void;
@@ -3746,6 +3749,7 @@ export function WorkplaneViewport({
   modifierActive = false,
   modifierPreviewActive = false,
   modifierEdges = [],
+  modifierOnlyVisibleEdges = false,
   modifierHighlightedEdgeIds = [],
   selectedModifierEdgeIds = [],
   onModifierEdgeToggle,
@@ -3922,6 +3926,8 @@ export function WorkplaneViewport({
   const mirrorModeRef = useRef(mirrorMode);
   const modifierActiveRef = useRef(modifierActive);
   const modifierPreviewActiveRef = useRef(modifierPreviewActive);
+  const modifierOnlyVisibleEdgesRef = useRef(modifierOnlyVisibleEdges);
+  modifierOnlyVisibleEdgesRef.current = modifierOnlyVisibleEdges;
   const modifierEdgesRef = useRef(modifierEdges);
   const [hoverModifierEdgeId, setHoverModifierEdgeId] = useState<number | null>(null);
   const selectedIdsKeyRef = useRef(selectedIds.join("|"));
@@ -4588,6 +4594,7 @@ export function WorkplaneViewport({
       // can read the previous matrix unless we force the matrix world current here.
       // Removing this brings back the one-frame-late handle/line lag during camera motion.
       state.camera.updateMatrixWorld();
+      if (syncModifierEdgeVisibility(state, modifierOnlyVisibleEdgesRef.current)) state.needsRender = true;
       if (now - state.lastViewCubeSync > 48 || cameraSettled || state.needsRender) {
         syncViewCube(state, viewCubeRef.current, placementWorkplaneRef.current);
         onCameraOrientationChangeRef.current?.(cameraOrientation(state));
@@ -6456,7 +6463,18 @@ export function WorkplaneViewport({
   const pickModifierEdge = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
     if (!state) return null;
-    return pickModifierEdgeFromScreen(state, modifierEdgesRef.current, clientX, clientY);
+    const edges = modifierOnlyVisibleEdgesRef.current
+      ? modifierEdgesRef.current.filter((edge) => {
+        const middle = Math.max(0, Math.floor(edge.points.length / 6) * 3);
+        if (edge.points.length < 6) return true;
+        return cadModifierEdgeFacesCamera(edge.faceNormals, {
+          x: edge.points[middle],
+          y: edge.points[middle + 1],
+          z: edge.points[middle + 2],
+        }, state.camera.position);
+      })
+      : modifierEdgesRef.current;
+    return pickModifierEdgeFromScreen(state, edges, clientX, clientY);
   }, []);
 
   const updateModifierEdgeHover = useCallback((clientX: number, clientY: number) => {
@@ -9105,6 +9123,28 @@ function modifierEdgeMaterialStyle(active: boolean, hovered: boolean, previewAct
   };
 }
 
+/**
+ * Welche Kantenlinien stehen, und welche liegen hinter dem Koerper.
+ *
+ * Gesetzt wird nur `visible` an der fertigen Linie: Die Kamera bewegt sich,
+ * und dreihundert Linien bei jedem Bild neu zu bauen waere das Ruckeln, das
+ * der Schalter vermeiden soll. Ausgeschaltet stehen alle wieder.
+ */
+function syncModifierEdgeVisibility(state: ThreeState, onlyVisible: boolean) {
+  let changed = false;
+  state.modifierLayer.children.forEach((child) => {
+    const point = child.userData.modifierEdgePoint as { x: number; y: number; z: number } | undefined;
+    const wanted = !onlyVisible || !point
+      ? true
+      : cadModifierEdgeFacesCamera(child.userData.modifierFaceNormals as number[] | undefined, point, state.camera.position);
+    if (child.visible !== wanted) {
+      child.visible = wanted;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function rebuildModifierEdges(
   state: ThreeState | null,
   edges: CadModifierEdge[],
@@ -9137,6 +9177,14 @@ function rebuildModifierEdges(
     });
     const line = new THREE.Line(geometry, material);
     line.userData.modifierEdgeId = edge.id;
+    line.userData.modifierFaceNormals = edge.faceNormals;
+    // Ein Punkt auf der Kante, von dem aus die Richtung zur Kamera zaehlt.
+    const middle = Math.max(0, Math.floor(edge.points.length / 6) * 3);
+    line.userData.modifierEdgePoint = {
+      x: edge.points[middle],
+      y: edge.points[middle + 1],
+      z: edge.points[middle + 2],
+    };
     line.renderOrder = hovered ? 1003 : active ? 1002 : 1001;
     setObjectRenderLayer(line, RENDER_LAYER_MODIFIERS);
     freezeStaticObjectMatrices(line);

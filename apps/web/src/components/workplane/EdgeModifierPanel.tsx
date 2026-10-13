@@ -148,6 +148,7 @@ export function EdgeModifierPanel({
   workspace,
   tangentChain,
   preserveEdgeSize,
+  onlyVisibleEdges,
   targetName,
   groupedCount,
   appliedFeatureCount,
@@ -166,6 +167,7 @@ export function EdgeModifierPanel({
   onSharpAngleChange,
   onTangentChainChange,
   onPreserveEdgeSizeChange,
+  onOnlyVisibleEdgesChange,
   onSelectAll,
   onClear,
   onRemoveFeature,
@@ -184,6 +186,7 @@ export function EdgeModifierPanel({
   workspace: WorkplaneWorkspaceSettings;
   tangentChain: boolean;
   preserveEdgeSize: boolean;
+  onlyVisibleEdges: boolean;
   targetName: string;
   groupedCount: number;
   appliedFeatureCount: number;
@@ -202,6 +205,7 @@ export function EdgeModifierPanel({
   onSharpAngleChange: (value: number) => void;
   onTangentChainChange: (value: boolean) => void;
   onPreserveEdgeSizeChange: (value: boolean) => void;
+  onOnlyVisibleEdgesChange: (value: boolean) => void;
   onSelectAll: () => void;
   onClear: () => void;
   onRemoveFeature: (id: string) => void;
@@ -338,6 +342,11 @@ export function EdgeModifierPanel({
       ) : null}
 
       <EdgeModifierSlider label={t("edge.sharpThreshold")} value={sharpAngle} min={1} max={CAD_MODIFIER_MAX_SHARP_ANGLE} step={1} unit="deg" workspace={workspace} disabled={!prepared || busy} onChange={onSharpAngleChange} />
+
+      <label className="edge-modifier-check" title={t("edge.onlyVisibleEdgesHint")}>
+        <input type="checkbox" checked={onlyVisibleEdges} disabled={!prepared || busy} onChange={(event) => onOnlyVisibleEdgesChange(event.currentTarget.checked)} />
+        <span>{t("edge.onlyVisibleEdges")}</span>
+      </label>
 
       <label className="edge-modifier-check">
         <input type="checkbox" checked={tangentChain} disabled={!prepared || busy} onChange={(event) => onTangentChainChange(event.currentTarget.checked)} />

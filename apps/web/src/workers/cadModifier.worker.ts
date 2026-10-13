@@ -155,7 +155,14 @@ function edgeAngle(cad: OcctKernel, points: number[], faceHashes: number[], face
     const b = orientedFaceNormal(cad, faceB, point);
     const dot = Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y + a.z * b.z));
     const rawAngle = (Math.acos(dot) * 180) / Math.PI;
-    return { angle: Math.min(rawAngle, 180 - rawAngle), boundary: false, manifold: true };
+    return {
+      angle: Math.min(rawAngle, 180 - rawAngle),
+      boundary: false,
+      manifold: true,
+      // Beide Normalen mitgeben: Daran erkennt die Ansicht, ob diese Kante von
+      // der Kamera aus vorn liegt oder hinter dem Koerper.
+      faceNormals: [a.x, a.y, a.z, b.x, b.y, b.z],
+    };
   } catch {
     return { angle: 0, boundary: false, manifold: false };
   }

@@ -1006,6 +1006,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.edgeEditResumed": "{count} Kanten wieder gewählt - Wert ändern und anwenden",
   "status.edgeEditPartly": "{count} von {total} Kanten wiedergefunden",
   "status.edgeEditLost": "Die Kanten dieser Behandlung gibt es nicht mehr - bitte neu wählen",
+  "edge.onlyVisibleEdges": "Nur sichtbare Kanten",
+  "edge.onlyVisibleEdgesHint": "Blendet die Kanten aus, die von hier aus hinter dem Körper liegen",
   "split.title": "Teilen",
   "split.targetOne": "Ein Körper wird geteilt",
   "split.targetMany": "{count} Körper werden geteilt",

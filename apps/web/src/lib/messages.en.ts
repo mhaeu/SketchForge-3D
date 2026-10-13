@@ -952,6 +952,8 @@ export const MESSAGES_EN = {
   "status.edgeEditResumed": "{count} edges picked again - change the value and apply",
   "status.edgeEditPartly": "{count} of {total} edges found again",
   "status.edgeEditLost": "The edges of this treatment are gone - pick them again",
+  "edge.onlyVisibleEdges": "Only visible edges",
+  "edge.onlyVisibleEdgesHint": "Hides the edges that lie behind the body from here",
   "split.title": "Split",
   "split.targetOne": "One body will be split",
   "split.targetMany": "{count} bodies will be split",
