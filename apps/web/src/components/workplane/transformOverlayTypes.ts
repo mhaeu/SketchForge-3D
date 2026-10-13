@@ -68,8 +68,20 @@ export function transformOverlayScreenPoint(
   };
 }
 
-export const ROTATION_WHEEL_SNAP_DEGREES = 45;
-export const ROTATION_WHEEL_SHIFT_SNAP_DEGREES = 22.5;
+/**
+ * Der Winkelmesser rastet dort, wo er Striche zeigt.
+ *
+ * Er zeichnet alle 22,5 Grad einen Strich, rastete aber nur alle 45 - wer auf
+ * 22,5 drehen wollte, musste Shift halten, und die Striche dazwischen waren
+ * nur Zierde. Jetzt rastet jeder Strich, und Shift setzt einen halben dazu:
+ * 11,25 Grad, mit feineren Strichen, solange Shift liegt.
+ *
+ * Draussen vor dem Rad bleibt es, wie es war - ein Grad frei Hand, mit Shift
+ * 45. Das ist eine andere Geste: dort wird gezogen und nicht gezeigt.
+ */
+export const ROTATION_WHEEL_SNAP_DEGREES = 22.5;
+export const ROTATION_WHEEL_SHIFT_SNAP_DEGREES = 11.25;
+export const ROTATION_DRAG_SHIFT_SNAP_DEGREES = 45;
 
 type RotationDirectionVector = { x: number; y: number; z: number };
 
@@ -86,7 +98,9 @@ export function rotationPlaneDirectionSign(
 }
 
 export function snappedRotationDelta(rawDelta: number, insideSnapWheel: boolean, shiftKey: boolean) {
-  const step = insideSnapWheel || shiftKey ? ROTATION_WHEEL_SNAP_DEGREES : 1;
+  const step = insideSnapWheel
+    ? (shiftKey ? ROTATION_WHEEL_SHIFT_SNAP_DEGREES : ROTATION_WHEEL_SNAP_DEGREES)
+    : (shiftKey ? ROTATION_DRAG_SHIFT_SNAP_DEGREES : 1);
   return Math.round(rawDelta / step) * step;
 }
 
@@ -203,6 +217,8 @@ export type RotationReadout = {
   text: string;
   angle?: number;
   pointerAngle?: number;
+  /** Shift im Rad: Der Winkelmesser zeigt dann auch die halben Striche. */
+  fineTicks?: boolean;
 } | null;
 
 export type EditingDimension = {

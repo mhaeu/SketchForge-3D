@@ -5,6 +5,7 @@ import { selectWholeValue } from "@/lib/numberField";
 import {
   measureKeyForHandle,
   visibleDimensionMarks,
+  ROTATION_WHEEL_SHIFT_SNAP_DEGREES,
   type TransformOverlayProps,
   type TransformOverlayState,
 } from "@/components/workplane/transformOverlayTypes";
@@ -77,15 +78,20 @@ export function TransformOverlay({
     mark.key !== editingDimension?.key && !editingCorner?.entries.some((entry) => entry.key === mark.key)
   ));
   const handleMeasureKey = (handle: TransformOverlayState["handles"][number]) => measureKeyForHandle(handle.kind, handle.key, box);
-  const protractorTicks = Array.from({ length: 16 }, (_, index) => {
-    const degrees = index * 22.5 - 90;
+  // Ein Strich je Rastung: alle 11,25 Grad einer, die halben nur, solange
+  // Shift liegt - sonst zeigte der Winkelmesser Striche, an denen nichts
+  // rastet.
+  const protractorTicks = Array.from({ length: 32 }, (_, index) => {
+    const degrees = index * ROTATION_WHEEL_SHIFT_SNAP_DEGREES - 90;
     const radians = THREE.MathUtils.degToRad(degrees);
-    const major = index % 2 === 0;
+    const fine = index % 2 === 1;
+    const major = index % 4 === 0;
     const outer = 94;
-    const inner = major ? 80 : 86;
+    const inner = major ? 80 : fine ? 90 : 86;
     return {
       key: `tick-${index}`,
       major,
+      fine,
       x1: Math.cos(radians) * inner,
       y1: Math.sin(radians) * inner,
       x2: Math.cos(radians) * outer,
@@ -137,10 +143,10 @@ export function TransformOverlay({
           <g transform={`matrix(${plane.a} ${plane.b} ${plane.c} ${plane.d} ${plane.x} ${plane.y})`}>
             <circle className="rotation-protractor-outer" cx="0" cy="0" r="94" />
             <circle className="rotation-protractor-inner" cx="0" cy="0" r="68" />
-            {protractorTicks.map((tick) => (
+            {protractorTicks.filter((tick) => !tick.fine || rotationReadout?.fineTicks).map((tick) => (
               <line
                 key={tick.key}
-                className={tick.major ? "rotation-tick major" : "rotation-tick"}
+                className={`rotation-tick${tick.major ? " major" : ""}${tick.fine ? " fine" : ""}`}
                 x1={tick.x1}
                 y1={tick.y1}
                 x2={tick.x2}

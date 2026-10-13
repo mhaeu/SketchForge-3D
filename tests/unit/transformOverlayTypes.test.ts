@@ -7,6 +7,8 @@ import {
   rotationPlaneDirectionSign,
   transformBoundsIntersectClipVolume,
   transformOverlayScreenPoint,
+  ROTATION_WHEEL_SHIFT_SNAP_DEGREES,
+  ROTATION_WHEEL_SNAP_DEGREES,
   snappedRotationDelta,
   snappedWheelRotation,
   visibleDimensionMarks,
@@ -99,18 +101,38 @@ describe("rotation handle projection", () => {
 
   it("moves 45-degree rotation in the same pointer direction as 22.5-degree rotation", () => {
     const direction = -1;
-    expect(snappedWheelRotation(-52, -80, direction)).toEqual({ delta: -45, pointerAngle: -45 });
-    expect(snappedWheelRotation(-58, -80, direction)).toEqual({ delta: -45, pointerAngle: -45 });
-    expect(snappedWheelRotation(-69, -80, direction)).toEqual({ delta: 0, pointerAngle: -90 });
+    expect(snappedWheelRotation(-52, -80, direction, 45)).toEqual({ delta: -45, pointerAngle: -45 });
+    expect(snappedWheelRotation(-58, -80, direction, 45)).toEqual({ delta: -45, pointerAngle: -45 });
+    expect(snappedWheelRotation(-69, -80, direction, 45)).toEqual({ delta: 0, pointerAngle: -90 });
+  });
+
+  /**
+   * Das Rad rastet dort, wo es Striche zeigt: alle 22,5 Grad, und mit Shift
+   * alle 11,25. Vorher zeigte es die 22,5er Striche und rastete auf 45 - die
+   * Haelfte der Striche war Zierde.
+   */
+  it("rastet ohne Angabe auf jedem Strich des Winkelmessers", () => {
+    expect(ROTATION_WHEEL_SNAP_DEGREES).toBe(22.5);
+    expect(ROTATION_WHEEL_SHIFT_SNAP_DEGREES).toBe(11.25);
+    const direction = -1;
+    expect(snappedWheelRotation(-58, -80, direction).delta).toBe(-22.5);
+    expect(snappedWheelRotation(-58, -80, direction, ROTATION_WHEEL_SHIFT_SNAP_DEGREES).delta).toBe(-22.5);
+    expect(snappedWheelRotation(-64, -80, direction, ROTATION_WHEEL_SHIFT_SNAP_DEGREES).delta).toBe(-11.25);
+    // Draussen vor dem Rad bleibt es bei einem Grad frei Hand, mit Shift 45.
+    expect(snappedRotationDelta(28.4, false, false)).toBe(28);
+    expect(snappedRotationDelta(28, false, true)).toBe(45);
+    // Im Rad greift dieselbe Rastung wie am Zeiger.
+    expect(snappedRotationDelta(28.4, true, false)).toBe(22.5);
+    expect(snappedRotationDelta(28.4, true, true)).toBe(33.75);
   });
 
   it.each([
     { direction: -1, coarseClockwise: -45, fineClockwise: -22.5, coarseCounterClockwise: 45, fineCounterClockwise: 22.5 },
     { direction: 1, coarseClockwise: 45, fineClockwise: 22.5, coarseCounterClockwise: -45, fineCounterClockwise: -22.5 },
   ])("keeps both snap modes aligned for plane direction $direction", ({ direction, coarseClockwise, fineClockwise, coarseCounterClockwise, fineCounterClockwise }) => {
-    expect(snappedWheelRotation(-58, -80, direction).delta).toBe(coarseClockwise);
+    expect(snappedWheelRotation(-58, -80, direction, 45).delta).toBe(coarseClockwise);
     expect(snappedWheelRotation(-58, -80, direction, 22.5).delta).toBe(fineClockwise);
-    expect(snappedWheelRotation(-120, -80, direction).delta).toBe(coarseCounterClockwise);
+    expect(snappedWheelRotation(-120, -80, direction, 45).delta).toBe(coarseCounterClockwise);
     expect(snappedWheelRotation(-120, -80, direction, 22.5).delta).toBe(fineCounterClockwise);
     expect(Math.sign(coarseClockwise)).toBe(Math.sign(fineClockwise));
     expect(Math.sign(coarseCounterClockwise)).toBe(Math.sign(fineCounterClockwise));
@@ -120,7 +142,7 @@ describe("rotation handle projection", () => {
     { direction: -1, coarse: [0, -45, -90], fine: [0, -22.5, -45, -67.5] },
     { direction: 1, coarse: [0, 45, 90], fine: [0, 22.5, 45, 67.5] },
   ])("advances monotonically through 45 and 22.5 degree marks for plane direction $direction", ({ direction, coarse, fine }) => {
-    expect([-90, -45, 0].map((pointer) => snappedWheelRotation(pointer, -90, direction).delta)).toEqual(coarse);
+    expect([-90, -45, 0].map((pointer) => snappedWheelRotation(pointer, -90, direction, 45).delta)).toEqual(coarse);
     expect([-90, -67.5, -45, -22.5].map((pointer) => snappedWheelRotation(pointer, -90, direction, 22.5).delta)).toEqual(fine);
   });
 
@@ -132,7 +154,7 @@ describe("rotation handle projection", () => {
 
   it("keeps the current result continuous when switching to 22.5-degree snapping", () => {
     const direction = -1;
-    const coarse = snappedWheelRotation(-58, -80, direction);
+    const coarse = snappedWheelRotation(-58, -80, direction, 45);
     const fineAtShift = continuousSnappedWheelRotation(
       snappedWheelRotation(-58, -80, direction, 22.5),
       22.5,
@@ -168,7 +190,7 @@ describe("rotation handle projection", () => {
     { direction: -1, coarseDelta: -45, fineDelta: -67.5 },
     { direction: 1, coarseDelta: 45, fineDelta: 67.5 },
   ])("does not reverse or jump when Shift is pressed and released for plane direction $direction", ({ direction, coarseDelta, fineDelta }) => {
-    const coarse = snappedWheelRotation(-58, -80, direction);
+    const coarse = snappedWheelRotation(-58, -80, direction, 45);
     const fineAtShift = continuousSnappedWheelRotation(
       snappedWheelRotation(-58, -80, direction, 22.5),
       22.5,
@@ -186,7 +208,7 @@ describe("rotation handle projection", () => {
       fineAtShift.pointerOffset,
     );
     const coarseAtRelease = continuousSnappedWheelRotation(
-      snappedWheelRotation(-52, -80, direction),
+      snappedWheelRotation(-52, -80, direction, 45),
       45,
       22.5,
       fineAfterMove.delta,

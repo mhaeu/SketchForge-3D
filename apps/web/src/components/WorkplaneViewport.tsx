@@ -5537,6 +5537,7 @@ export function WorkplaneViewport({
           text: `${Number(delta.toFixed(1))}°`,
           angle: delta,
           pointerAngle: wheelRotation?.pointerAngle ?? rawPointerAngle,
+          fineTicks: insideSnapWheel && shiftKey,
         });
       }
       // Ein gesetzter Drehpunkt bewegt auch einen einzelnen Koerper: Er soll
