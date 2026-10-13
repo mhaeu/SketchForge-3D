@@ -204,6 +204,7 @@ import {
 } from "@/lib/placementWorkplane";
 import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
+import { CUTTER_END_PADDING, paddedCutterShape } from "@/lib/cutterPadding";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
@@ -363,9 +364,8 @@ declare global {
   }
 }
 
-const CUTTER_PADDING = 0.05;
 const POINT_TOLERANCE = 0.0001;
-const CUTTER_RESIDUAL_INSET = CUTTER_PADDING * 0.4;
+const CUTTER_RESIDUAL_INSET = CUTTER_END_PADDING * 0.4;
 const MIN_SHAPE_DIMENSION = 0.01;
 
 /**
@@ -3929,21 +3929,6 @@ function cuboidFromBox3(box: THREE.Box3): Cuboid {
     maxY: box.max.y,
     minZ: box.min.z,
     maxZ: box.max.z,
-  };
-}
-
-function paddedCutterShape(shape: WorkplaneShape): WorkplaneShape {
-  const width = shapeWidth(shape) + CUTTER_PADDING * 2;
-  const depth = shapeDepth(shape) + CUTTER_PADDING * 2;
-  const height = shape.height + CUTTER_PADDING * 2;
-  return {
-    ...shape,
-    width,
-    depth,
-    height,
-    size: Math.max(width, depth),
-    elevation: (shape.elevation ?? 0) - CUTTER_PADDING,
-    baseRadius: shape.baseRadius ? shape.baseRadius + CUTTER_PADDING : shape.baseRadius,
   };
 }
 
