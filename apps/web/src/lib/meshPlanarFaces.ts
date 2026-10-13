@@ -523,3 +523,80 @@ export function planarMeshFaces(
 
   return { faces, triangles: triangles.length, snapped };
 }
+
+/**
+ * Der Rand **einer** Flaeche, aus einem Dreieckshaufen.
+ *
+ * Fuer das Lochmuster: `planarFace` in `rotationPivot.ts` sagt, welche
+ * Dreiecke zur angeklickten Flaeche gehoeren - hier kommt ihr Rand heraus, als
+ * Aussenzug und Oeffnungen, in der ausgeglichenen Ebene und ohne die Punkte,
+ * die mitten auf einer Gerade liegen.
+ *
+ * `positions` sind Dreiecke in Weltkoordinaten, neun Zahlen je Dreieck;
+ * `triangles` sind die Nummern der Dreiecke dieser Flaeche. `null`, wenn ihr
+ * Rand sich nicht als Ring lesen laesst.
+ */
+export function planarRegionLoops(
+  positions: ArrayLike<number>,
+  triangles: ReadonlyArray<number>,
+  options: Pick<PlanarMeshFacesOptions, "straightness"> = {},
+): PlanarMeshFace | null {
+  if (triangles.length === 0) return null;
+  const straightness = options.straightness ?? DEFAULT_STRAIGHTNESS;
+
+  // Nur die Punkte dieser Flaeche verschweissen - der Rest des Netzes geht
+  // ihren Rand nichts an.
+  const byKey = new Map<string, number>();
+  const points: Vec[] = [];
+  const indexOf = (at: number) => {
+    const x = positions[at];
+    const y = positions[at + 1];
+    const z = positions[at + 2];
+    const key = `${Math.round(x * WELD_SCALE)},${Math.round(y * WELD_SCALE)},${Math.round(z * WELD_SCALE)}`;
+    const known = byKey.get(key);
+    if (known !== undefined) return known;
+    const next = points.length;
+    byKey.set(key, next);
+    points.push([x, y, z]);
+    return next;
+  };
+
+  const faces: Array<[number, number, number]> = [];
+  for (const triangle of triangles) {
+    const at = triangle * 9;
+    if (at < 0 || at + 8 >= positions.length) return null;
+    const a = indexOf(at);
+    const b = indexOf(at + 3);
+    const c = indexOf(at + 6);
+    if (a === b || b === c || c === a) continue;
+    faces.push([a, b, c]);
+  }
+  if (faces.length === 0) return null;
+
+  const normals = faces.map((face) => triangleNormal(points, face));
+  const plane = fitPlane(points, faces, normals, faces.map((_, index) => index));
+  if (!plane) return null;
+
+  const loops = boundaryLoops(faces, faces.map((_, index) => index));
+  if (!loops) return null;
+
+  // Die Punkte auf die ausgeglichene Ebene setzen, damit der Zug wirklich flach ist.
+  const onPlane = (vertex: number): Vec => {
+    const distance = dot(plane.normal, points[vertex]) - plane.offset;
+    return [
+      points[vertex][0] - plane.normal[0] * distance,
+      points[vertex][1] - plane.normal[1] * distance,
+      points[vertex][2] - plane.normal[2] * distance,
+    ];
+  };
+
+  const rings = loops
+    .map((loop) => dropStraightPoints(loop.map(onPlane), straightness))
+    .filter((loop) => loop.length >= 3)
+    .map((loop) => ({ loop, area: Math.abs(loopArea(loop, plane.normal)) }))
+    .sort((a, b) => b.area - a.area);
+  if (rings.length === 0) return null;
+
+  const [outer, ...rest] = rings;
+  return { normal: plane.normal, outline: flat(outer.loop), holes: rest.map((ring) => flat(ring.loop)) };
+}

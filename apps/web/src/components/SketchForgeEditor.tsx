@@ -89,6 +89,7 @@ import {
   ToolbarVectorExportIcon,
   ToolbarPatternIcon,
   ToolbarHollowIcon,
+  ToolbarHolePatternIcon,
   ToolbarSplitIcon,
   ToolbarMateFacesIcon,
   ToolbarSetDownIcon,
@@ -198,6 +199,7 @@ import {
   placementWorkplaneFingerprint,
   placementWorkplaneFromSurface,
   placementWorkplaneIsBase,
+  placementWorkplanePoint,
   translationToWorkplane,
   type PlacementPoint,
   type PlacementWorkplane,
@@ -206,6 +208,16 @@ import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cut
 import { cavityFitPatch } from "@/lib/cavityFit";
 import { paddedCutterShape } from "@/lib/cutterPadding";
 import { createHoleTester, pointInsideCuboid, type HoleTester } from "@/lib/holePointTest";
+import {
+  holePatternCutter,
+  holePatternFaceFromLoops,
+  holePatternPlacements,
+  holePatternPreviewRings,
+  normalizeHolePatternSettings,
+  type HolePatternFace,
+  type HolePatternSettings,
+} from "@/lib/holePattern";
+import { planarRegionLoops } from "@/lib/meshPlanarFaces";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
@@ -220,6 +232,7 @@ const HOLLOW_OPENING_TOP: CadHollowOpening = ["top"];
 import { createCounterboreGeometry, createCountersinkGeometry, createTeardropGeometry } from "@/lib/boreGeometry";
 import { PatternPanel } from "./workplane/PatternPanel";
 import { SplitPanel } from "./workplane/SplitPanel";
+import { HolePatternPanel } from "./workplane/HolePatternPanel";
 import { MateFacesPanel } from "./workplane/MateFacesPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
@@ -249,7 +262,7 @@ import {
 } from "@/lib/sketchforgeMcpProtocol";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import type { SketchCadBuildResponse } from "@/lib/sketchCadTypes";
-import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, ProjectAsset, ShapeAsset, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment, WorkplaneNote, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { AlignAxis, AlignHandleStatus, AlignTarget, GridSize, ProjectAsset, ShapeAsset, ShapeKind, SketchImage, SketchOperation, SketchPoint, SketchProfile, SketchRevolveSettings, SketchSegment, WorkplaneNote, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 export { importedShapeFromObj, importedShapeFromStl, importedShapeFromSvg };
 
@@ -6540,6 +6553,24 @@ export function SketchForgeEditor({
     error: string | null;
     picking: boolean;
   } | null>(null);
+  /**
+   * Das Lochmuster: erst die Flaeche zeigen, dann die Zahlen stellen.
+   *
+   * `face` ist der Rand der angeklickten Flaeche in den Koordinaten ihrer
+   * Arbeitsebene; solange er fehlt, wartet das Werkzeug auf den Klick.
+   */
+  const [holePatternTool, setHolePatternTool] = useState<{
+    shapeId: string | null;
+    picking: boolean;
+    workplane: PlacementWorkplane | null;
+    face: HolePatternFace | null;
+    settings: HolePatternSettings;
+    through: boolean;
+    depth: number;
+    maxDepth: number;
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
   const [pivotMode, setPivotMode] = useState(false);
   const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
   const [snapMode, setSnapMode] = useState<SnapMode | null>(null);
@@ -9084,6 +9115,8 @@ export function SketchForgeEditor({
    */
   const splitToolRef = useRef(splitTool);
   splitToolRef.current = splitTool;
+  const holePatternToolRef = useRef(holePatternTool);
+  holePatternToolRef.current = holePatternTool;
 
   /** Die Koerper, die das Teilen nimmt: ausgewaehlt, nicht gesperrt, mit Flaeche. */
   const splitTargets = useMemo(
@@ -9108,6 +9141,168 @@ export function SketchForgeEditor({
   splitTargetsRef.current = splitTargets;
   const splitPlaneRef = useRef(splitPlane);
   splitPlaneRef.current = splitPlane;
+
+  /**
+   * Das Lochmuster braucht einen einzelnen Koerper: Es setzt seine Loecher in
+   * **eine** Flaeche, und zwei Koerper haetten zwei.
+   */
+  const toggleHolePatternTool = useCallback(() => {
+    if (holePatternTool) {
+      setHolePatternTool(null);
+      setNotice(t("status.holePatternCancelled"));
+      return;
+    }
+    const targets = selectedShapes.filter((shape) => !shape.locked && !isReferencePoint(shape) && isSolidShape(shape));
+    if (targets.length !== 1) {
+      setNotice(t("status.holePatternNeedsOne"));
+      return;
+    }
+    setHolePatternTool({
+      shapeId: targets[0].id,
+      picking: true,
+      workplane: null,
+      face: null,
+      settings: normalizeHolePatternSettings({}),
+      through: true,
+      depth: 2,
+      maxDepth: 2,
+      busy: false,
+      error: null,
+    });
+  }, [holePatternTool, selectedShapes]);
+
+  /**
+   * Der Klick auf die Flaeche. Aus ihren Dreiecken wird ihr Rand - samt den
+   * Oeffnungen darin -, und daraus die Flaeche, in der das Muster liegt.
+   *
+   * Eine gewoelbte Flaeche hat nur das angeklickte Facettendreieck; dann sagt
+   * das Werkzeug es, statt ein Muster auf eine Facette zu setzen.
+   */
+  const pickHolePatternFace = useCallback((picked: {
+    shapeId: string;
+    centre: { x: number; y: number; z: number };
+    normal: { x: number; y: number; z: number };
+    positions: number[];
+    triangles: number[];
+  }) => {
+    const target = shapesRef.current.find((shape) => shape.id === picked.shapeId);
+    if (!target) return;
+    if (picked.triangles.length < 2) {
+      setHolePatternTool((current) => current ? { ...current, error: t("holePattern.curvedFace") } : current);
+      return;
+    }
+    const loops = planarRegionLoops(picked.positions, picked.triangles);
+    if (!loops) {
+      setHolePatternTool((current) => current ? { ...current, error: t("holePattern.faceUnreadable") } : current);
+      return;
+    }
+    const workplane = placementWorkplaneFromSurface(picked.centre, picked.normal, placementWorkplane.xAxis);
+    const face = holePatternFaceFromLoops(workplane, loops);
+    /*
+     * Wie tief ein Loch durch den ganzen Koerper reicht: die Ausdehnung des
+     * Koerpers entlang der Flaechennormale, von der Flaeche nach innen
+     * gemessen. Daran haengt auch die Obergrenze des Tiefenreglers.
+     */
+    const normal = new THREE.Vector3(picked.normal.x, picked.normal.y, picked.normal.z).normalize();
+    const origin = new THREE.Vector3(picked.centre.x, picked.centre.y, picked.centre.z);
+    let reach = 0;
+    const mesh = meshForShape(target);
+    mesh.vertices.forEach(([x, y, z]) => {
+      reach = Math.max(reach, -(new THREE.Vector3(x, y, z).sub(origin).dot(normal)));
+    });
+    const maxDepth = Math.max(0.4, Math.round(reach * 100) / 100);
+    setHolePatternTool((current) => current ? {
+      ...current,
+      shapeId: picked.shapeId,
+      picking: false,
+      workplane,
+      face,
+      maxDepth,
+      depth: Math.min(current.depth > 2 ? current.depth : maxDepth, maxDepth),
+      error: null,
+    } : current);
+  }, [placementWorkplane]);
+
+  /** Die Mitten zur gegenwaertigen Einstellung - dieselbe Rechnung, die spaeter setzt. */
+  const holePatternPlaces = useMemo(() => {
+    if (!holePatternTool?.face) return [];
+    return holePatternPlacements(holePatternTool.face, holePatternTool.settings);
+  }, [holePatternTool?.face, holePatternTool?.settings]);
+
+  const holePatternRings = useMemo(() => {
+    if (!holePatternTool?.workplane || holePatternPlaces.length === 0) return null;
+    return { rings: holePatternPreviewRings(holePatternTool.workplane, holePatternTool.settings, holePatternPlaces) };
+  }, [holePatternPlaces, holePatternTool?.settings, holePatternTool?.workplane]);
+
+  /**
+   * Die Loecher setzen: je Mitte eine Aussparung, dann mit dem Koerper
+   * gruppieren. Eingebacken wird nichts - Aufloesen gibt die Aussparungen
+   * wieder einzeln frei, und der ganze Vorgang ist ein Schritt im Verlauf.
+   */
+  const applyHolePattern = useCallback(async () => {
+    const current = holePatternToolRef.current;
+    if (!current?.workplane || !current.face || holePatternPlaces.length === 0) return;
+    const target = shapesRef.current.find((shape) => shape.id === current.shapeId);
+    if (!target) return;
+    setHolePatternTool({ ...current, busy: true, error: null });
+
+    const workplane = current.workplane;
+    const settings = current.settings;
+    const depth = current.through ? current.maxDepth : Math.min(current.depth, current.maxDepth);
+    const radians = ((settings.angle ?? 0) * Math.PI) / 180;
+    // Das Muster dreht sich in der Flaeche, also dreht sich auch die
+    // Laengsachse der Aussparung mit - sonst stuende ein Schlitz quer zu
+    // seiner Reihe.
+    const tangent = new THREE.Vector3(workplane.xAxis.x, workplane.xAxis.y, workplane.xAxis.z)
+      .multiplyScalar(Math.cos(radians))
+      .addScaledVector(new THREE.Vector3(workplane.zAxis.x, workplane.zAxis.y, workplane.zAxis.z), Math.sin(radians));
+    const inward = { x: -workplane.normal.x, y: -workplane.normal.y, z: -workplane.normal.z };
+
+    // Welcher Grundkoerper und in welchen Massen - die Uebersetzung steht in
+    // holePattern.ts, damit Vorschau und Aussparung dieselbe Form haben.
+    const cutter = holePatternCutter(settings);
+
+    const holes = holePatternPlaces.map((placement: { x: number; z: number }, index: number) => {
+      const origin = placementWorkplanePoint(workplane, placement.x, placement.z);
+      const plane = placementWorkplaneFromSurface(origin, inward, tangent);
+      const base: WorkplaneShape = canonicalizeShape({
+        id: createLocalId(`hole-pattern-${index}`),
+        name: t("holePattern.title"),
+        kind: cutter.kind as ShapeKind,
+        color: target.color,
+        x: origin.x,
+        z: origin.z,
+        elevation: 0,
+        size: Math.max(cutter.width, cutter.depth),
+        width: cutter.width,
+        depth: cutter.depth,
+        height: depth,
+        rotation: 0,
+        hole: true,
+        ...(cutter.sides === undefined ? {} : { sides: cutter.sides }),
+        ...(cutter.cornerFillet === undefined ? {} : { cornerFillet: cutter.cornerFillet, topBottomFillet: cutter.topBottomFillet ?? 0 }),
+      } as WorkplaneShape);
+      return canonicalizeShape({ ...base, ...placementPatchForNewShape(base, plane, origin) });
+    });
+
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    const result = await buildGroupedShapeFromSelection([target, ...holes]);
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setHolePatternTool((tool) => tool ? { ...tool, busy: false, error: t("status.groupChanged") } : tool);
+      return;
+    }
+    if (!result.group) {
+      setHolePatternTool((tool) => tool ? { ...tool, busy: false, error: result.failureNotice } : tool);
+      return;
+    }
+    const group = canonicalizeShape({ ...result.group, groupOperation: "group" });
+    setHolePatternTool(null);
+    commitShapes(
+      [...shapesRef.current.filter((shape) => shape.id !== target.id), group],
+      group.id,
+      t("status.holePatternDone", { count: holes.length }),
+    );
+  }, [commitShapes, holePatternPlaces]);
 
   const toggleSplitTool = useCallback(() => {
     if (splitTool) {
@@ -12211,6 +12406,19 @@ export function SketchForgeEditor({
           setNotice(t("status.mateCancelled"));
           return;
         }
+        if (holePatternTool) {
+          // Wie beim Teilen: Zeigt es gerade, nimmt Escape nur das Zeigen
+          // zurueck - die eingestellten Zahlen sollen bleiben.
+          if (holePatternTool.picking && holePatternTool.face) {
+            setHolePatternTool({ ...holePatternTool, picking: false });
+            setNotice("");
+            return;
+          }
+          if (holePatternTool.busy) return;
+          setHolePatternTool(null);
+          setNotice(t("status.holePatternCancelled"));
+          return;
+        }
         if (splitTool) {
           /*
            * Zeigt das Teilen gerade auf eine Flaeche, nimmt Escape nur das
@@ -12410,6 +12618,7 @@ export function SketchForgeEditor({
     layFlatMode,
     setDownMode,
     snapMode,
+    holePatternTool,
     splitTool,
     toggleHidden,
     toggleSetDownTool,
@@ -12529,6 +12738,8 @@ export function SketchForgeEditor({
         onSplit={toggleSplitTool}
         patternActive={Boolean(patternTool)}
         splitActive={Boolean(splitTool)}
+        holePatternActive={Boolean(holePatternTool)}
+        onHolePattern={toggleHolePatternTool}
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
         onHollow={startHollow}
@@ -12673,6 +12884,9 @@ export function SketchForgeEditor({
           notes={notes}
           notesVisible={notesVisible}
           showOverhangs={overhangsVisible}
+          holePatternMode={Boolean(holePatternTool?.picking)}
+          onHolePatternPick={pickHolePatternFace}
+          holePatternPreview={holePatternRings}
           splitPickMode={Boolean(splitTool?.picking)}
           onSplitFacePick={laySplitPlaneOnFace}
           splitPreview={splitTool && splitPlane ? { normal: splitPlane.normal, origin: splitPlane.origin, size: splitPlane.size } : null}
@@ -12757,6 +12971,32 @@ export function SketchForgeEditor({
           onCancel={() => {
             setMateTool(null);
             setNotice(t("status.mateCancelled"));
+          }}
+        />
+      ) : null}
+      {holePatternTool ? (
+        <HolePatternPanel
+          settings={holePatternTool.settings}
+          count={holePatternPlaces.length}
+          depth={holePatternTool.depth}
+          through={holePatternTool.through}
+          maxDepth={holePatternTool.maxDepth}
+          workspace={workspaceSettings}
+          busy={holePatternTool.busy}
+          error={holePatternTool.error}
+          picking={holePatternTool.picking}
+          onPickToggle={() => setHolePatternTool((current) => current ? { ...current, picking: !current.picking } : current)}
+          onSettingsChange={(patch) => setHolePatternTool((current) => current ? {
+            ...current,
+            settings: normalizeHolePatternSettings({ ...current.settings, ...patch }),
+            error: null,
+          } : current)}
+          onDepthChange={(depth) => setHolePatternTool((current) => current ? { ...current, depth, error: null } : current)}
+          onThroughChange={(through) => setHolePatternTool((current) => current ? { ...current, through, error: null } : current)}
+          onApply={() => { void applyHolePattern(); }}
+          onCancel={() => {
+            setHolePatternTool(null);
+            setNotice(t("status.holePatternCancelled"));
           }}
         />
       ) : null}
@@ -13111,6 +13351,8 @@ function SecondaryToolbar({
   onSplit,
   patternActive,
   splitActive,
+  holePatternActive,
+  onHolePattern,
   onPivot,
   pivotActive,
   onHollow,
@@ -13226,6 +13468,8 @@ function SecondaryToolbar({
   onSplit: () => void;
   patternActive: boolean;
   splitActive: boolean;
+  holePatternActive: boolean;
+  onHolePattern: () => void;
   onPivot: () => void;
   pivotActive: boolean;
   onHollow: () => void;
@@ -13541,6 +13785,8 @@ function SecondaryToolbar({
     // Aushoehlen braucht denselben exakten Koerper wie die Kantenwerkzeuge.
     { label: t("editor.tool.hollow"), icon: ToolbarHollowIcon, action: onHollow, enabled: canEdgeModify, active: hollowActive },
     { label: t("editor.tool.split"), icon: ToolbarSplitIcon, action: onSplit, enabled: hasSelection, active: splitActive },
+    // Neben dem Teilen, weil es dieselbe Frage stellt: welche Flaeche?
+    { label: t("editor.tool.holePattern"), icon: ToolbarHolePatternIcon, action: onHolePattern, enabled: hasSelection, active: holePatternActive },
   ];
   const arrangeTools = [
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },

@@ -446,6 +446,23 @@ export function ToolbarSplitIcon(props: IconProps) {
   );
 }
 
+/**
+ * Das Lochmuster: eine Platte mit einem gleichmaessigen Raster von Loechern.
+ * Die Loecher stehen auf einem Gitter mit gleichem Abstand zueinander und zum
+ * Rand - das Bild zeigt, was das Werkzeug macht.
+ */
+export function ToolbarHolePatternIcon(props: IconProps) {
+  const centres = [14, 24, 34];
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M7 7 H41 V41 H7 Z" fill="none" stroke="currentColor" strokeWidth="2.4" />
+      {centres.flatMap((x) => centres.map((y) => (
+        <circle key={`${x}-${y}`} cx={x} cy={y} r="3.1" fill="currentColor" opacity="0.82" />
+      )))}
+    </svg>
+  );
+}
+
 export function ToolbarHollowIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>

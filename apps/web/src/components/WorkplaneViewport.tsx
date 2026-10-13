@@ -351,6 +351,17 @@ type WorkplaneViewportProps = {
   onSetDownPick?: (picked: { shapeId: string; centre: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } }) => void;
   /** Die Ebene, die das Teilen gerade vorschlaegt. */
   splitPreview?: { normal: [number, number, number]; origin: [number, number, number]; size: number } | null;
+  /** Das Lochmuster stellt dieselbe Frage wie die anderen vier - welche Flaeche? */
+  holePatternMode?: boolean;
+  onHolePatternPick?: (picked: {
+    shapeId: string;
+    centre: { x: number; y: number; z: number };
+    normal: { x: number; y: number; z: number };
+    positions: number[];
+    triangles: number[];
+  }) => void;
+  /** Die Ringe der Loecher, je Ring x/y/z hintereinander, in Weltkoordinaten. */
+  holePatternPreview?: { rings: number[][] } | null;
   /** Der erste gezeigte Punkt, solange der zweite noch fehlt. */
   snapAnchor?: SnapPick | null;
   onSnapPick?: (picked: SnapPick) => void;
@@ -504,6 +515,7 @@ type ThreeState = {
   layFlatHoverLayer: THREE.Group;
   /** Die Ebene, an der das Teilen schneiden wuerde. */
   splitPreviewLayer: THREE.Group;
+  holePatternPreviewLayer: THREE.Group;
   sectionLayer: THREE.Group;
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
@@ -3689,6 +3701,9 @@ export function WorkplaneViewport({
   setDownMode = false,
   onSetDownPick,
   splitPreview = null,
+  holePatternMode = false,
+  onHolePatternPick,
+  holePatternPreview = null,
   snapAnchor = null,
   onSnapPick,
   onSnapMiss,
@@ -3778,15 +3793,18 @@ export function WorkplaneViewport({
   mateFacesModeRef.current = mateFacesMode;
   const setDownModeRef = useRef(setDownMode);
   setDownModeRef.current = setDownMode;
+  const holePatternModeRef = useRef(holePatternMode);
+  holePatternModeRef.current = holePatternMode;
   /*
-   * Vier Werkzeuge stellen dieselbe Frage - welche Flaeche? - und nur die
+   * Fuenf Werkzeuge stellen dieselbe Frage - welche Flaeche? - und nur die
    * Antwort geht woandershin. Diese Abfrage steht darum an einer Stelle,
-   * damit ein fuenftes nicht fuenf Ketten von Oder-Abfragen verlaengert.
+   * damit ein sechstes nicht sechs Ketten von Oder-Abfragen verlaengert.
    */
   const facePickActive = () => layFlatModeRef.current
     || splitPickModeRef.current
     || mateFacesModeRef.current
-    || setDownModeRef.current;
+    || setDownModeRef.current
+    || holePatternModeRef.current;
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -4650,6 +4668,7 @@ export function WorkplaneViewport({
       disposeChildren(state.snapLayer);
       disposeChildren(state.layFlatHoverLayer);
       disposeChildren(state.splitPreviewLayer);
+      disposeChildren(state.holePatternPreviewLayer);
       disposeChildren(state.sectionLayer);
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
@@ -6196,6 +6215,36 @@ export function WorkplaneViewport({
   }, [splitPreview]);
 
   /*
+   * Die Vorschau des Lochmusters: jedes Loch als Ring auf der Flaeche.
+   *
+   * Nur Linien und keine Koerper - ein Loch ist erst nach dem Setzen eine
+   * Aussparung, und bis dahin soll man die Flaeche darunter sehen. Die Ringe
+   * kommen fertig in Weltkoordinaten, weil ihre Lage in der Flaeche gerechnet
+   * wird und nicht hier.
+   */
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    disposeChildren(state.holePatternPreviewLayer);
+    if (holePatternPreview && holePatternPreview.rings.length > 0) {
+      const group = new THREE.Group();
+      group.name = "HolePatternRings";
+      const material = new THREE.LineBasicMaterial({ color: 0x00aeea, transparent: true, opacity: 0.9 });
+      holePatternPreview.rings.forEach((ring) => {
+        const points: THREE.Vector3[] = [];
+        for (let index = 0; index + 2 < ring.length; index += 3) {
+          points.push(new THREE.Vector3(ring[index], ring[index + 1], ring[index + 2]));
+        }
+        if (points.length >= 3) group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), material));
+      });
+      group.renderOrder = 9;
+      setObjectRenderLayer(group, RENDER_LAYER_HELPERS);
+      state.holePatternPreviewLayer.add(group);
+    }
+    state.needsRender = true;
+  }, [holePatternPreview]);
+
+  /*
    * Die Schnittansicht an die Werkstoffe haengen.
    *
    * Gekappt wird je Werkstoff und nicht am Zeichner: Am Zeichner wuerde die
@@ -6606,7 +6655,18 @@ export function WorkplaneViewport({
           // Dieselbe Frage, vier Antworten: flachlegen, die Schnittebene auf
           // diese Flaeche legen, sie an eine andere legen, oder die
           // aufgenommene Auswahl darauf absetzen.
-          if (splitPickModeRef.current) onSplitFacePick?.({ centre: face.centre, normal: face.normal });
+          if (holePatternModeRef.current) {
+            // Das Lochmuster braucht mehr als Mitte und Richtung: aus den
+            // Dreiecken der Flaeche liest es ihren Rand.
+            onHolePatternPick?.({
+              shapeId: picked.shapeId,
+              centre: face.centre,
+              normal: face.normal,
+              positions: Array.from(picked.positions),
+              triangles: face.triangles,
+            });
+          }
+          else if (splitPickModeRef.current) onSplitFacePick?.({ centre: face.centre, normal: face.normal });
           else if (mateFacesModeRef.current) onMateFacePick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
           else if (setDownModeRef.current) onSetDownPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
           else onLayFlatPick?.({ shapeId: picked.shapeId, centre: face.centre, normal: face.normal });
@@ -7813,7 +7873,7 @@ export function WorkplaneViewport({
         )}
       </div>
 
-      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode || mateFacesMode || setDownMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
+      <section className={`workplane-wrap ${noteMode ? "note-mode" : ""} ${workplaneMode ? "placing-workplane" : ""} ${rulerMode ? "ruler-mode" : ""} ${rulerDeleteMode ? "ruler-delete-mode" : ""} ${rulerMoveMode ? "ruler-move-mode" : ""} ${snapMode || layFlatMode || mateFacesMode || setDownMode || holePatternMode ? "snap-point-mode" : ""} ${modifierActive ? "modifier-edge-pick" : ""}`} aria-label={t("aria.workplane")}>
         <div className="workplane-plane">
           <div
             className="three-workplane-host"
@@ -8095,6 +8155,9 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const splitPreviewLayer = new THREE.Group();
   splitPreviewLayer.name = "SplitPreview";
   splitPreviewLayer.layers.set(RENDER_LAYER_HELPERS);
+  const holePatternPreviewLayer = new THREE.Group();
+  holePatternPreviewLayer.name = "HolePatternPreview";
+  holePatternPreviewLayer.layers.set(RENDER_LAYER_HELPERS);
   // Die Schnittebene selbst: eigene Gruppe, damit sie weder gekappt wird noch
   // beim Neubauen der Auswahlhelfer verschwindet.
   const sectionLayer = new THREE.Group();
@@ -8109,7 +8172,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, splitPreviewLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, splitPreviewLayer, holePatternPreviewLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -8148,6 +8211,7 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     snapLayer,
     layFlatHoverLayer,
     splitPreviewLayer,
+    holePatternPreviewLayer,
     sectionLayer,
     helperLayer,
     transformGuideLayer,
