@@ -204,7 +204,8 @@ import {
 } from "@/lib/placementWorkplane";
 import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
-import { CUTTER_END_PADDING, paddedCutterShape } from "@/lib/cutterPadding";
+import { paddedCutterShape } from "@/lib/cutterPadding";
+import { createHoleTester, pointInsideCuboid, type HoleTester } from "@/lib/holePointTest";
 import { isAxisAlignedBoxCutter } from "@/lib/booleanFastPath";
 import { snapMoveIds, snapTranslation, type SnapKind, type SnapMode, type SnapPick, type SnapTarget } from "@/lib/pointSnap";
 import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@/lib/layFlat";
@@ -365,7 +366,6 @@ declare global {
 }
 
 const POINT_TOLERANCE = 0.0001;
-const CUTTER_RESIDUAL_INSET = CUTTER_END_PADDING * 0.4;
 const MIN_SHAPE_DIMENSION = 0.01;
 
 /**
@@ -3908,7 +3908,8 @@ function cutBoundaryEdgeCount(positions: number[], cutters: WorkplaneShape[]) {
   if (cutters.length === 0) {
     return 0;
   }
-  return positionsBoundaryEdges(positions).filter((edge) => cutters.some((cutter) => pointInsideHoleShape(edge.midpoint, cutter))).length;
+  const tester = createHoleTester(meshAabb);
+  return positionsBoundaryEdges(positions).filter((edge) => cutters.some((cutter) => tester.inside(edge.midpoint, cutter))).length;
 }
 
 function introducesOpenCutBoundary(resultPositions: number[], sourceMesh: MeshData, cutters: WorkplaneShape[]) {
@@ -3980,79 +3981,6 @@ function hasSolidHoleOverlap(solids: WorkplaneShape[], holes: WorkplaneShape[]) 
   return solidBounds.some((solid) => holeBounds.some((hole) => cuboidsOverlap(solid, hole)));
 }
 
-function pointInsideCuboid(point: Vec3, cuboid: Cuboid, inset = -POINT_TOLERANCE) {
-  const minX = cuboid.minX + inset;
-  const maxX = cuboid.maxX - inset;
-  const minY = cuboid.minY + inset;
-  const maxY = cuboid.maxY - inset;
-  const minZ = cuboid.minZ + inset;
-  const maxZ = cuboid.maxZ - inset;
-  return (
-    minX <= maxX &&
-    minY <= maxY &&
-    minZ <= maxZ &&
-    point[0] >= minX &&
-    point[0] <= maxX &&
-    point[1] >= minY &&
-    point[1] <= maxY &&
-    point[2] >= minZ &&
-    point[2] <= maxZ
-  );
-}
-
-function pointInsideHoleShape(point: Vec3, shape: WorkplaneShape, strictInterior = false) {
-  if (shape.importedMesh || shape.groupedShapes?.length) {
-    return pointInsideCuboid(point, meshAabb(shape), strictInterior ? CUTTER_RESIDUAL_INSET : -POINT_TOLERANCE);
-  }
-
-  const centerY = shape.height / 2;
-  const inverse = new THREE.Matrix4()
-    .makeRotationFromEuler(
-      new THREE.Euler(
-        THREE.MathUtils.degToRad(shape.rotationX ?? 0),
-        THREE.MathUtils.degToRad(shape.rotation),
-        THREE.MathUtils.degToRad(shape.rotationZ ?? 0),
-        "XYZ",
-      ),
-    )
-    .invert();
-  const local = new THREE.Vector3(point[0] - shape.x, point[1] - (shape.elevation ?? 0) - centerY, point[2] - shape.z).applyMatrix4(inverse);
-  const localY = local.y + centerY;
-  const halfWidth = shapeWidth(shape) / 2;
-  const halfDepth = shapeDepth(shape) / 2;
-  if (strictInterior) {
-    const yInset = Math.min(CUTTER_RESIDUAL_INSET, shape.height * 0.25);
-    const xInset = Math.min(CUTTER_RESIDUAL_INSET, halfWidth * 0.25);
-    const zInset = Math.min(CUTTER_RESIDUAL_INSET, halfDepth * 0.25);
-    const innerHalfWidth = halfWidth - xInset;
-    const innerHalfDepth = halfDepth - zInset;
-    if (innerHalfWidth <= 0 || innerHalfDepth <= 0 || localY <= yInset || localY >= shape.height - yInset) {
-      return false;
-    }
-
-    if (shape.kind === "cylinder" || shape.kind === "sphere" || shape.kind === "halfSphere" || shape.kind === "cone" || shape.kind === "torus" || shape.kind === "tube" || shape.kind === "ring") {
-      const nx = local.x / Math.max(POINT_TOLERANCE, innerHalfWidth);
-      const nz = local.z / Math.max(POINT_TOLERANCE, innerHalfDepth);
-      return nx * nx + nz * nz < 1;
-    }
-
-    return Math.abs(local.x) < innerHalfWidth && Math.abs(local.z) < innerHalfDepth;
-  }
-
-  const insideHeight = localY >= -POINT_TOLERANCE && localY <= shape.height + POINT_TOLERANCE;
-  if (!insideHeight) {
-    return false;
-  }
-
-  if (shape.kind === "cylinder" || shape.kind === "sphere" || shape.kind === "halfSphere" || shape.kind === "cone" || shape.kind === "torus" || shape.kind === "tube" || shape.kind === "ring") {
-    const nx = local.x / Math.max(POINT_TOLERANCE, halfWidth);
-    const nz = local.z / Math.max(POINT_TOLERANCE, halfDepth);
-    return nx * nx + nz * nz <= 1.0001;
-  }
-
-  return Math.abs(local.x) <= halfWidth + POINT_TOLERANCE && Math.abs(local.z) <= halfDepth + POINT_TOLERANCE;
-}
-
 function triangleCentroid([a, b, c]: Vec3[]): Vec3 {
   return [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3];
 }
@@ -4101,7 +4029,7 @@ function cuboidsTouch(a: Cuboid, b: Cuboid, tolerance = 0.0001) {
   );
 }
 
-function triangleTouchesHoleShape(triangle: Vec3[], hole: WorkplaneShape, holeBounds: Cuboid) {
+function triangleTouchesHoleShape(triangle: Vec3[], hole: WorkplaneShape, holeBounds: Cuboid, tester: HoleTester) {
   const bounds = triangleAabb(triangle);
   if (!cuboidsTouch(bounds, holeBounds)) {
     return false;
@@ -4109,7 +4037,7 @@ function triangleTouchesHoleShape(triangle: Vec3[], hole: WorkplaneShape, holeBo
 
   const [a, b, c] = triangle;
   const samples = [a, b, c, triangleCentroid(triangle), midpoint(a, b), midpoint(b, c), midpoint(c, a)];
-  if (samples.some((point) => pointInsideHoleShape(point, hole))) {
+  if (samples.some((point) => tester.inside(point, hole))) {
     return true;
   }
 
@@ -4121,10 +4049,11 @@ function triangleTouchesHoleShape(triangle: Vec3[], hole: WorkplaneShape, holeBo
 }
 
 function cutterTouchedTriangleCount(mesh: MeshData, cutters: WorkplaneShape[]) {
+  const tester = createHoleTester(meshAabb);
   const cutterInfo = cutters.map((cutter) => ({ shape: cutter, bounds: meshAabb(cutter) }));
   return mesh.faces.reduce((total, [ai, bi, ci]) => {
     const triangle = [mesh.vertices[ai], mesh.vertices[bi], mesh.vertices[ci]];
-    return total + (cutterInfo.some((cutter) => triangleTouchesHoleShape(triangle, cutter.shape, cutter.bounds)) ? 1 : 0);
+    return total + (cutterInfo.some((cutter) => triangleTouchesHoleShape(triangle, cutter.shape, cutter.bounds, tester)) ? 1 : 0);
   }, 0);
 }
 
@@ -4896,6 +4825,7 @@ function manifoldMeshToPositions(mesh: InstanceType<ManifoldToplevel["Mesh"]>) {
 }
 
 function positionsInteriorTriangleCount(positions: number[], cutters: WorkplaneShape[], strictInterior = false) {
+  const tester = createHoleTester(meshAabb);
   let count = 0;
   for (let i = 0; i + 8 < positions.length; i += 9) {
     const centroid: Vec3 = [
@@ -4903,7 +4833,7 @@ function positionsInteriorTriangleCount(positions: number[], cutters: WorkplaneS
       (positions[i + 1] + positions[i + 4] + positions[i + 7]) / 3,
       (positions[i + 2] + positions[i + 5] + positions[i + 8]) / 3,
     ];
-    if (cutters.some((cutter) => pointInsideHoleShape(centroid, cutter, strictInterior))) {
+    if (cutters.some((cutter) => tester.inside(centroid, cutter, strictInterior))) {
       count += 1;
     }
   }
@@ -5557,14 +5487,16 @@ async function buildIntersectionShapeFromSelection(groupable: WorkplaneShape[]):
 }
 
 function cutterInteriorTriangleCount(mesh: MeshData, cutters: WorkplaneShape[]) {
+  const tester = createHoleTester(meshAabb);
   return mesh.faces.reduce((total, [ai, bi, ci]) => {
     const centroid = triangleCentroid([mesh.vertices[ai], mesh.vertices[bi], mesh.vertices[ci]]);
-    return total + (cutters.some((cutter) => pointInsideHoleShape(centroid, cutter)) ? 1 : 0);
+    return total + (cutters.some((cutter) => tester.inside(centroid, cutter)) ? 1 : 0);
   }, 0);
 }
 
 function geometryInteriorTriangleCount(geometry: THREE.BufferGeometry, cutters: WorkplaneShape[], strictInterior = false) {
   const positions = positionsFromGeometryDrawRange(geometry);
+  const tester = createHoleTester(meshAabb);
   let count = 0;
   for (let i = 0; i + 8 < positions.length; i += 9) {
     const centroid: Vec3 = [
@@ -5572,7 +5504,7 @@ function geometryInteriorTriangleCount(geometry: THREE.BufferGeometry, cutters: 
       (positions[i + 1] + positions[i + 4] + positions[i + 7]) / 3,
       (positions[i + 2] + positions[i + 5] + positions[i + 8]) / 3,
     ];
-    if (cutters.some((cutter) => pointInsideHoleShape(centroid, cutter, strictInterior))) {
+    if (cutters.some((cutter) => tester.inside(centroid, cutter, strictInterior))) {
       count += 1;
     }
   }
@@ -5766,6 +5698,7 @@ function aabbBooleanMeshShape(selection: WorkplaneShape[]): WorkplaneShape | nul
 }
 
 function hollowClipMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null {
+  const tester = createHoleTester(meshAabb);
   const solids = selection.filter((shape) => !shape.hole && !shape.locked && isSolidShape(shape));
   const holes = selection
     .filter((shape) => shape.hole)
@@ -5813,7 +5746,7 @@ function hollowClipMeshShape(selection: WorkplaneShape[]): WorkplaneShape | null
     sourceMesh.faces.forEach(([ai, bi, ci]) => {
       const triangle = [sourceMesh.vertices[ai], sourceMesh.vertices[bi], sourceMesh.vertices[ci]];
 
-      if (holes.some((hole) => triangleTouchesHoleShape(triangle, hole.shape, hole.bounds))) {
+      if (holes.some((hole) => triangleTouchesHoleShape(triangle, hole.shape, hole.bounds, tester))) {
         removedTriangles += 1;
         return;
       }
@@ -5903,6 +5836,7 @@ function cutFullyConsumesSolids(selection: WorkplaneShape[]) {
     return false;
   }
 
+  const tester = createHoleTester(meshAabb);
   return sourceMesh.faces.every(([ai, bi, ci]) => {
     const triangle = [sourceMesh.vertices[ai], sourceMesh.vertices[bi], sourceMesh.vertices[ci]];
     const centroid: Vec3 = [
@@ -5910,7 +5844,7 @@ function cutFullyConsumesSolids(selection: WorkplaneShape[]) {
       (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3,
       (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3,
     ];
-    return holes.some((hole) => pointInsideHoleShape(centroid, hole));
+    return holes.some((hole) => tester.inside(centroid, hole));
   });
 }
 
