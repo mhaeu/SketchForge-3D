@@ -67,6 +67,7 @@ import { triangleTouchesRect, type ScreenRect } from "@/lib/screenRectHit";
 import { toggledMarqueeSelection } from "@/lib/marqueeSelection";
 import { dragAxisLock } from "@/lib/dragAxisLock";
 import { cadModifierEdgeFacesCamera } from "@/lib/cadModifierRuntime";
+import { formulaForValue, measurementFormulaKey, measurementFormulasPatch, nextMeasurementFormula } from "@/lib/measurementFormula";
 import { planarFace } from "@/lib/rotationPivot";
 import { shapeWorldBounds } from "@/lib/cutTools";
 import {
@@ -5676,14 +5677,35 @@ export function WorkplaneViewport({
     bakeRotatedShapes.forEach((id) => onUpdateShape(id, { bakeTransform: true }));
   }, [onInteractionActiveChange, onUpdateShape, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag]);
 
+  /**
+   * Die gemerkte Rechnung dieses Masses, wenn sie noch gilt - sonst `null`.
+   *
+   * Der Masskasten rechnet in Millimetern, wie er es immer tat; die
+   * Eigenschaftsliste rechnet in der Anzeigeeinheit. In einer Datei in Zoll
+   * stimmt die Rechnung der Liste darum nicht mit der Zahl im Kasten
+   * zusammen - und genau daran faellt sie von sich aus weg, ohne dass es hier
+   * eine Sonderregel braucht.
+   */
+  const dimensionFormula = useCallback((axis: "width" | "depth" | "height" | "elevation", label: string) => {
+    const shape = shapesRef.current.find((entry) => entry.id === selectedIdsRef.current[0]);
+    if (!shape || selectedIdsRef.current.length !== 1) return null;
+    return formulaForValue(shape.measurementFormulas?.[measurementFormulaKey(axis)], parseMeasurementInput(label));
+  }, []);
+
   const beginDimensionEdit = useCallback((mark: DimensionMark) => {
     const id = selectedIdsRef.current[0];
     if (id && (mark.axis === "width" || mark.axis === "depth" || mark.axis === "height")) {
       rememberResizeAnchor(id, mark.axis === "height" ? "height" : "scale", mark.handleKey);
     }
     setPinnedMeasureKey(mark.handleKey);
-    setEditingDimension({ key: mark.key, axis: mark.axis, x: mark.labelX, y: mark.labelY, value: mark.label });
-  }, [rememberResizeAnchor]);
+    setEditingDimension({
+      key: mark.key,
+      axis: mark.axis,
+      x: mark.labelX,
+      y: mark.labelY,
+      value: dimensionFormula(mark.axis, mark.label) ?? mark.label,
+    });
+  }, [dimensionFormula, rememberResizeAnchor]);
 
   const beginLiftEdit = useCallback((handleKey: string, x: number, y: number) => {
     if (suppressNextLiftEditRef.current) {
@@ -5709,9 +5731,10 @@ export function WorkplaneViewport({
       axis: "elevation",
       x: clamp(editX, 44, Math.max(44, (transformOverlayRef.current?.width ?? 900) - 44)),
       y: clamp(editY, 34, Math.max(34, (transformOverlayRef.current?.height ?? 600) - 34)),
-      value: formatMeasure(elevation, workspaceRef.current.accuracy),
+      value: dimensionFormula("elevation", formatMeasure(elevation, workspaceRef.current.accuracy))
+        ?? formatMeasure(elevation, workspaceRef.current.accuracy),
     });
-  }, []);
+  }, [dimensionFormula]);
 
   /**
    * Was ein eingetipptes Mass am Koerper aendert, als Flicken statt als Tat.
@@ -5775,6 +5798,18 @@ export function WorkplaneViewport({
     const edit = editingDimension;
     const id = selectedIdsRef.current[0];
     const shape = shapesRef.current.find((entry) => entry.id === id);
+    /**
+     * Die Rechnung merken oder vergessen - gegen den Wert, der wirklich
+     * stehen bleibt, und nur bei einem einzelnen Koerper: Bei mehreren waere
+     * nicht bestimmt, an welchem sie haengt.
+     */
+    const rememberFormula = (axis: "width" | "depth" | "height" | "elevation", storedValue: number) => {
+      if (!shape || selectedIdsRef.current.length !== 1) return;
+      const formula = nextMeasurementFormula(edit?.value ?? "", storedValue);
+      const patch = measurementFormulasPatch(shape.measurementFormulas, measurementFormulaKey(axis), formula);
+      if (patch === null) return;
+      onUpdateShape(shape.id, { measurementFormulas: patch });
+    };
     if (!edit || !shape) {
       setEditingDimension(null);
       setPinnedMeasureKey(null);
@@ -5789,6 +5824,7 @@ export function WorkplaneViewport({
           ? workplaneFootprintY(frame, activeWorkplane) - workplaneYForFrame(frame, activeWorkplane)
           : shape.elevation ?? 0;
         const targetElevation = cleanNearZero(clamp(value, MIN_ELEVATION, MAX_ELEVATION), 0.0005);
+        rememberFormula("elevation", targetElevation);
         const delta = targetElevation - currentElevation;
         const axis = frame?.yAxis.clone().normalize() ?? new THREE.Vector3(0, 1, 0);
         selectedIdsRef.current.forEach((selectedId) => {
@@ -5837,6 +5873,7 @@ export function WorkplaneViewport({
         if (next) {
           onUpdateShape(id, next.patch);
           onResizeRegionChangeRef.current(next.region);
+          rememberFormula(edit.axis, nextValue);
         }
         setEditingDimension(null);
         setPinnedMeasureKey(null);
@@ -5888,7 +5925,13 @@ export function WorkplaneViewport({
         }
       }
       const patch = dimensionPatchFor(shape, edit.axis, edit.value);
-      if (patch) onUpdateShape(id, patch);
+      if (patch) {
+        onUpdateShape(id, patch);
+        // Gegen den Wert, den die Grenze durchgelassen hat - nicht gegen das
+        // Ergebnis der Rechnung.
+        const customLimit = workspaceRef.current.shapeCustomizations[shape.kind]?.maxDimension;
+        rememberFormula(edit.axis, Math.min(customLimit ?? Number.POSITIVE_INFINITY, Math.max(MIN_SHAPE_SIZE, value)));
+      }
     }
     setEditingDimension(null);
   }, [dimensionPatchFor, editingDimension, onUpdateShape]);

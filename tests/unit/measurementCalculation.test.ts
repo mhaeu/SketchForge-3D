@@ -4,6 +4,7 @@ import {
   formulaForValue,
   isMeasurementFormula,
   MEASUREMENT_FORMULA_TOLERANCE,
+  measurementFormulaKey,
   measurementFormulasPatch,
   nextMeasurementFormula,
 } from "@/lib/measurementFormula";
@@ -159,5 +160,19 @@ describe("Eine gemerkte Rechnung", () => {
     expect(measurementFormulasPatch({ width: "40/2", height: "6*2" }, "width", null)).toEqual({ height: "6*2" });
     // Die letzte Rechnung weg: die Form traegt kein leeres Verzeichnis mit.
     expect(measurementFormulasPatch({ width: "40/2" }, "width", null)).toBeUndefined();
+  });
+});
+
+/**
+ * Masskasten und Eigenschaftsliste zeigen dasselbe Mass - also teilen sie
+ * auch die Rechnung. Nur heisst die Tiefe in der Liste "Laenge".
+ */
+describe("Der Feldname einer Rechnung", () => {
+  it("bringt Masskasten und Liste auf denselben Namen", () => {
+    expect(measurementFormulaKey("width")).toBe("width");
+    expect(measurementFormulaKey("height")).toBe("height");
+    expect(measurementFormulaKey("elevation")).toBe("elevation");
+    // Die Liste nennt die Tiefe "Laenge".
+    expect(measurementFormulaKey("depth")).toBe("length");
   });
 });

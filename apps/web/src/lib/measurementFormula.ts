@@ -88,3 +88,14 @@ export function measurementFormulasPatch(
   else next[key] = formula;
   return Object.keys(next).length === 0 ? undefined : next;
 }
+
+/**
+ * Der Feldname, unter dem ein Mass seine Rechnung merkt.
+ *
+ * Die Eigenschaftsliste nennt die Tiefe "Laenge" - beide Felder zeigen
+ * dasselbe Mass, also teilen sie auch die Rechnung: Was man im Masskasten am
+ * Koerper eintippt, steht danach in der Liste, und umgekehrt.
+ */
+export function measurementFormulaKey(axis: "width" | "depth" | "height" | "elevation") {
+  return axis === "depth" ? "length" : axis;
+}
