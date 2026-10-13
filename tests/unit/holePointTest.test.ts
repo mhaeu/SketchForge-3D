@@ -173,10 +173,16 @@ describe("Der Punkt in der Aussparung", () => {
     for (let step = 0; step < 400; step += 1) createHoleTester(buildBounds).inside([0, 0, 0], grouped);
     const uncachedMs = Date.now() - uncached;
 
+    // Die eigentliche Zusage ist die Zahl der Aufrufe; die Zeit ist ihre Folge.
     expect(cached.boundsLookups()).toBe(1);
-    // Das Zwanzigfache, damit die Pruefung auf jeder Maschine haelt - gemessen
-    // war es das Siebenundfuenfzigfache.
-    expect(cachedMs * 20).toBeLessThan(uncachedMs);
+    /*
+     * Darum hier nur das Fuenffache als Grenze, obwohl gemessen das
+     * Siebenundfuenfzigfache herauskam: Unter mehreren gleichzeitig laufenden
+     * Pruefdateien schwankt eine Wanduhrmessung stark, und eine knappe Grenze
+     * waere eine Pruefung, die manchmal ohne Grund rot wird. Ohne den Pruefer
+     * waere das Verhaeltnis eins.
+     */
+    expect(cachedMs * 5).toBeLessThan(uncachedMs);
   }, 60000);
 });
 
