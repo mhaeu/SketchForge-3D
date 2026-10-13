@@ -954,6 +954,8 @@ export const MESSAGES_EN = {
   "status.edgeEditLost": "The edges of this treatment are gone - pick them again",
   "edge.onlyVisibleEdges": "Only visible edges",
   "edge.onlyVisibleEdgesHint": "Hides the edges that lie behind the body from here",
+  "status.edgeBlameFound": "{count} edge(s) marked red - that is where it fails on its own",
+  "status.edgeBlameCombination": "No edge fails on its own - only their combination does",
   "split.title": "Split",
   "split.targetOne": "One body will be split",
   "split.targetMany": "{count} bodies will be split",

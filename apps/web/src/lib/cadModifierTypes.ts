@@ -84,6 +84,22 @@ export type CadModifierComponentMesh = {
 export type CadModifierDeflection = { linear: number; angular: number };
 
 export type CadModifierWorkerRequest =
+  | {
+      /**
+       * Welche Kante bricht es? Wird gefragt, nachdem eine Auswahl gescheitert
+       * ist: Jede gewaehlte Kante wird einzeln versucht, bis die Zeit um ist.
+       */
+      type: "blame";
+      requestId: number;
+      kind: CadModifierKind;
+      edgeIds: number[];
+      amount: number;
+      chamferAngle: number;
+      endAmount: number;
+      flipTaper: boolean;
+      /** Hoechstens so lange suchen, in Millisekunden. */
+      budgetMs: number;
+    }
   | { type: "prepare"; requestId: number; parts: CadModifierMeshPart[]; sharpAngle: number; suppressTreatmentDetailEdges?: boolean }
   | {
       type: "preview";
@@ -144,4 +160,17 @@ export type CadModifierWorkerResponse =
       deflection: CadModifierDeflection;
     }
   | { type: "disposed"; requestId: number }
+  | {
+      /**
+       * Welche der gewaehlten Kanten die Behandlung bricht. Antwort auf
+       * "blame": die Kanten, die **allein** scheitern. Ist keine darunter,
+       * scheitert erst ihre Zusammenstellung.
+       */
+      type: "blame";
+      requestId: number;
+      failingEdgeIds: number[];
+      /** Wie viele Kanten geprueft wurden, bevor die Zeit um war. */
+      checked: number;
+      complete: boolean;
+    }
   | { type: "error"; requestId: number; message: string; resetSession?: boolean };

@@ -420,6 +420,8 @@ type WorkplaneViewportProps = {
   modifierEdges?: CadModifierEdge[];
   /** Nur die Kanten zeigen, die von der Kamera aus vorn liegen. */
   modifierOnlyVisibleEdges?: boolean;
+  /** Die Kanten, an denen die Behandlung scheitert - rot und immer sichtbar. */
+  modifierFailedEdgeIds?: number[];
   modifierHighlightedEdgeIds?: number[];
   selectedModifierEdgeIds?: number[];
   onModifierEdgeToggle?: (id: number, singleEdge: boolean) => void;
@@ -3773,6 +3775,7 @@ export function WorkplaneViewport({
   modifierPreviewActive = false,
   modifierEdges = [],
   modifierOnlyVisibleEdges = false,
+  modifierFailedEdgeIds = [],
   modifierHighlightedEdgeIds = [],
   selectedModifierEdgeIds = [],
   onModifierEdgeToggle,
@@ -3994,8 +3997,8 @@ export function WorkplaneViewport({
 
   useEffect(() => {
     modifierEdgesRef.current = modifierEdges;
-    rebuildModifierEdges(threeRef.current, modifierEdges, selectedModifierEdgeIds, modifierPreviewActive, hoverModifierEdgeId, modifierHighlightedEdgeIds);
-  }, [hoverModifierEdgeId, modifierEdges, modifierHighlightedEdgeIds, modifierPreviewActive, selectedModifierEdgeIds]);
+    rebuildModifierEdges(threeRef.current, modifierEdges, selectedModifierEdgeIds, modifierPreviewActive, hoverModifierEdgeId, modifierHighlightedEdgeIds, modifierFailedEdgeIds);
+  }, [hoverModifierEdgeId, modifierEdges, modifierFailedEdgeIds, modifierHighlightedEdgeIds, modifierPreviewActive, selectedModifierEdgeIds]);
 
   const resolvedThemeRef = useRef(resolvedTheme);
   resolvedThemeRef.current = resolvedTheme;
@@ -9203,6 +9206,16 @@ function modifierEdgeMaterialStyle(active: boolean, hovered: boolean, previewAct
 }
 
 /**
+ * Die Kante, an der es scheitert: rot.
+ *
+ * Breiter waere besser - Layerling zeichnet sie doppelt so breit -, aber WebGL
+ * ignoriert `linewidth` an einem einfachen Linienwerkstoff. Die Farbe ist
+ * darum das ganze Mittel, und sie muss sich von allem anderen unterscheiden:
+ * Gewaehlt ist orange, ueberfahren hellblau, der Rest blau.
+ */
+const MODIFIER_FAILED_EDGE_COLOR = "#ff3b30";
+
+/**
  * Welche Kantenlinien stehen, und welche liegen hinter dem Koerper.
  *
  * Gesetzt wird nur `visible` an der fertigen Linie: Die Kamera bewegt sich,
@@ -9213,7 +9226,7 @@ function syncModifierEdgeVisibility(state: ThreeState, onlyVisible: boolean) {
   let changed = false;
   state.modifierLayer.children.forEach((child) => {
     const point = child.userData.modifierEdgePoint as { x: number; y: number; z: number } | undefined;
-    const wanted = !onlyVisible || !point
+    const wanted = !onlyVisible || !point || child.userData.modifierEdgeFailed === true
       ? true
       : cadModifierEdgeFacesCamera(child.userData.modifierFaceNormals as number[] | undefined, point, state.camera.position);
     if (child.visible !== wanted) {
@@ -9231,6 +9244,7 @@ function rebuildModifierEdges(
   previewActive = false,
   hoverId: number | null = null,
   highlightedIds: number[] = [],
+  failedIds: number[] = [],
 ) {
   if (!state) return;
   disposeChildren(state.modifierLayer);
@@ -9246,17 +9260,19 @@ function rebuildModifierEdges(
     const hovered = hoverId === edge.id;
     const belowThreshold = !active && !hovered && !highlighted.has(edge.id);
     const style = modifierEdgeMaterialStyle(active, hovered, previewActive, belowThreshold);
+    const failed = failedIds.includes(edge.id);
     const material = new THREE.LineBasicMaterial({
-      color: style.color,
+      color: failed ? MODIFIER_FAILED_EDGE_COLOR : style.color,
       depthTest: false,
       depthWrite: false,
       transparent: true,
-      opacity: style.opacity,
+      opacity: failed ? 1 : style.opacity,
       linewidth: style.linewidth,
     });
     const line = new THREE.Line(geometry, material);
     line.userData.modifierEdgeId = edge.id;
     line.userData.modifierFaceNormals = edge.faceNormals;
+    line.userData.modifierEdgeFailed = failed;
     // Ein Punkt auf der Kante, von dem aus die Richtung zur Kamera zaehlt.
     const middle = Math.max(0, Math.floor(edge.points.length / 6) * 3);
     line.userData.modifierEdgePoint = {
@@ -9264,7 +9280,8 @@ function rebuildModifierEdges(
       y: edge.points[middle + 1],
       z: edge.points[middle + 2],
     };
-    line.renderOrder = hovered ? 1003 : active ? 1002 : 1001;
+    // Rot liegt oben: Es ist die Auskunft, auf die man gerade wartet.
+    line.renderOrder = failed ? 1004 : hovered ? 1003 : active ? 1002 : 1001;
     setObjectRenderLayer(line, RENDER_LAYER_MODIFIERS);
     freezeStaticObjectMatrices(line);
     state.modifierLayer.add(line);

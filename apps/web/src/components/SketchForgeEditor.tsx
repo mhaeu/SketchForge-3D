@@ -302,6 +302,13 @@ type EdgeModifierSession = {
   preserveEdgeSize: boolean;
   /** Nur die Kanten zeigen, die von der Kamera aus vorn liegen. */
   onlyVisibleEdges: boolean;
+  /**
+   * Die Kanten, an denen die Behandlung scheitert - rot gezeichnet, damit man
+   * weiss, welche man herausnehmen muss.
+   */
+  failedEdgeIds: number[];
+  /** Die letzte Auswahl, die eine Vorschau ergab - daran erkennt man den Zugang. */
+  lastGoodEdgeIds: number[];
   busy: boolean;
   prepared: boolean;
   error: string | null;
@@ -396,6 +403,17 @@ declare global {
 }
 
 const POINT_TOLERANCE = 0.0001;
+/**
+ * So lange darf die Suche nach der schuldigen Kante laufen.
+ *
+ * Ein Versuch je Kante ist an einem dichten Koerper teuer: gemessen 7 ms an
+ * einem Kasten und 90 ms an der schraeg abgeschnittenen Haelfte eines
+ * gebohrten Kastens, mehr noch, wo er scheitert. Eineinhalb Sekunden reichen
+ * damit fuer etwa sechzehn Kanten des dichten Koerpers und fuer alle zwoelf
+ * eines Kastens. Eine Absage darf nicht den naechsten Wert aufhalten, waehrend
+ * man an der Groesse zieht.
+ */
+const EDGE_BLAME_BUDGET_MS = 1500;
 const MIN_SHAPE_DIMENSION = 0.01;
 
 /**
@@ -6921,6 +6939,10 @@ export function SketchForgeEditor({
           preview,
           componentPreviews,
           busy: false,
+          // Diese Auswahl hat gehalten: Sie ist der Zugang, an dem sich die
+          // naechste messen laesst, und Rot gibt es hier nichts mehr.
+          lastGoodEdgeIds: preview ? [...current.selectedEdgeIds] : current.lastGoodEdgeIds,
+          failedEdgeIds: preview ? [] : current.failedEdgeIds,
           error: preview ? null : t("status.emptyEdgeResult"),
         } : current);
         // Waehrend gerechnet wurde, kann ein neuerer Wert eingetroffen sein -
@@ -6928,6 +6950,26 @@ export function SketchForgeEditor({
         const queuedNext = cadPreviewQueueRef.current.settle(message.requestId);
         if (preview && queuedNext.status !== "sent") {
           setNotice(edgeModifierRef.current?.hollow ? t("status.hollowReady") : t("status.edgePreviewReady"));
+        }
+        return;
+      }
+      if (message.type === "blame") {
+        /*
+         * Scheitert keine Kante allein, dann erst ihre Zusammenstellung - dann
+         * sind alle gleich schuld, und alle werden markiert. Sonst nur die, an
+         * denen es wirklich haengt.
+         */
+        setEdgeModifier((current) => {
+          if (!current) return current;
+          const failed = message.failingEdgeIds.length > 0
+            ? message.failingEdgeIds
+            : message.complete ? [...current.selectedEdgeIds] : [];
+          return { ...current, failedEdgeIds: failed };
+        });
+        if (message.failingEdgeIds.length > 0) {
+          setNotice(t("status.edgeBlameFound", { count: message.failingEdgeIds.length }));
+        } else if (message.complete) {
+          setNotice(t("status.edgeBlameCombination"));
         }
         return;
       }
@@ -6949,11 +6991,40 @@ export function SketchForgeEditor({
           setNotice(message.message);
           return;
         }
-        setEdgeModifier((current) => current ? { ...current, busy: false, preview: null, error: message.message } : current);
+        const session = edgeModifierRef.current;
+        /*
+         * Welche Kante bricht es? Hat die vorige Auswahl gehalten und ist genau
+         * eine dazugekommen, ist die Antwort ohne Suche klar - das ist der
+         * haeufigste Fall, und er kostet nichts. Sonst fragt der Dienst, indem
+         * er jede gewaehlte Kante einzeln versucht.
+         */
+        const added = session
+          ? session.selectedEdgeIds.filter((edgeId) => !session.lastGoodEdgeIds.includes(edgeId))
+          : [];
+        const blamedByHistory = session && session.lastGoodEdgeIds.length > 0 && added.length === 1 ? added : null;
+        setEdgeModifier((current) => current ? {
+          ...current,
+          busy: false,
+          preview: null,
+          failedEdgeIds: blamedByHistory ?? [],
+          error: message.message,
+        } : current);
         // Ein zu grosser Halbmesser scheitert - der inzwischen gewaehlte
         // kleinere darf es trotzdem versuchen.
         if (cadPreviewQueueRef.current.settle(message.requestId).status !== "sent") {
           setNotice(t("status.edgeNeedsAdjustment"));
+          if (!blamedByHistory && session && session.selectedEdgeIds.length > 1 && !session.hollow) {
+            postCadModifierRequest({
+              type: "blame",
+              kind: session.kind,
+              edgeIds: [...session.selectedEdgeIds],
+              amount: session.amount,
+              chamferAngle: session.chamferAngle,
+              endAmount: session.endAmount,
+              flipTaper: session.flipTaper,
+              budgetMs: EDGE_BLAME_BUDGET_MS,
+            });
+          }
         }
       }
     }
@@ -9855,6 +9926,8 @@ export function SketchForgeEditor({
       tangentChain: defaultCadModifierTangentChain(appliedEdgeTreatmentCount),
       preserveEdgeSize: selectedShape.edgeResizeMode === "preserve",
       onlyVisibleEdges: false,
+      failedEdgeIds: [],
+      lastGoodEdgeIds: [],
       busy: true,
       prepared: false,
       error: null,
@@ -10029,6 +10102,8 @@ export function SketchForgeEditor({
       edges: response.edges,
       selectedEdgeIds,
       onlyVisibleEdges: false,
+      failedEdgeIds: [],
+      lastGoodEdgeIds: [],
       amount,
       sharpAngle,
       chamferAngle,
@@ -13022,6 +13097,7 @@ export function SketchForgeEditor({
           modifierPreviewActive={Boolean(edgeModifier?.preview)}
           modifierEdges={edgeModifier?.edges.filter((edge) => modifierCandidateEdgeIds.includes(edge.id)) ?? []}
           modifierOnlyVisibleEdges={Boolean(edgeModifier?.onlyVisibleEdges)}
+          modifierFailedEdgeIds={edgeModifier?.failedEdgeIds ?? []}
           modifierHighlightedEdgeIds={modifierAvailableEdgeIds}
           selectedModifierEdgeIds={edgeModifier?.selectedEdgeIds ?? []}
           onModifierEdgeToggle={toggleModifierEdge}

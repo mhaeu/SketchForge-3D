@@ -1008,6 +1008,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.edgeEditLost": "Die Kanten dieser Behandlung gibt es nicht mehr - bitte neu wählen",
   "edge.onlyVisibleEdges": "Nur sichtbare Kanten",
   "edge.onlyVisibleEdgesHint": "Blendet die Kanten aus, die von hier aus hinter dem Körper liegen",
+  "status.edgeBlameFound": "{count} Kante(n) rot markiert – allein scheitert sie dort",
+  "status.edgeBlameCombination": "Keine Kante scheitert allein – erst ihre Zusammenstellung",
   "split.title": "Teilen",
   "split.targetOne": "Ein Körper wird geteilt",
   "split.targetMany": "{count} Körper werden geteilt",

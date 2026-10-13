@@ -749,6 +749,66 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
       return;
     }
     if (baseShape === null) throw new Error("Prepare an object before previewing the modifier");
+
+    /*
+     * Welche Kante bricht es? Gefragt wird das, nachdem eine Auswahl
+     * gescheitert ist. Jede gewaehlte Kante wird einzeln versucht: Was allein
+     * scheitert, ist der Schuldige; scheitert keine allein, dann erst ihre
+     * Zusammenstellung, und der Aufrufer markiert alle.
+     *
+     * Mit einer Zeitgrenze, weil ein Versuch an einem dichten Koerper teuer
+     * ist. Gemessen: 7 ms je Kante an einem Kasten, 90 ms an der schraeg
+     * abgeschnittenen Haelfte eines gebohrten Kastens (300 Kanten), und mehr,
+     * wo der Versuch scheitert - ein Rundlauf ueber alle 204 scharfen Kanten
+     * dieses Koerpers brauchte im Mittel 290 ms. Eine Absage darf nicht den
+     * naechsten Wert aufhalten, waehrend man an der Groesse zieht.
+     *
+     * Die erste Kante wird immer versucht, auch wenn die Zeit schon um ist:
+     * Eine Antwort ist besser als keine.
+     */
+    if (request.type === "blame") {
+      const started = Date.now();
+      const failingEdgeIds: number[] = [];
+      let checked = 0;
+      for (const id of request.edgeIds) {
+        if (checked > 0 && Date.now() - started > request.budgetMs) break;
+        const edge = edgeHandles[id];
+        const owner = edgeOwners[id];
+        if (edge === undefined || owner === undefined || baseSolids[owner] === undefined) continue;
+        checked += 1;
+        let single: ShapeHandle | null = null;
+        try {
+          const solid = baseSolids[owner];
+          single = request.kind === "fillet"
+            ? activeCad.fillet(solid, [edge], request.amount)
+            : request.kind === "variableFillet"
+              ? applyVariableFillet(activeCad, solid, [edge], request)
+              : Math.abs(request.chamferAngle - 45) < 0.001
+                ? activeCad.chamfer(solid, [edge], request.amount)
+                : activeCad.chamferDistAngle(solid, [edge], request.amount, request.chamferAngle);
+          if (!cadShapeIsUsableSolid(activeCad, single)) failingEdgeIds.push(id);
+        } catch {
+          failingEdgeIds.push(id);
+        } finally {
+          if (single !== null) {
+            try {
+              activeCad.release(single);
+            } catch {
+              // Ein gescheiterter Versuch kann den Griff ungueltig machen.
+            }
+          }
+        }
+      }
+      post({
+        type: "blame",
+        requestId: request.requestId,
+        failingEdgeIds,
+        checked,
+        complete: checked === request.edgeIds.length,
+      });
+      return;
+    }
+
     const selected = request.edgeIds.map((id) => ({ edge: edgeHandles[id], owner: edgeOwners[id] })).filter((entry): entry is { edge: ShapeHandle; owner: number } => entry.edge !== undefined);
     if (selected.length === 0) throw new Error("Select at least one highlighted edge");
     const componentResults: ShapeHandle[] = [];
