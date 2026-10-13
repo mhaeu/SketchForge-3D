@@ -220,6 +220,12 @@ export type SketchSegment = {
    * laese sich sonst nur als Loch im Weg lesen. Wer es festlegt, hat recht.
    */
   role?: "path";
+  /**
+   * Eine Hilfslinie: gestrichelt gezeichnet, nie Teil des Umrisses. Sie darf
+   * ueber die Form hinauslaufen, ohne den Koerper groesser zu machen, und
+   * schneidet den Umriss nicht auf, wo sie ihn kreuzt.
+   */
+  construction?: boolean;
 };
 
 export type SketchCircle = {

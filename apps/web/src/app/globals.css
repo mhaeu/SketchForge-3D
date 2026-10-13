@@ -4273,6 +4273,29 @@ html[data-theme="dark"] .editor-too-tall {
   stroke-width: 4;
 }
 
+/* Eine Hilfslinie: gestrichelt und blasser - sie gehoert nie zum Umriss. Die
+   Striche sind laenger als die der Vorschaulinie, damit man beide nicht
+   verwechselt. */
+.sketch-segments path.construction {
+  stroke: #5b7d96;
+  stroke-width: 1.6;
+  stroke-dasharray: 9 6;
+}
+
+.sketch-segments path.construction:hover,
+.sketch-segments path.construction.selected {
+  stroke: #ff8a00;
+  stroke-width: 2.6;
+}
+
+/* Der Ring an einer gefangenen Kreuzung von Hilfslinien. */
+.sketch-construction-snap {
+  fill: none;
+  stroke: #169fce;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .sketch-preview-line {
   stroke: #169fce;
   stroke-width: 2;

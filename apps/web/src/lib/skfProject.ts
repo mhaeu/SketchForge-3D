@@ -897,6 +897,11 @@ function validateSketchProfile(value: unknown, label: string) {
     if (segment.role !== undefined && segment.role !== "path") {
       throw new Error(`${label}.segments[${index}].role has unknown value '${String(segment.role)}'`);
     }
+    // Eine Hilfslinie ist ja oder nein - alles andere waere eine Kante, von
+    // der niemand weiss, ob sie zum Umriss gehoert.
+    if (segment.construction !== undefined && typeof segment.construction !== "boolean") {
+      throw new Error(`${label}.segments[${index}].construction must be true or false`);
+    }
     if (segment.bulge !== undefined) {
       const bulge = finiteNumber(segment.bulge, `${label}.segments[${index}].bulge`);
       if (Math.abs(bulge) > 1e9) throw new Error(`${label}.segments[${index}].bulge is outside the supported range`);

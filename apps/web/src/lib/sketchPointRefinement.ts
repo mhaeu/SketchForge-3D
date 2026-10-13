@@ -201,7 +201,16 @@ function cross(ax: number, az: number, bx: number, bz: number) {
 
 export function addLineIntersectionPoints(profile: SketchProfile, createId: IdFactory) {
   const pointById = new Map(profile.points.map((point) => [point.id, point]));
-  const lines = profile.segments.filter((segment) => isStraightSegment(segment) && pointById.has(segment.startId) && pointById.has(segment.endId));
+  /*
+   * Hilfslinien schneiden nichts auf: Wo eine den Umriss kreuzt, bleibt die
+   * Umrisskante ganz, und die Hilfslinie selbst auch. Sonst saesse nach jeder
+   * Hilfslinie ein neuer Punkt mitten im Umriss, und ihn wegzunehmen hiesse,
+   * die Form zu aendern.
+   */
+  const lines = profile.segments.filter((segment) => isStraightSegment(segment)
+    && !segment.construction
+    && pointById.has(segment.startId)
+    && pointById.has(segment.endId));
   const splits = new Map<string, SegmentSplit[]>();
   const addedPoints: SketchPoint[] = [];
 

@@ -451,6 +451,20 @@ export function ToolbarSplitIcon(props: IconProps) {
  * Die Loecher stehen auf einem Gitter mit gleichem Abstand zueinander und zum
  * Rand - das Bild zeigt, was das Werkzeug macht.
  */
+/**
+ * Die Hilfslinie: eine gestrichelte Gerade mit ihren beiden Endpunkten. Das
+ * Bild zeigt, was sie in der Skizze ist - gestrichelt, also kein Umriss.
+ */
+export function SketchConstructionIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M10 38 L38 10" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="5 4" strokeLinecap="round" />
+      <circle cx="10" cy="38" r="3.6" fill="currentColor" />
+      <circle cx="38" cy="10" r="3.6" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function ToolbarHolePatternIcon(props: IconProps) {
   const centres = [14, 24, 34];
   return (

@@ -16,6 +16,7 @@ import { sketchPreviewAngle, sketchStraightCornerAngles } from "@/lib/sketchAngl
 import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_ARC_BULGE, retargetSketchArcs, segmentArcGeometry, stepsEncloseArea } from "@/lib/sketchArcs";
 import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
+import { constructionSnapPoints, nearestSketchSnapPoint } from "@/lib/sketchConstruction";
 import { hasMarkedSweepPath, sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, snapGridStep } from "@/lib/workplaneSettings";
@@ -742,6 +743,9 @@ export function SketchWorkspace({
     [displayProfile.points],
   );
   const alignmentExclusion = pointerAction?.kind === "move-point" ? pointerAction.pointId : null;
+  /** Die Kreuzungen der Hilfslinien - Fangpunkte, die nicht in der Skizze stehen. */
+  const constructionCrossings = useMemo(() => constructionSnapPoints(displayProfile), [displayProfile]);
+  const [constructionSnap, setConstructionSnap] = useState<{ x: number; z: number } | null>(null);
 
   /**
    * Die Hilfslinien, die stehen bleiben. Sie sagen auch nach dem Loslassen
@@ -786,6 +790,19 @@ export function SketchWorkspace({
   const alignedPointFromEvent = (event: { clientX: number; clientY: number }) => {
     const raw = pointFromEvent(event);
     if (!raw) return null;
+    /*
+     * Zuerst die Kreuzungen der Hilfslinien: Wer in ihre Naehe kommt, meint
+     * genau diese Stelle - eine Mitte, einen Abstand vom Rand -, und nicht die
+     * naechste Rasterlinie daneben. Gemessen am rohen Zeiger, nicht am
+     * gerasteten Punkt, sonst rastete das Raster die Kreuzung weg.
+     */
+    const local = localFromEvent(event);
+    const crossing = local ? nearestSketchSnapPoint(local, constructionCrossings, 7 * screenUnit) : null;
+    setConstructionSnap(crossing);
+    if (crossing) {
+      setAlignmentGuides([]);
+      return { x: crossing.x, z: crossing.z };
+    }
     const aligned = alignSketchPoint(raw, alignmentTargets, 7 * screenUnit, alignmentExclusion);
     setAlignmentGuides(aligned.guides);
     return aligned.point;
@@ -1145,11 +1162,20 @@ export function SketchWorkspace({
               return filled.length > 0 ? <path d={filled.map(pathData).join(" ")} /> : null;
             })()}
           </g>
+          {constructionSnap ? (
+            <circle
+              className="sketch-construction-snap"
+              cx={constructionSnap.x}
+              cy={constructionSnap.z}
+              r={6 * screenUnit}
+              pointerEvents="none"
+            />
+          ) : null}
           <g className="sketch-segments">
             {displayProfile.segments.map((segment) => (
               <path
                 data-sketch-entity="segment"
-                className={isSegmentSelected(segment.id) ? "selected" : ""}
+                className={`${isSegmentSelected(segment.id) ? "selected" : ""}${segment.construction ? " construction" : ""}`}
                 key={segment.id}
                 d={segmentData(segment, pointById)}
                 onPointerMove={(event) => {

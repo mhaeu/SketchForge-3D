@@ -90,6 +90,7 @@ import {
   ToolbarPatternIcon,
   ToolbarHollowIcon,
   ToolbarHolePatternIcon,
+  SketchConstructionIcon,
   ToolbarSplitIcon,
   ToolbarMateFacesIcon,
   ToolbarSetDownIcon,
@@ -171,7 +172,7 @@ import { buildSweepMesh } from "@/lib/sweepMesh";
 import { splitSweepDrawing, sweepPathPoint } from "@/lib/sketchSweep";
 import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
 import { cadSketchRegions, sampleCadSketchPath } from "@/lib/sketchCadProfile";
-import { expandSketchCircles, sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
+import { sketchCircleOverPoints, type SketchCircle } from "@/lib/sketchCircles";
 import { roundSketchCorner } from "@/lib/sketchFillet";
 import { regionTaperedShape, type RegionTaper } from "@/lib/regionTaper";
 import { regionFrameStillHolds, workplaneFramePatch, worldFramePatch } from "@/lib/regionFrame";
@@ -251,6 +252,7 @@ import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
 import { placeSketchExtrusion } from "@/lib/sketchPlacement";
 import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
+import { sketchGeometryProfile, withoutConstructionLines } from "@/lib/sketchConstruction";
 import { sketchEditWorkplane } from "@/lib/sketchEditPlane";
 import {
   SKETCHFORGE_MCP_HEARTBEAT_MS,
@@ -620,7 +622,7 @@ async function shapeFromResolvedSketchProfile(
 async function shapeFromSketchProfile(profile: SketchProfile, height: number, existing?: WorkplaneShape | null) {
   // Ausgeklappt wird nur fuer die Geometrie - der Datensatz der Skizze behaelt
   // seine Kreise, sonst waeren sie beim naechsten Oeffnen keine mehr.
-  const regions = cadSketchRegions(expandSketchCircles(profile));
+  const regions = cadSketchRegions(sketchGeometryProfile(profile));
   if (regions.length === 0) return null;
   const closedPaths = [...new Map(
     regions.flatMap((region) => [region.outer, ...region.holes]).map((path) => [path.id, path] as const),
@@ -792,7 +794,7 @@ function ensureSketchCadWorker() {
  * sich pruefen, und sie tut genau das, was die Sache beschreibt.
  */
 function sweptShapeFromSketchProfile(profile: SketchProfile, existing?: WorkplaneShape | null) {
-  const prepared = expandSketchCircles(cloneSketchProfile(profile));
+  const prepared = sketchGeometryProfile(cloneSketchProfile(profile));
   const drawing = splitSweepDrawing(prepared);
   if (!drawing) throw new Error(t("status.sweepNeedsPath"));
   const regions = cadSketchRegions(drawing.shape);
@@ -864,7 +866,7 @@ async function cadShapeFromSketchProfile(
       reject(new Error(t("status.sketchWorkerTimeout")));
     }, 30_000);
     sketchCadPending.set(requestId, { resolve, reject, timer });
-    const prepared = expandSketchCircles(cloneSketchProfile(profile));
+    const prepared = sketchGeometryProfile(cloneSketchProfile(profile));
     worker.postMessage(operation === "sweep"
       ? { type: "sweep", requestId, profile: prepared }
       : { type: "build", requestId, profile: prepared, height: safeHeight });
@@ -912,7 +914,7 @@ async function cadShapeFromSketchRevolve(
   settings: SketchRevolveSettings,
   existing?: WorkplaneShape | null,
 ): Promise<WorkplaneShape | null> {
-  const prepared = expandSketchCircles(cloneSketchProfile(profile));
+  const prepared = sketchGeometryProfile(cloneSketchProfile(profile));
   if (!revolveProfileFitsAxis(prepared)) return null;
   try {
     const worker = ensureSketchCadWorker();
@@ -996,8 +998,8 @@ async function shapeFromRevolvedSketchProfile(
   }
   const runtime = await getManifoldRuntime();
   const mesh = filled
-    ? buildFilledSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings)
-    : buildSketchRevolveMesh(runtime, expandSketchCircles(profile), normalizedSettings);
+    ? buildFilledSketchRevolveMesh(runtime, sketchGeometryProfile(profile), normalizedSettings)
+    : buildSketchRevolveMesh(runtime, sketchGeometryProfile(profile), normalizedSettings);
   return canonicalizeShape({
     id: existing?.id ?? createLocalId("sketch-revolve"),
     name: existing?.name ?? t("shape.sketchRevolve"),
@@ -6642,6 +6644,11 @@ export function SketchForgeEditor({
     endAmount?: number;
     flipTaper?: boolean;
   } | null>(null);
+  /**
+   * Hilfslinien zeichnen: Neue gerade Linien werden gestrichelt und gehoeren
+   * nie zum Umriss - siehe `sketchConstruction.ts`.
+   */
+  const [sketchConstructionMode, setSketchConstructionMode] = useState(false);
   const [pivotMode, setPivotMode] = useState(false);
   const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
   const [snapMode, setSnapMode] = useState<SnapMode | null>(null);
@@ -7187,7 +7194,7 @@ export function SketchForgeEditor({
     }
     const timer = window.setTimeout(() => {
       void getManifoldRuntime()
-        .then((runtime) => buildSketchRevolveMesh(runtime, expandSketchCircles(sketchProfile), sketchRevolveSettings))
+        .then((runtime) => buildSketchRevolveMesh(runtime, sketchGeometryProfile(sketchProfile), sketchRevolveSettings))
         .then((mesh) => {
           if (sketchRevolvePreviewRequestRef.current === requestId) setSketchRevolvePreview(mesh);
         })
@@ -8010,21 +8017,30 @@ export function SketchForgeEditor({
           (segment.startId === sketchActivePointId && segment.endId === pointId) ||
           (segment.startId === pointId && segment.endId === sketchActivePointId),
       );
+      const construction = sketchConstructionMode && curveKind === "line";
       const next = duplicate
         ? profile
         : {
             ...profile,
-            segments: [...profile.segments, { id: createLocalId("sketch-segment"), startId: sketchActivePointId, endId: pointId, kind: curveKind }],
+            segments: [...profile.segments, {
+              id: createLocalId("sketch-segment"),
+              startId: sketchActivePointId,
+              endId: pointId,
+              kind: curveKind,
+              ...(construction ? { construction: true } : {}),
+            }],
           };
       const smoothed = sketchTool === "smooth" ? withSmoothSketchHandles(next) : next;
-      const closed = orderedSketchPaths(smoothed).some((path) => path.closed && path.steps.some((step) => step.segment.startId === sketchActivePointId || step.segment.endId === sketchActivePointId));
+      // Ein Ring aus Hilfslinien schliesst keinen Umriss - also auch nicht das
+      // Zeichnen ab.
+      const closed = !construction && orderedSketchPaths(withoutConstructionLines(smoothed)).some((path) => path.closed && path.steps.some((step) => step.segment.startId === sketchActivePointId || step.segment.endId === sketchActivePointId));
       if (!duplicate) commitSketchProfile(smoothed, closed ? t("status.profileClosed") : t("status.sketchSegmentAdded"));
       setSketchActivePointId(closed ? null : pointId);
       setSketchSelection({ kind: "point", id: pointId });
       if (closed) setSketchTool("select");
       return smoothed;
     },
-    [commitSketchProfile, sketchActivePointId, sketchProfile, sketchTool],
+    [commitSketchProfile, sketchActivePointId, sketchConstructionMode, sketchProfile, sketchTool],
   );
 
   const addSketchPlanePoint = useCallback(
@@ -8048,15 +8064,46 @@ export function SketchForgeEditor({
       };
       const next: SketchProfile = { ...sketchProfile, points: [...sketchProfile.points, point] };
       if (sketchActivePointId) {
-        next.segments = [...next.segments, { id: createLocalId("sketch-segment"), startId: sketchActivePointId, endId: point.id, kind: curveKind }];
+        next.segments = [...next.segments, {
+          id: createLocalId("sketch-segment"),
+          startId: sketchActivePointId,
+          endId: point.id,
+          kind: curveKind,
+          ...(sketchConstructionMode && curveKind === "line" ? { construction: true } : {}),
+        }];
       }
       const prepared = sketchTool === "smooth" ? withSmoothSketchHandles(next) : next;
       commitSketchProfile(prepared, sketchActivePointId ? t("status.sketchPointSegmentAdded") : t("status.sketchPointAdded"));
       setSketchActivePointId(point.id);
       setSketchSelection({ kind: "point", id: point.id });
     },
-    [commitSketchProfile, connectSketchPoint, measureSketchPoint, sketchActivePointId, sketchProfile, sketchTool],
+    [commitSketchProfile, connectSketchPoint, measureSketchPoint, sketchActivePointId, sketchConstructionMode, sketchProfile, sketchTool],
   );
+
+  /**
+   * Die gewaehlte gerade Linie zur Hilfslinie machen, oder zurueck. Nur gerade
+   * Linien: Eine Hilfslinie ist ein Lineal, keine Kurve.
+   */
+  const selectedSketchLine = sketchSelection?.kind === "segment"
+    ? sketchProfile.segments.find((segment) => segment.id === sketchSelection.id && (!segment.kind || segment.kind === "line")) ?? null
+    : null;
+  const toggleSketchLineConstruction = useCallback(() => {
+    if (!selectedSketchLine) {
+      setNotice(t("sketch.constructionNeedsLine"));
+      return;
+    }
+    const becomes = !selectedSketchLine.construction;
+    const next: SketchProfile = {
+      ...sketchProfile,
+      segments: sketchProfile.segments.map((segment) => {
+        if (segment.id !== selectedSketchLine.id) return segment;
+        if (becomes) return { ...segment, construction: true };
+        const { construction: _construction, ...rest } = segment;
+        return rest;
+      }),
+    };
+    commitSketchProfile(next, becomes ? t("status.sketchLineToConstruction") : t("status.sketchLineToOutline"));
+  }, [commitSketchProfile, selectedSketchLine, sketchProfile]);
 
   const addSketchPrimitive = useCallback(
     (primitive: SketchPrimitive, center: { x: number; z: number } = { x: 0, z: 0 }) => {
@@ -12891,6 +12938,13 @@ export function SketchForgeEditor({
         onArcOverSelection={bendSketchSelectionIntoArc}
         sketchGuidesVisible={sketchGuidesVisible}
         onToggleSketchGuides={toggleSketchGuides}
+        sketchConstructionMode={sketchConstructionMode}
+        onToggleSketchConstructionMode={() => {
+          setSketchConstructionMode((current) => !current);
+          setNotice(sketchConstructionMode ? t("status.sketchConstructionOff") : t("status.sketchConstructionOn"));
+        }}
+        canToggleSketchLineConstruction={Boolean(selectedSketchLine)}
+        onToggleSketchLineConstruction={toggleSketchLineConstruction}
         onCircleOverSelection={addSketchCircleOverSelection}
         onSketchTool={setActiveSketchTool}
         onSketchPrimitive={(primitive) => addSketchPrimitive(primitive, { x: 0, z: 0 })}
@@ -13503,6 +13557,10 @@ function SecondaryToolbar({
   onArcOverSelection,
   sketchGuidesVisible,
   onToggleSketchGuides,
+  sketchConstructionMode,
+  onToggleSketchConstructionMode,
+  canToggleSketchLineConstruction,
+  onToggleSketchLineConstruction,
   onToggleSketchDimensions,
   onRotateSketch,
   onMirrorSketch,
@@ -13620,6 +13678,10 @@ function SecondaryToolbar({
   onArcOverSelection: () => void;
   sketchGuidesVisible: boolean;
   onToggleSketchGuides: () => void;
+  sketchConstructionMode: boolean;
+  onToggleSketchConstructionMode: () => void;
+  canToggleSketchLineConstruction: boolean;
+  onToggleSketchLineConstruction: () => void;
   onToggleSketchDimensions: () => void;
   onRotateSketch: (degrees: number) => void;
   onMirrorSketch: (axis: "x" | "z") => void;
@@ -14483,6 +14545,29 @@ function SecondaryToolbar({
                     </button>
                     <button className={`toolbar-icon sketch-tool-icon ${sketchTool === "erase" ? "active" : ""}`} type="button" aria-label={t("sketch.erase")} title={t("sketch.erase")} onClick={() => onSketchTool("erase")}>
                       <SketchReferenceIcon name="erase" />
+                    </button>
+                    {/* Hilfslinien: der Modus fuer neue Linien, und daneben der
+                        Schalter fuer die gewaehlte - dieselbe Sache, einmal fuer
+                        das, was kommt, einmal fuer das, was schon da ist. */}
+                    <button
+                      className={`toolbar-icon sketch-tool-icon ${sketchConstructionMode ? "active" : ""}`}
+                      type="button"
+                      aria-label={t("sketch.constructionMode")}
+                      aria-pressed={sketchConstructionMode}
+                      title={t("sketch.constructionModeHint")}
+                      onClick={onToggleSketchConstructionMode}
+                    >
+                      <SketchConstructionIcon className="sketch-reference-icon" />
+                    </button>
+                    <button
+                      className={`toolbar-icon sketch-tool-icon ${canToggleSketchLineConstruction ? "" : "disabled"}`}
+                      type="button"
+                      aria-label={t("sketch.constructionToggle")}
+                      title={canToggleSketchLineConstruction ? t("sketch.constructionToggle") : t("sketch.constructionNeedsLine")}
+                      onClick={onToggleSketchLineConstruction}
+                      disabled={!canToggleSketchLineConstruction}
+                    >
+                      <Spline size={19} strokeWidth={2.2} aria-hidden="true" strokeDasharray="3 3" />
                     </button>
                   </div>
                 </div>

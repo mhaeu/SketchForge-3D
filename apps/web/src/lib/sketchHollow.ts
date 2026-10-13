@@ -1,5 +1,5 @@
 import { cadSketchRegions } from "@/lib/sketchCadProfile";
-import { expandSketchCircles } from "@/lib/sketchCircles";
+import { sketchGeometryProfile } from "@/lib/sketchConstruction";
 import type { SketchProfile } from "@/types/sketchforge";
 
 /**
@@ -24,7 +24,7 @@ import type { SketchProfile } from "@/types/sketchforge";
  * nichts, dem die Form folgen koennte.
  */
 export function filledSketchProfile(profile: SketchProfile): SketchProfile | null {
-  const expanded = expandSketchCircles(profile);
+  const expanded = sketchGeometryProfile(profile);
   const holeSegments = new Set(
     cadSketchRegions(expanded).flatMap((region) => region.holes.flatMap((hole) => hole.steps.map((step) => step.segment.id))),
   );
@@ -40,5 +40,5 @@ export function filledSketchProfile(profile: SketchProfile): SketchProfile | nul
 
 /** Ob diese Zeichnung ueberhaupt einen Hohlraum beschreibt. */
 export function sketchHasHoles(profile: SketchProfile) {
-  return cadSketchRegions(expandSketchCircles(profile)).some((region) => region.holes.length > 0);
+  return cadSketchRegions(sketchGeometryProfile(profile)).some((region) => region.holes.length > 0);
 }
