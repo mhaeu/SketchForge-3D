@@ -3565,8 +3565,23 @@ function resizeShapeAlongFrameNormal(
   return patch;
 }
 
+/**
+ * Was eine Mehrfachauswahl zum Ziehen oder zu einer eingetippten Zahl braucht.
+ *
+ * Ein eigener, engerer Typ als der Zustand des Ziehens: Eine eingetippte Zahl
+ * hat kein Ziehen hinter sich, soll aber **genau dasselbe** tun - sonst gaebe
+ * es zwei Rechnungen fuer dieselbe Sache, die auseinanderlaufen.
+ */
+type SelectionResizeInput = {
+  selectionFrame: TransformDragState["selectionFrame"];
+  scaleStartPoint?: THREE.Vector3;
+  scaleSigns?: { x: number; z: number };
+  scaleAnchorPoint?: THREE.Vector3;
+  items: Array<{ id: string; startShape: WorkplaneShape; startCenter: THREE.Vector3 }>;
+};
+
 function resizeSelectionFromHandle(
-  transform: TransformDragState,
+  transform: SelectionResizeInput,
   point: THREE.Vector3,
   handleKey: string,
   shiftKey: boolean,
@@ -3574,6 +3589,12 @@ function resizeSelectionFromHandle(
   step: number,
   maxSize: number,
   linkedAxes: LinkedResizeAxes,
+  /**
+   * Die gewuenschte Hoehe der ganzen Auswahl. Nur die eingetippte Zahl setzt
+   * sie; beim Ziehen an einem Seitengriff bleibt die Hoehe, wie sie ist, und
+   * eine verbundene Achse rechnet sie weiter unten selbst aus.
+   */
+  targetHeight?: number,
 ) {
   const frame = transform.selectionFrame;
   const localDelta = transform.scaleStartPoint ? frameLocalDelta(frame, transform.scaleStartPoint, point) : new THREE.Vector3();
@@ -3614,7 +3635,9 @@ function resizeSelectionFromHandle(
 
   // Axis link, applied to the selection frame so the whole group keeps its
   // proportions rather than each member drifting on its own.
-  let scaleY = 1;
+  let scaleY = targetHeight === undefined
+    ? 1
+    : snapDimension(targetHeight, step, MIN_SHAPE_SIZE, maxSize) / Math.max(MIN_SHAPE_SIZE, frame.height);
   const driver = ([
     signs.x && linkedAxes.width ? { axis: "width" as const, value: nextX.size, moved: Math.abs(nextX.scale - 1) } : null,
     signs.z && linkedAxes.depth ? { axis: "depth" as const, value: nextZ.size, moved: Math.abs(nextZ.scale - 1) } : null,
@@ -5815,6 +5838,51 @@ export function WorkplaneViewport({
         setEditingDimension(null);
         setPinnedMeasureKey(null);
         return;
+      }
+      /*
+       * Mehrere Koerper, eine Zahl: Das Mass an der Kante nennt die Groesse der
+       * **ganzen** Auswahl, also setzt die Zahl auch diese - jeder Koerper wird
+       * damit skaliert und mitgeschoben, genau wie beim Ziehen am Griff.
+       * Vorher aenderte sie nur den ersten.
+       *
+       * Gerechnet wird mit derselben Funktion wie das Ziehen; die eingetippte
+       * Groesse wird dafuer in den Punkt umgerechnet, an dem der Griff dafuer
+       * stehen muesste. Eine zweite Rechnung waere eine zweite Stelle, an der
+       * Rastung, Grenzen und verbundene Achsen auseinanderlaufen koennten.
+       * Gerastet wird dabei nicht: Eine eingetippte Zahl gilt, wie sie ist.
+       */
+      const selectedIds = selectedIdsRef.current;
+      if (selectedIds.length > 1 && (edit.axis === "width" || edit.axis === "depth" || edit.axis === "height")) {
+        const activeWorkplane = placementWorkplaneRef.current;
+        const frame = selectionFrameForShapes(shapesRef.current, selectedIds, activeWorkplane);
+        const items = selectedIds
+          .map((selectedId) => shapesRef.current.find((entry) => entry.id === selectedId))
+          .filter((entry): entry is WorkplaneShape => Boolean(entry) && !entry!.locked)
+          .map((entry) => ({ id: entry.id, startShape: entry, startCenter: shapeCenter(entry) }));
+        if (frame && items.length > 0) {
+          const maxSize = Math.max(...items.map((item) => shapeDimensionLimit(workspaceRef.current, item.startShape.kind, 260)));
+          const signs = edit.axis === "width" ? { x: 1, z: 0 } : edit.axis === "depth" ? { x: 0, z: 1 } : { x: 0, z: 0 };
+          const current = edit.axis === "width" ? frame.width : edit.axis === "depth" ? frame.depth : frame.height;
+          const target = clamp(value, MIN_SHAPE_SIZE, maxSize);
+          const point = frame.center
+            .clone()
+            .addScaledVector(frame.xAxis, signs.x * (target - current))
+            .addScaledVector(frame.zAxis, signs.z * (target - current));
+          resizeSelectionFromHandle(
+            { selectionFrame: frame, scaleStartPoint: frame.center.clone(), scaleSigns: signs, items },
+            point,
+            edit.axis === "width" ? "right-mid" : edit.axis === "depth" ? "near-mid" : "top-height",
+            false,
+            false,
+            0,
+            maxSize,
+            linkedAxesRef.current,
+            edit.axis === "height" ? target : undefined,
+          ).forEach(({ id: itemId, patch }) => onUpdateShape(itemId, patch));
+          setEditingDimension(null);
+          setPinnedMeasureKey(null);
+          return;
+        }
       }
       const patch = dimensionPatchFor(shape, edit.axis, edit.value);
       if (patch) onUpdateShape(id, patch);
