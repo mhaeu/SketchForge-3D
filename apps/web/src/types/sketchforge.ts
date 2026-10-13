@@ -599,6 +599,12 @@ export type WorkplaneShape = {
   cadDisplayEdgesVersion?: 2;
   edgeResizeMode?: "scale" | "preserve";
   /**
+   * Die gemerkten Rechnungen der Massfelder, nach Feldnamen: "(140+2)/2"
+   * statt der 71, die daraus wird. Sie gelten nur, solange sie den Wert
+   * ergeben, der daneben steht - siehe `measurementFormula.ts`.
+   */
+  measurementFormulas?: Record<string, string>;
+  /**
    * Die Wandstaerke eines ausgehoehlten Koerpers, in Millimetern.
    *
    * Sie steht hier, weil der Hohlkoerper ein gebackenes Netz ist: Beim

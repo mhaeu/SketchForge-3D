@@ -818,6 +818,10 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.cadDisplayEdges === b.cadDisplayEdges &&
     a.cadDisplayEdgesVersion === b.cadDisplayEdgesVersion &&
     a.edgeResizeMode === b.edgeResizeMode &&
+    // Die gemerkten Rechnungen: nur die Kennung des Verzeichnisses, wie bei
+    // den anderen Verzeichnissen hier. Sie wird bei jeder Aenderung neu
+    // gebaut, also genuegt der Vergleich der Kennung.
+    a.measurementFormulas === b.measurementFormulas &&
     a.cadBrep === b.cadBrep &&
     a.cadBrepFrame === b.cadBrepFrame &&
     a.cadMeshDeflection === b.cadMeshDeflection &&

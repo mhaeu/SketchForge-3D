@@ -86,6 +86,7 @@ import {
   normalizeTeardropTipAngle,
   teardropDepthFor,
 } from "@/lib/boreGeometry";
+import { formulaForValue, measurementFormulasPatch, nextMeasurementFormula } from "@/lib/measurementFormula";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, measurementOptionLabel, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import { MIN_REGION_SIZE, regionSliderBounds, type ResizeRegion } from "@/lib/regionResize";
 import { regionTaperIsUntouched, untouchedRegionTaper, type RegionTaper } from "@/lib/regionTaper";
@@ -1805,6 +1806,16 @@ export function ShapeInspector({
     };
   });
   const properties = withLinkToggles(getShapeProperties(shape, onUpdate, workspace, linkedAxes));
+  /**
+   * Eine Rechnung merken oder vergessen. Sie geht denselben Weg wie jede
+   * andere Aenderung der Form - damit faellt sie mit in die Datei, und ein
+   * Rueckgaengig nimmt Wert und Rechnung zusammen.
+   */
+  const rememberFormula = (key: string, formula: string | null) => {
+    const patch = measurementFormulasPatch(shape.measurementFormulas, key, formula);
+    if (patch === null) return;
+    onUpdate({ measurementFormulas: patch });
+  };
   const gearType = shape.kind === "gear" ? normalizeGearType(shape.gearType) : null;
   const primaryProperties = shape.kind === "gear"
     ? properties.filter((property) => ["gearProfile", "centerHole", "length", "width", "height"].includes(property.id))
@@ -2248,7 +2259,14 @@ export function ShapeInspector({
             {/* With a region active the handles no longer size the shape, and
                 neither should these fields - a whole-shape scale would drag the
                 box along in a way the user did not ask for. */}
-            <ShapePropertyRows properties={primaryProperties} workspace={workspace} disabled={locked || Boolean(resizeRegion)} onInteractionActiveChange={onInteractionActiveChange} />
+            <ShapePropertyRows
+              properties={primaryProperties}
+              workspace={workspace}
+              disabled={locked || Boolean(resizeRegion)}
+              formulas={shape.measurementFormulas}
+              onFormulaChange={rememberFormula}
+              onInteractionActiveChange={onInteractionActiveChange}
+            />
           </div>
         ) : null}
       </div>
@@ -2504,11 +2522,16 @@ function ShapePropertyRows({
   properties,
   workspace,
   disabled,
+  formulas,
+  onFormulaChange,
   onInteractionActiveChange,
 }: {
   properties: ShapePropertyConfig[];
   workspace: WorkplaneWorkspaceSettings;
   disabled?: boolean;
+  /** Die gemerkten Rechnungen der Form, nach Feldnamen. */
+  formulas?: Readonly<Record<string, string>>;
+  onFormulaChange?: (key: string, formula: string | null) => void;
   onInteractionActiveChange?: (active: boolean) => void;
 }) {
   return properties.map((property) => {
@@ -2518,7 +2541,17 @@ function ShapePropertyRows({
     if (property.type === "select") {
       return <SelectProperty key={property.id} {...property} disabled={disabled} />;
     }
-    return <RangeProperty key={property.id} {...property} workspace={workspace} disabled={disabled} onInteractionActiveChange={onInteractionActiveChange} />;
+    return (
+      <RangeProperty
+        key={property.id}
+        {...property}
+        workspace={workspace}
+        disabled={disabled}
+        formula={formulas?.[property.id]}
+        onFormulaChange={onFormulaChange ? (formula) => onFormulaChange(property.id, formula) : undefined}
+        onInteractionActiveChange={onInteractionActiveChange}
+      />
+    );
   });
 }
 
@@ -2580,9 +2613,18 @@ function RangeProperty({
   link,
   workspace,
   disabled,
+  formula,
   onChange,
+  onFormulaChange,
   onInteractionActiveChange,
-}: RangePropertyConfig & { workspace: WorkplaneWorkspaceSettings; disabled?: boolean; onInteractionActiveChange?: (active: boolean) => void }) {
+}: RangePropertyConfig & {
+  workspace: WorkplaneWorkspaceSettings;
+  disabled?: boolean;
+  /** Die gemerkte Rechnung dieses Feldes, falls es eine gibt. */
+  formula?: string;
+  onFormulaChange?: (formula: string | null) => void;
+  onInteractionActiveChange?: (active: boolean) => void;
+}) {
   const allowsAboveSliderMax = ["length", "width", "height", "diameter", "pitch", "threadLength", "clearance", "segments", "x", "y", "z"].includes(id)
     || id.endsWith("Length") || id.endsWith("Width");
   const isLength = propertyUsesLengthUnit(id);
@@ -2598,11 +2640,24 @@ function RangeProperty({
   const [draft, setDraft] = useState(formatPropertyNumber(controlValue, accuracy, controlStep));
   const unit = isLength ? lengthDisplayUnit(workspace).label : null;
   const toModelValue = (nextValue: number) => isLength ? displayToMillimeters(nextValue, workspace) : nextValue;
+  /**
+   * Was im Feld steht, wenn man hineinklickt: die gemerkte Rechnung, solange
+   * sie den gezeigten Wert ergibt - sonst die Zahl. Gerechnet wird in der
+   * Anzeigeeinheit, und darin ist auch die Rechnung aufgeschrieben.
+   */
+  const openingDraft = () => formulaForValue(formula, controlValue) ?? formatPropertyNumber(controlValue, accuracy, controlStep);
   const commitDraft = () => {
     const next = parseMeasurementInput(draft);
     const finiteNext = Number.isFinite(next) ? next : controlValue;
     const nextModelValue = toModelValue(finiteNext);
-    onChange(allowsAboveSliderMax ? Math.max(min, nextModelValue) : clamp(nextModelValue, min, max));
+    const stored = allowsAboveSliderMax ? Math.max(min, nextModelValue) : clamp(nextModelValue, min, max);
+    onChange(stored);
+    /*
+     * Gemerkt wird die Rechnung gegen den Wert, der wirklich stehen bleibt -
+     * nicht gegen das Ergebnis der Rechnung. Hat eine Grenze gekappt, ist die
+     * Rechnung nicht mehr wahr und wird vergessen.
+     */
+    onFormulaChange?.(nextMeasurementFormula(draft, isLength ? millimetersToDisplay(stored, workspace) : stored));
     setEditing(false);
     onInteractionActiveChange?.(false);
   };
@@ -2610,6 +2665,8 @@ function RangeProperty({
     const next = clamp(Number.isFinite(nextValue) ? nextValue : controlMin, controlMin, controlMax);
     onChange(clamp(toModelValue(next), min, max));
     setDraft(formatPropertyNumber(next, accuracy, controlStep));
+    // Der Regler setzt eine Zahl; eine Rechnung dazu waere nicht mehr wahr.
+    onFormulaChange?.(null);
   };
   return (
     <label className="range-property" style={{ "--slider-pos": `${position}%` } as CSSProperties}>
@@ -2644,7 +2701,7 @@ function RangeProperty({
             inputMode="decimal"
             onFocus={(event) => {
               onInteractionActiveChange?.(true);
-              setDraft(formatPropertyNumber(controlValue, accuracy, controlStep));
+              setDraft(openingDraft());
               setEditing(true);
               selectWholeValue(event.currentTarget);
             }}
@@ -2654,7 +2711,7 @@ function RangeProperty({
               if (event.key === "Enter") {
                 event.currentTarget.blur();
               } else if (event.key === "Escape") {
-                setDraft(formatPropertyNumber(controlValue, accuracy, controlStep));
+                setDraft(openingDraft());
                 setEditing(false);
               }
             }}

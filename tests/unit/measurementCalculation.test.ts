@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { parseMeasurementInput } from "@/lib/measurementUnits";
+import {
+  formulaForValue,
+  isMeasurementFormula,
+  MEASUREMENT_FORMULA_TOLERANCE,
+  measurementFormulasPatch,
+  nextMeasurementFormula,
+} from "@/lib/measurementFormula";
 
 /**
  * Rechnen im Massfeld.
@@ -93,5 +100,64 @@ describe("Und eine Rechnung wird gerechnet", () => {
     expect(parseMeasurementInput("2**3")).toBeNaN();
     expect(parseMeasurementInput("Math.PI")).toBeNaN();
     expect(parseMeasurementInput("[1,2]")).toBeNaN();
+  });
+});
+
+/**
+ * Und das Feld behaelt sie.
+ *
+ * Uebrig blieb von "(140+2)/2" bisher nur die 71 - wer das Feld wieder
+ * anklickte, musste seine Rechnung von Hand wiederherstellen, obwohl gerade
+ * sie den Gedanken traegt. Die Regel, die alles zusammenhaelt: Eine Rechnung
+ * gilt nur, solange sie den Wert ergibt, der dort steht.
+ */
+describe("Eine gemerkte Rechnung", () => {
+  it("erkennt eine Rechnung und eine blanke Zahl", () => {
+    expect(isMeasurementFormula("(140+2)/2")).toBe(true);
+    expect(isMeasurementFormula("40/2")).toBe(true);
+    expect(isMeasurementFormula("12x3")).toBe(true);
+    expect(isMeasurementFormula("71")).toBe(false);
+    expect(isMeasurementFormula("12,5")).toBe(false);
+    expect(isMeasurementFormula("")).toBe(false);
+    // Ein Vorzeichen macht aus einer Zahl keine Rechnung.
+    expect(isMeasurementFormula("-5")).toBe(false);
+  });
+
+  it("zeigt die Rechnung, solange sie den Wert ergibt", () => {
+    expect(formulaForValue("(140+2)/2", 71)).toBe("(140+2)/2");
+    // Ein Griff hat den Wert gesetzt: die Rechnung passt nicht mehr.
+    expect(formulaForValue("(140+2)/2", 71.5)).toBeNull();
+    expect(formulaForValue(undefined, 71)).toBeNull();
+    expect(formulaForValue("breit", 71)).toBeNull();
+  });
+
+  /**
+   * Nicht auf das letzte Bit genau: Zwischen Tippen und Speichern wird
+   * gerundet, weil das Feld in der Anzeigeeinheit rechnet und die Form
+   * Millimeter haelt. Ein Zehntausendstel Millimeter liegt unter allem, was
+   * eine Form zeigt.
+   */
+  it("haelt eine Rundung von einem Zehntausendstel aus", () => {
+    expect(formulaForValue("40/3", 13.3333)).toBe("40/3");
+    expect(formulaForValue("40/3", 13.33)).toBeNull();
+    expect(MEASUREMENT_FORMULA_TOLERANCE).toBe(1e-4);
+  });
+
+  it("merkt eine Rechnung und vergisst eine Zahl", () => {
+    expect(nextMeasurementFormula("(140+2)/2", 71)).toBe("(140+2)/2");
+    expect(nextMeasurementFormula("71", 71)).toBeNull();
+    // Eine Grenze hat den Wert gekappt - dann ist die Rechnung nicht wahr.
+    expect(nextMeasurementFormula("400*2", 220)).toBeNull();
+  });
+
+  it("baut das Verzeichnis der Rechnungen auf und ab", () => {
+    expect(measurementFormulasPatch(undefined, "width", "40/2")).toEqual({ width: "40/2" });
+    expect(measurementFormulasPatch({ width: "40/2" }, "height", "6*2")).toEqual({ width: "40/2", height: "6*2" });
+    // Dieselbe Rechnung noch einmal ist kein Schritt im Verlauf.
+    expect(measurementFormulasPatch({ width: "40/2" }, "width", "40/2")).toBeNull();
+    expect(measurementFormulasPatch(undefined, "width", null)).toBeNull();
+    expect(measurementFormulasPatch({ width: "40/2", height: "6*2" }, "width", null)).toEqual({ height: "6*2" });
+    // Die letzte Rechnung weg: die Form traegt kein leeres Verzeichnis mit.
+    expect(measurementFormulasPatch({ width: "40/2" }, "width", null)).toBeUndefined();
   });
 });
