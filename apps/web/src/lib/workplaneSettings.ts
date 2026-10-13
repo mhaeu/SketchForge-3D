@@ -405,6 +405,31 @@ export function canBeginShapeDrag(selectBeforeMove: boolean, alreadySelected: bo
   return !selectBeforeMove || alreadySelected;
 }
 
+/**
+ * Was ein Klick auf einen Koerper tut: auswaehlen, und wenn es passt, ziehen.
+ *
+ * Die Reihenfolge ist der Punkt. Gezogen wird entlang der Arbeitsebene, und
+ * dafuer braucht der Klick einen Punkt auf ihr. Trifft der Strahl sie nicht -
+ * und das tut er nicht, wenn man flach von der Seite schaut und oberhalb der
+ * Horizontlinie klickt -, dann gibt es nichts zu ziehen. **Ausgewaehlt** ist
+ * der Koerper trotzdem: Vorher gab die Behandlung an dieser Stelle auf, und ein
+ * Koerper liess sich von der Seite nur an seinem unteren Teil anklicken.
+ */
+export function shapeClickOutcome(options: {
+  /** Ob der Klickstrahl die Arbeitsebene getroffen hat. */
+  hasWorkplanePoint: boolean;
+  alreadySelected: boolean;
+  additive: boolean;
+  locked: boolean;
+  selectBeforeMove: boolean;
+}): { select: "none" | "toggle" | "replace"; drag: boolean } {
+  if (options.additive) return { select: "toggle", drag: false };
+  const select = options.alreadySelected ? "none" : "replace";
+  if (options.locked) return { select, drag: false };
+  if (!canBeginShapeDrag(options.selectBeforeMove, options.alreadySelected)) return { select, drag: false };
+  return { select, drag: options.hasWorkplanePoint };
+}
+
 export function workplaneSettingsFingerprint(workspace: WorkplaneWorkspaceSettings, snapGrid: GridSize) {
   return JSON.stringify({ workspace, snapGrid });
 }

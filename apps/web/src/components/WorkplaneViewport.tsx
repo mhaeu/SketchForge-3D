@@ -52,7 +52,7 @@ import { createPyramidGeometry, normalizePyramidTop } from "@/lib/pyramidGeometr
 import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { viewFaceOrientation, workplaneCameraOrientation, worldCameraOrientation, type ViewCubeFace } from "@/lib/viewCubeOrientation";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
-import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, snapGridStep, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
+import { shapeClickOutcome, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, snapGridStep, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { DEFAULT_OVERHANG_ANGLE, OVERHANG_PLATE_TOLERANCE, overhangDownwardLimit } from "@/lib/overhangLimits";
 import { OVERHANG_PROGRAM_CACHE_KEY, patchOverhangFragmentShader, patchOverhangVertexShader } from "@/lib/overhangShader";
@@ -6898,23 +6898,34 @@ export function WorkplaneViewport({
       const dragPlaneY = shape ? shape.elevation ?? 0 : 0;
       const activeWorkplane = placementWorkplaneRef.current;
       const point = toPlacementWorkplanePoint(event.clientX, event.clientY, activeWorkplane);
-      if (!point || !shape) {
+      if (!shape) {
         return;
       }
 
       event.preventDefault();
       const alreadySelected = selectedIdsSnapshot.includes(id);
-      if (additive) {
+      /*
+       * Auswaehlen und Ziehen sind zwei Dinge, und der Klick kann das erste
+       * koennen und das zweite nicht: Gezogen wird entlang der Arbeitsebene,
+       * und oberhalb der Horizontlinie trifft der Strahl sie nicht. Vorher gab
+       * die Behandlung dort auf - flach von der Seite liess sich ein Koerper
+       * nur an seinem unteren Teil anklicken.
+       */
+      const outcome = shapeClickOutcome({
+        hasWorkplanePoint: Boolean(point),
+        alreadySelected,
+        additive,
+        locked: Boolean(shape.locked),
+        selectBeforeMove: workspaceRef.current.selectBeforeMove,
+      });
+      if (outcome.select === "toggle") {
         onSelectShape(id, "toggle");
         return;
       }
-      if (!alreadySelected) {
+      if (outcome.select === "replace") {
         onSelectShape(id);
       }
-      if (!canBeginShapeDrag(workspaceRef.current.selectBeforeMove, alreadySelected)) {
-        return;
-      }
-      if (shape.locked) {
+      if (!outcome.drag || !point) {
         return;
       }
       event.currentTarget.setPointerCapture(event.pointerId);

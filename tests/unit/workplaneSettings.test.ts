@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, normalizeScaleForUnits, parseMeasurementInput, scaleOptionsForUnits } from "@/lib/measurementUnits";
-import { canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
+import {
+  shapeClickOutcome, canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 
 describe("workplane settings helpers", () => {
   it("accepts known snap grid values and falls back for unknown values", () => {
@@ -230,5 +231,53 @@ describe("customizations for the shapes in the palette", () => {
       shapeCustomizations: { thread: { threadDrive: "gibberish" } },
     });
     expect(bogus.shapeCustomizations.thread?.threadDrive).toBeUndefined();
+  });
+});
+
+/**
+ * Ein Klick auf einen Koerper: Was wird ausgewaehlt, und wann wird gezogen?
+ *
+ * Die Reihenfolge ist der Punkt. Gezogen wird entlang der Arbeitsebene, und
+ * oberhalb der Horizontlinie trifft der Klickstrahl sie nicht - flach von der
+ * Seite also bei jedem Koerper oberhalb seiner Mitte. Vorher gab die
+ * Behandlung dort auf, und der Koerper liess sich nur an seinem unteren Teil
+ * anklicken.
+ */
+describe("Ein Klick auf einen Koerper", () => {
+  const click = (overrides: Partial<Parameters<typeof shapeClickOutcome>[0]> = {}) => shapeClickOutcome({
+    hasWorkplanePoint: true,
+    alreadySelected: false,
+    additive: false,
+    locked: false,
+    selectBeforeMove: false,
+    ...overrides,
+  });
+
+  it("waehlt aus und zieht, wenn der Strahl die Arbeitsebene trifft", () => {
+    expect(click()).toEqual({ select: "replace", drag: true });
+  });
+
+  it("waehlt auch aus, wenn der Strahl die Arbeitsebene nicht trifft", () => {
+    expect(click({ hasWorkplanePoint: false })).toEqual({ select: "replace", drag: false });
+  });
+
+  it("laesst einen gesperrten Koerper auswaehlen, aber nicht ziehen", () => {
+    expect(click({ locked: true })).toEqual({ select: "replace", drag: false });
+    expect(click({ locked: true, alreadySelected: true })).toEqual({ select: "none", drag: false });
+  });
+
+  it("schaltet mit Shift um und zieht dabei nicht", () => {
+    expect(click({ additive: true })).toEqual({ select: "toggle", drag: false });
+    expect(click({ additive: true, alreadySelected: true })).toEqual({ select: "toggle", drag: false });
+  });
+
+  /**
+   * "Erst auswaehlen, dann bewegen": Der erste Klick waehlt nur, der zweite
+   * zieht. Auch das aendert am Auswaehlen nichts, wenn die Ebene fehlt.
+   */
+  it("zieht bei 'erst auswaehlen' erst beim zweiten Klick", () => {
+    expect(click({ selectBeforeMove: true })).toEqual({ select: "replace", drag: false });
+    expect(click({ selectBeforeMove: true, alreadySelected: true })).toEqual({ select: "none", drag: true });
+    expect(click({ selectBeforeMove: true, alreadySelected: true, hasWorkplanePoint: false })).toEqual({ select: "none", drag: false });
   });
 });
