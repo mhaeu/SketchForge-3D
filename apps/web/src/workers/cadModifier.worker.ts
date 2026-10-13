@@ -7,6 +7,7 @@ import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
 import { meshTreatedBody } from "@/lib/cadMeshAccuracy";
 import { CAD_MODIFIER_KERNEL_RESTART_MESSAGE, CAD_MODIFIER_RUNTIME_BASE, cadModifierTessellationDeflection, cadModifierTopologyEdgeIsSelectable, cadTransformRequiresGeneralTransform, isCadModifierKernelExhausted, isCadModifierWasmMemoryFault, variableFilletRadii } from "@/lib/cadModifierRuntime";
+import { buildPlanarMeshSolid } from "@/lib/cadPlanarSolid";
 
 const HASH_UPPER_BOUND = 2_147_483_647;
 // occt-wasm 4.3.2 fixed `wireframe(shape, deflection)` routing its second
@@ -341,6 +342,23 @@ function reconstructSolid(cad: OcctKernel, part: CadModifierMeshPart) {
       if (!part.positions?.length || !part.indices?.length) throw error;
     }
   }
+  /*
+   * Der Weg ueber die flachen Flaechen des Netzes. Er gilt fuer alles, was aus
+   * Grundkoerpern, Verschneiden und Zerteilen kommt, und liefert dort den
+   * Koerper, den der Kern selbst gebaut haette - gemessen an einer schraeg
+   * abgeschnittenen Haelfte: 102 Flaechen und 300 Kanten statt 201 und 400.
+   * Fuer alles andere - ein gewachsenes Netz, eine T-Stelle, ein Netz, dessen
+   * Raeume nicht aufgehen - gibt er `null`, und dann gilt der Umweg unten.
+   */
+  if (part.positions?.length && part.indices?.length) {
+    try {
+      const planar = buildPlanarMeshSolid(cad, part.positions, part.indices);
+      if (planar) return planar.solid;
+    } catch {
+      // Auch ein Fehler im Kern ist nur ein Grund, den anderen Weg zu nehmen.
+    }
+  }
+
   const imported = cad.importStl(meshPartToAsciiStl(part));
   let shape = cad.fixShape(imported);
   if (cad.isSolid(shape)) {

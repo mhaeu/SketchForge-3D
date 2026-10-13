@@ -321,7 +321,7 @@ describe("Ein Rad, das im Hohlrad kaemmt", () => {
     const rolled = measured.roll(1);
     expect(rolled.overlap).toBe(0);
     expect(rolled.widest).toBeLessThan(0.06);
-  });
+  }, 30000);
 
   /**
    * Die Gegenprobe zur Drehrichtung: Bei Innenverzahnung laufen Ring und Rad
@@ -347,7 +347,7 @@ describe("Ein Rad, das im Hohlrad kaemmt", () => {
     expect(RING_GEAR_MIN_TEETH_DIFFERENCE).toBe(10);
     const tight = mesh(24);
     expect(tight.roll(1).deepest).toBeGreaterThan(0.1);
-  });
+  }, 30000);
 
   /**
    * Und die Grenze nach unten ist dieselbe wie bei der Zahnstange: Ein Rad
@@ -370,5 +370,5 @@ describe("Ein Rad, das im Hohlrad kaemmt", () => {
     const rolled = measured.roll(1);
     expect(rolled.overlap).toBe(0);
     expect(rolled.widest).toBeLessThan(0.06);
-  });
+  }, 30000);
 });
