@@ -204,3 +204,109 @@ describe("Sketch CAD profile → B-Rep extrusion (real OCCT kernel)", () => {
     expect(() => cadSketchRegions(openProfile)).toThrow(/open/i);
   });
 });
+
+/**
+ * Eine gerundete Ecke ist ein Bogen, keine Freiformkurve.
+ *
+ * Das entscheidet, wie der Koerper danach aussieht und was das Kantenwerkzeug
+ * mit ihm anfangen kann: Aus einem Bogen baut der Kern eine schlichte
+ * Zylinderwand, aus einer Kurve eine Freiformflaeche, die der Betrachter
+ * ungleichmaessig vernetzt - fleckige Schattierung und ein Netz aus
+ * Streudreiecken.
+ *
+ * Unsere Eckenrundung legt einen Bogen in die Skizze (`kind: "arc"` mit
+ * Woelbung), und `cadSketchPathWire` gibt ihn als Bogen an den Kern. Hier wird
+ * gemessen, dass dabei wirklich eine Zylinderwand herauskommt.
+ */
+describe("Eine gerundete Skizzenecke im Kern", () => {
+  it("wird eine Zylinderwand und keine Freiformflaeche", async () => {
+    const { OcctKernel } = await import("occt-wasm");
+    const { roundSketchCorner } = await import("@/lib/sketchFillet");
+    const { cadSketchPathWire, FLAT_SKETCH_POINT_MAP } = await import("@/lib/cadSketchRevolve");
+
+    const base = rectangle("rounded", 0, 0, 40, 20);
+    let counter = 0;
+    const rounded = roundSketchCorner(base, "rounded-0", (prefix) => `${prefix}-${counter++}`, 0.25);
+    expect(rounded).not.toBeNull();
+    // Die Ecke ist jetzt ein Bogen zwischen zwei neuen Punkten.
+    const arc = rounded!.profile.segments.find((segment) => segment.id === rounded!.arcId);
+    expect(arc?.kind).toBe("arc");
+    expect(Math.abs(arc?.bulge ?? 0)).toBeGreaterThan(0);
+
+    const regions = cadSketchRegions(rounded!.profile);
+    expect(regions).toHaveLength(1);
+
+    const wasm = join(dirname(fileURLToPath(import.meta.resolve("occt-wasm"))), "occt-wasm.wasm");
+    const cad = await OcctKernel.init({ wasm });
+    const wire = cadSketchPathWire(cad, regions[0].outer, FLAT_SKETCH_POINT_MAP);
+    const solid = cad.extrude(cad.makeFace(wire), 0, 6, 0);
+    expect(cad.isSolid(solid)).toBe(true);
+
+    const faces = cad.getSubShapes(solid, "face");
+    const types = faces.map((face) => cad.surfaceType(face)).sort();
+    /*
+     * Vier gerade Waende, Deckel und Boden - und die gerundete Ecke als
+     * Zylinder. Keine Freiformflaeche ("bspline"/"beziersurface") darunter.
+     */
+    expect(types.filter((type) => type === "cylinder")).toHaveLength(1);
+    expect(types.filter((type) => type === "plane")).toHaveLength(6);
+    expect(types).toHaveLength(7);
+
+    // Und der Koerper hat den Rauminhalt, den die gerundete Flaeche hergibt:
+    // 40 x 20 minus die Ecke, die der Radius wegnimmt (r^2 - pi r^2 / 4).
+    const radius = rounded!.radius;
+    const area = 40 * 20 - (radius * radius - (Math.PI * radius * radius) / 4);
+    expect(cad.getVolume(solid)).toBeCloseTo(area * 6, 3);
+  }, 300000);
+});
+
+/**
+ * Und ein gezeichneter Kreis wird eine Zylinderwand.
+ *
+ * In der Skizze liegt er als vier Bezierstuecke - so zeichnet man einen Kreis
+ * mit Kurven. Im Kern waren das vier Freiformflaechen; jetzt erkennt der
+ * Uebergang den Bogen darin und baut vier echte Bogenkanten, aus denen der
+ * Kern Zylinderwaende macht.
+ */
+describe("Ein gezeichneter Kreis im Kern", () => {
+  it("wird aus Zylinderwaenden gebaut und nicht aus Freiformflaechen", async () => {
+    const { OcctKernel } = await import("occt-wasm");
+    const { expandSketchCircles } = await import("@/lib/sketchCircles");
+    const { cadSketchPathWire, FLAT_SKETCH_POINT_MAP } = await import("@/lib/cadSketchRevolve");
+
+    const radius = 12;
+    const profile = expandSketchCircles({
+      points: [],
+      segments: [],
+      circles: [{ id: "c", x: 0, z: 0, radius }],
+    });
+    // Vier Kurvenstuecke, wie die Skizze einen Kreis haelt.
+    expect(profile.points).toHaveLength(4);
+    expect(profile.segments.every((segment) => segment.kind === "bezier")).toBe(true);
+
+    const regions = cadSketchRegions(profile);
+    expect(regions).toHaveLength(1);
+
+    const wasm = join(dirname(fileURLToPath(import.meta.resolve("occt-wasm"))), "occt-wasm.wasm");
+    const cad = await OcctKernel.init({ wasm });
+    const wire = cadSketchPathWire(cad, regions[0].outer, FLAT_SKETCH_POINT_MAP);
+    const solid = cad.extrude(cad.makeFace(wire), 0, 5, 0);
+    expect(cad.isSolid(solid)).toBe(true);
+
+    const types = cad.getSubShapes(solid, "face").map((face) => cad.surfaceType(face)).sort();
+    // Die Wand als Zylinder (in Viertelstuecken), Deckel und Boden als Ebenen.
+    expect(types.filter((type) => type === "cylinder").length).toBeGreaterThanOrEqual(1);
+    expect(types.filter((type) => type === "plane")).toHaveLength(2);
+    expect(types.filter((type) => type !== "cylinder" && type !== "plane")).toHaveLength(0);
+
+    /*
+     * Und der Rauminhalt ist der des echten Kreises. Die vier Bezierstuecke
+     * umschliessen etwas **mehr**: Der uebliche Faktor 0,5523 legt den
+     * Scheitel genau auf den Kreis und woelbt dazwischen nach aussen, bei
+     * Halbmesser 12 gemessen 452,5149 gegen 452,3893 mm^2 - 0,277 Promille zu
+     * viel. Der Bogen trifft den Kreis genau: Der Uebergang macht den Koerper
+     * nicht nur schoener, sondern richtiger.
+     */
+    expect(cad.getVolume(solid)).toBeCloseTo(Math.PI * radius * radius * 5, 6);
+  }, 300000);
+});

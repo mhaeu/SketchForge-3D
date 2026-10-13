@@ -235,3 +235,74 @@ export function retargetSketchArcs(
     return bulge === segment.bulge ? segment : { ...segment, bulge };
   });
 }
+
+/**
+ * Ist diese Kurve in Wahrheit ein Kreisbogen?
+ *
+ * Ein gezeichneter Kreis liegt in der Skizze als vier Kurven - vier
+ * Bezierstuecke mit dem ueblichen Faktor 0,5523 -, und eine Kurve wird im Kern
+ * eine Freiformflaeche. Vier davon statt einer Zylinderwand heisst: fleckige
+ * Schattierung, ein Netz aus Streudreiecken, und ein Kantenwerkzeug, das auf
+ * einer Annaeherung arbeitet.
+ *
+ * Darum wird hier nachgesehen, ob die Kurve ein Bogen ist, und wenn ja, ihr
+ * Scheitel zurueckgegeben - der Kern baut daraus einen echten Bogen.
+ *
+ * Geprueft wird gegen den Kreis durch Anfang, Mitte und Ende der Kurve: Liegen
+ * auch die Zwischenpunkte auf ihm, ist es ein Bogen. Die Grenze ist relativ
+ * zum Halbmesser, weil der Fehler einer Bezierannaeherung es auch ist -
+ * gemessen weicht das Viertelstueck mit 0,5523 um 2,7e-4 Halbmesser vom Kreis
+ * ab (bei 10 mm also 2,7 Mikrometer). Mit 5e-4 ist es angenommen, und eine
+ * wirklich freie Kurve bleibt draussen.
+ *
+ * Was dabei gewonnen wird, ist nicht nur die Flaechenart: Der Bogen ist der
+ * Kreis, den der Benutzer gezogen hat, die Kurve nur seine Annaeherung - und
+ * zwar eine, die nach aussen woelbt. Gemessen an einem Kreis mit Halbmesser
+ * 12: die vier Bezierstuecke umschliessen 452,5149 mm^2 gegen 452,3893 des
+ * Kreises, also 0,277 Promille zu viel.
+ *
+ * Nach Layerling 1.62.3.
+ */
+export const BEZIER_ARC_TOLERANCE = 5e-4;
+
+type FlatPoint = { x: number; z: number };
+
+function bezierPoint(from: FlatPoint, first: FlatPoint, second: FlatPoint, to: FlatPoint, amount: number): FlatPoint {
+  const inverse = 1 - amount;
+  return {
+    x: inverse ** 3 * from.x + 3 * inverse ** 2 * amount * first.x + 3 * inverse * amount ** 2 * second.x + amount ** 3 * to.x,
+    z: inverse ** 3 * from.z + 3 * inverse ** 2 * amount * first.z + 3 * inverse * amount ** 2 * second.z + amount ** 3 * to.z,
+  };
+}
+
+/** Die Mitte des Kreises durch drei Punkte - `null`, wenn sie auf einer Gerade liegen. */
+function circleThrough(a: FlatPoint, b: FlatPoint, c: FlatPoint) {
+  const determinant = 2 * (a.x * (b.z - c.z) + b.x * (c.z - a.z) + c.x * (a.z - b.z));
+  if (Math.abs(determinant) < 1e-12) return null;
+  const aa = a.x * a.x + a.z * a.z;
+  const bb = b.x * b.x + b.z * b.z;
+  const cc = c.x * c.x + c.z * c.z;
+  const x = (aa * (b.z - c.z) + bb * (c.z - a.z) + cc * (a.z - b.z)) / determinant;
+  const z = (aa * (c.x - b.x) + bb * (a.x - c.x) + cc * (b.x - a.x)) / determinant;
+  return { x, z, radius: Math.hypot(a.x - x, a.z - z) };
+}
+
+export function bezierArcGeometry(
+  from: FlatPoint,
+  first: FlatPoint,
+  second: FlatPoint,
+  to: FlatPoint,
+  tolerance = BEZIER_ARC_TOLERANCE,
+): { apex: FlatPoint; radius: number } | null {
+  const apex = bezierPoint(from, first, second, to, 0.5);
+  const circle = circleThrough(from, apex, to);
+  if (!circle || !(circle.radius > 0)) return null;
+  // Dort, wo eine Bezierannaeherung am weitesten vom Kreis abliegt, und ein
+  // paar Stellen dazwischen.
+  for (const amount of [0.125, 0.21, 0.25, 0.375, 0.625, 0.75, 0.79, 0.875]) {
+    const point = bezierPoint(from, first, second, to, amount);
+    const offset = Math.abs(Math.hypot(point.x - circle.x, point.z - circle.z) - circle.radius);
+    if (offset > tolerance * circle.radius) return null;
+  }
+  return { apex, radius: circle.radius };
+}

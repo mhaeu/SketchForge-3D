@@ -1,6 +1,6 @@
 import type { OcctKernel, ShapeHandle } from "occt-wasm";
 import { cadSketchRegions, type OrderedCadSketchPath } from "@/lib/sketchCadProfile";
-import { segmentArcGeometry } from "@/lib/sketchArcs";
+import { bezierArcGeometry, segmentArcGeometry } from "@/lib/sketchArcs";
 import type { SketchProfile } from "@/types/sketchforge";
 
 /**
@@ -61,6 +61,16 @@ export function cadSketchPathWire(cad: OcctKernel, path: OrderedCadSketchPath, m
     const first = forward ? from.handleOut : from.handleIn;
     const second = forward ? to.handleIn : to.handleOut;
     if (segment.kind !== "line" && first && second) {
+      /*
+       * Eine Kurve, die in Wahrheit ein Bogen ist, geht als Bogen hinein. Ein
+       * gezeichneter Kreis liegt als vier Bezierstuecke in der Skizze, und
+       * vier Freiformflaechen statt einer Zylinderwand heissen: fleckige
+       * Schattierung, ein Netz aus Streudreiecken und ein Kantenwerkzeug auf
+       * einer Annaeherung. Der Bogen ist zudem der Kreis, den der Benutzer
+       * gezogen hat - die Kurve nur dessen Annaeherung.
+       */
+      const curveArc = bezierArcGeometry(from, first, second, to);
+      if (curveArc) return cad.makeArcEdge(map(from), map(curveArc.apex), map(to));
       return cad.makeBezierEdge([map(from), map(first), map(second), map(to)]);
     }
     return cad.makeLineEdge(map(from), map(to));
