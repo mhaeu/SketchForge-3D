@@ -4,7 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { t } from "@/lib/i18n";
 import { selectWholeValue } from "@/lib/numberField";
 import { useLanguage } from "@/lib/useLanguage";
-import { Check, LoaderCircle, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { Check, LoaderCircle, Minus, Plus, RotateCcw, X, Pencil } from "lucide-react";
 import { displayStepFromMillimeters, displayToMillimeters, formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, parseMeasurementInput } from "@/lib/measurementUnits";
 import type { CadModifierKind, CadModifierQuality } from "@/lib/cadModifierTypes";
 import { CAD_MODIFIER_MAX_SHARP_ANGLE, edgeModifierSelectionStatus, variableFilletRejectsMultiEdge } from "@/lib/cadModifierRuntime";
@@ -27,6 +27,8 @@ type EdgeHistoryOption = {
   label: string;
   targetName: string;
   removesNewerCount: number;
+  /** Gesetzt, wenn sich diese Behandlung wieder aufnehmen laesst. */
+  editable?: unknown;
 };
 
 function EdgeModifierSlider({
@@ -167,6 +169,7 @@ export function EdgeModifierPanel({
   onSelectAll,
   onClear,
   onRemoveFeature,
+  onEditFeature,
   onApply,
   onCancel,
 }: {
@@ -202,6 +205,7 @@ export function EdgeModifierPanel({
   onSelectAll: () => void;
   onClear: () => void;
   onRemoveFeature: (id: string) => void;
+  onEditFeature: (id: string) => void;
   onApply: () => void;
   onCancel: () => void;
 }) {
@@ -264,16 +268,35 @@ export function EdgeModifierPanel({
           {historyOpen && historyOptions.length > 0 ? (
             <div className="edge-modifier-history-list">
               {historyOptions.map((option) => (
-                <button className="edge-modifier-history-item" type="button" key={option.id} onClick={() => onRemoveFeature(option.id)}>
-                  <RotateCcw size={14} />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>
-                      {option.targetName}
-                      {option.removesNewerCount > 0 ? ` · also removes ${option.removesNewerCount} newer` : ""}
-                    </small>
-                  </span>
-                </button>
+                <div className="edge-modifier-history-row" key={option.id}>
+                  <button className="edge-modifier-history-item" type="button" onClick={() => onRemoveFeature(option.id)}>
+                    <RotateCcw size={14} />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>
+                        {option.targetName}
+                        {option.removesNewerCount > 0 ? ` · also removes ${option.removesNewerCount} newer` : ""}
+                      </small>
+                    </span>
+                  </button>
+                  {/*
+                    * Aendern gibt es nur fuer die neueste Behandlung eines
+                    * Koerpers: Nur nach deren Zuruecknahme ist er genau der
+                    * Koerper, auf dessen Kantenliste die gespeicherten
+                    * Nummern zeigen.
+                    */}
+                  {option.editable ? (
+                    <button
+                      className="edge-modifier-history-edit"
+                      type="button"
+                      title={t("edge.editFeatureHint")}
+                      onClick={() => onEditFeature(option.id)}
+                    >
+                      <Pencil size={14} />
+                      <span>{t("edge.editFeature")}</span>
+                    </button>
+                  ) : null}
+                </div>
               ))}
             </div>
           ) : null}

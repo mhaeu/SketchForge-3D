@@ -10,6 +10,7 @@ import {
   cadModifierTessellationDeflection,
   isCadModifierKernelExhausted,
   rescueSharpAngleForEdges,
+  resumedEdgeSelection,
   SKETCH_CAD_DEFLECTION,
   cadModifierTopologyEdgeIsSelectable,
   cadTransformRequiresGeneralTransform,
@@ -19,6 +20,7 @@ import {
   isCadModifierWasmMemoryFault,
   selectableCadModifierEdge,
 } from "@/lib/cadModifierRuntime";
+import type { CadModifierEdge } from "@/lib/cadModifierTypes";
 
 describe("CAD modifier runtime state", () => {
   it("uses the build-managed OCCT runtime", () => {
@@ -246,5 +248,60 @@ describe("isCadModifierKernelExhausted", () => {
   it("laesst eine gewoehnliche Absage in Ruhe", () => {
     expect(isCadModifierKernelExhausted("fillet: radius too large for this edge")).toBe(false);
     expect(isCadModifierKernelExhausted("The chosen size creates invalid or overlapping edge geometry")).toBe(false);
+  });
+});
+
+/**
+ * Eine Behandlung spaeter aendern: Zuruecknehmen stellt den Koerper von
+ * vorher her, und dann muss dieselbe Kantenauswahl noch einmal gesetzt
+ * werden - ohne sie neu zu picken.
+ */
+describe("Eine wieder aufgenommene Kantenauswahl", () => {
+  const edge = (id: number, angle: number, overrides: Partial<CadModifierEdge> = {}) => ({
+    id,
+    angle,
+    manifold: true,
+    boundary: false,
+    selectable: true,
+    ...overrides,
+  });
+
+  it("nimmt die gespeicherten Kanten wieder auf", () => {
+    const edges = [edge(0, 90), edge(1, 90), edge(2, 90), edge(3, 90)];
+    const resumed = resumedEdgeSelection(edges, [1, 3], 25);
+    expect(resumed.edgeIds).toEqual([1, 3]);
+    expect(resumed.missing).toBe(0);
+    // Alle sind schaerfer als die Einstellung - die bleibt, wie sie ist.
+    expect(resumed.sharpAngle).toBe(25);
+  });
+
+  /**
+   * Eine Kante, die flacher ist als die eingestellte Schaerfe, war vorher
+   * gewaehlt und wuerde jetzt nicht angeboten. Dann sinkt die Schaerfe so
+   * weit, dass alle wieder darunter fallen.
+   */
+  it("senkt die Schaerfe, bis alle Kanten darunter fallen", () => {
+    const resumed = resumedEdgeSelection([edge(0, 90), edge(1, 12.4)], [0, 1], 25);
+    expect(resumed.edgeIds).toEqual([0, 1]);
+    expect(resumed.sharpAngle).toBe(12);
+  });
+
+  it("laesst eine Kante weg, die es nicht mehr gibt, und sagt es", () => {
+    const resumed = resumedEdgeSelection([edge(0, 90), edge(1, 90)], [0, 7], 25);
+    expect(resumed.edgeIds).toEqual([0]);
+    expect(resumed.missing).toBe(1);
+  });
+
+  it("laesst eine Kante weg, die nicht mehr waehlbar ist", () => {
+    const resumed = resumedEdgeSelection([edge(0, 90), edge(1, 90, { boundary: true })], [0, 1], 25);
+    expect(resumed.edgeIds).toEqual([0]);
+    expect(resumed.missing).toBe(1);
+  });
+
+  it("laesst die Schaerfe stehen, wenn keine Kante uebrig bleibt", () => {
+    const resumed = resumedEdgeSelection([edge(0, 90)], [5, 6], 25);
+    expect(resumed.edgeIds).toEqual([]);
+    expect(resumed.sharpAngle).toBe(25);
+    expect(resumed.missing).toBe(2);
   });
 });

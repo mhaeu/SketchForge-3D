@@ -286,6 +286,17 @@ export type EdgeTreatmentFeature = {
   endAmount?: number;
   /** variableFillet only: swaps the start and end radius. */
   flipTaper?: boolean;
+  /**
+   * Welche Kanten gewaehlt waren, als Nummern in der Kantenliste des Kerns.
+   *
+   * Dafuer, dass sich eine Behandlung spaeter aendern laesst: Zuruecknehmen
+   * stellt den Koerper von vorher wieder her, und dann muss dieselbe Auswahl
+   * noch einmal gesetzt werden koennen, ohne sie neu zu picken. Die Nummern
+   * sind Plaetze in der Liste, die der Kern zu **diesem** Koerper aufstellt -
+   * darum gilt das Aendern nur fuer die neueste Behandlung eines Koerpers,
+   * nach deren Zuruecknahme er genau der von vorher ist.
+   */
+  edgeIds?: number[];
 };
 
 export type EdgeTreatmentHistoryEntry = {

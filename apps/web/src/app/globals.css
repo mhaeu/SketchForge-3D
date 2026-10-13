@@ -10144,3 +10144,33 @@ html[data-theme="dark"] .language-switch-menu button.active {
   color: #eaf3fb;
   background: #24384a;
 }
+
+/* Eine Zeile der Behandlungsliste: Zuruecknehmen und, wo es geht, Aendern. */
+.edge-modifier-history-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.edge-modifier-history-row .edge-modifier-history-item {
+  flex: 1 1 auto;
+}
+
+.edge-modifier-history-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid rgba(47, 61, 70, 0.18);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.edge-modifier-history-edit:hover {
+  border-color: rgba(0, 159, 227, 0.6);
+  color: #0079b0;
+}

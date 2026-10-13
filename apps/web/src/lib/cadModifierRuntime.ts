@@ -221,3 +221,37 @@ export function variableFilletRadii(params: { amount: number; endAmount: number;
 export function variableFilletRejectsMultiEdge(selectedCount: number) {
   return selectedCount > 1;
 }
+
+/**
+ * Eine Behandlung wieder aufnehmen: welche ihrer Kanten es noch gibt, und
+ * unter welchem Winkel sie alle waehlbar sind.
+ *
+ * Dafuer, dass sich eine Verrundung spaeter aendern laesst. Zuruecknehmen
+ * stellt den Koerper von vorher wieder her; die gespeicherten Kantennummern
+ * sind Plaetze in der Kantenliste, die der Kern zu **diesem** Koerper
+ * aufstellt, und zeigen damit wieder auf dieselben Kanten.
+ *
+ * Zwei Dinge koennen dazwischenkommen. Eine Nummer gibt es nicht mehr - dann
+ * faellt sie heraus und `missing` sagt, wie viele. Und eine Kante ist flacher
+ * als die eingestellte Schaerfe, womit die Oberflaeche sie nicht anbieten
+ * wuerde, obwohl sie vorher gewaehlt war: Dafuer wird die Schaerfe so weit
+ * gesenkt, dass alle wiederaufgenommenen Kanten darunter fallen.
+ */
+export function resumedEdgeSelection(
+  edges: ReadonlyArray<Pick<CadModifierEdge, "id" | "angle" | "manifold" | "boundary" | "selectable">>,
+  edgeIds: ReadonlyArray<number>,
+  sharpAngle: number,
+) {
+  const byId = new Map(edges.map((edge) => [edge.id, edge]));
+  const usable = edgeIds
+    .map((id) => byId.get(id))
+    .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge && edge.selectable && edge.manifold && !edge.boundary));
+  const kept = usable.map((edge) => edge.id);
+  const flattest = usable.reduce((smallest, edge) => Math.min(smallest, edge.angle), Number.POSITIVE_INFINITY);
+  const lowered = Number.isFinite(flattest) ? Math.max(1, Math.floor(flattest)) : sharpAngle;
+  return {
+    edgeIds: kept,
+    sharpAngle: kept.length === 0 ? sharpAngle : Math.min(sharpAngle, lowered),
+    missing: edgeIds.length - kept.length,
+  };
+}

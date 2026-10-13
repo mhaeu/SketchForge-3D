@@ -151,6 +151,7 @@ import {
   defaultCadModifierTangentChain,
   cadModifierCandidateEdge,
   rescueSharpAngleForEdges,
+  resumedEdgeSelection,
   selectableCadModifierEdge,
   type CadModifierRequestPhase,
   SKETCH_CAD_DEFLECTION,
@@ -326,6 +327,20 @@ type EdgeFeatureRevertOption = {
   targetName: string;
   createdAt: number;
   removesNewerCount: number;
+  /**
+   * Was das Werkzeug braucht, um dieselbe Behandlung noch einmal zu zeigen -
+   * oder `null`, wenn sie sich nicht aendern laesst: Das gilt nur fuer die
+   * neueste Behandlung des Koerpers selbst, denn nur nach deren Zuruecknahme
+   * ist er genau der Koerper, auf dessen Kantenliste die Nummern zeigen.
+   */
+  editable: {
+    kind: "fillet" | "chamfer" | "variableFillet";
+    amount: number;
+    edgeIds: number[];
+    chamferAngle?: number;
+    endAmount?: number;
+    flipTaper?: boolean;
+  } | null;
 };
 type ManifoldSolid = ReturnType<ManifoldToplevel["Manifold"]["cube"]>;
 type DownloadResult = { mode: "browser" } | { mode: "folder"; path: string };
@@ -2067,15 +2082,29 @@ function reversibleEdgeTreatmentCount(shape: WorkplaneShape): number {
 
 function edgeTreatmentHistoryOptions(shape: WorkplaneShape, path: number[] = [], targetName = shape.name): EdgeFeatureRevertOption[] {
   const ownHistory = shape.edgeTreatmentHistory ?? [];
-  const ownOptions = ownHistory.map((entry, index) => ({
-    id: `${path.length ? path.join(".") : "root"}:${entry.id}`,
-    entryId: entry.id,
-    path,
-    label: edgeTreatmentLabel(entry.feature),
-    targetName,
-    createdAt: entry.createdAt,
-    removesNewerCount: Math.max(0, ownHistory.length - index - 1),
-  }));
+  const ownOptions = ownHistory.map((entry, index) => {
+    const removesNewerCount = Math.max(0, ownHistory.length - index - 1);
+    const edgeIds = entry.feature.edgeIds;
+    return {
+      id: `${path.length ? path.join(".") : "root"}:${entry.id}`,
+      entryId: entry.id,
+      path,
+      label: edgeTreatmentLabel(entry.feature),
+      targetName,
+      createdAt: entry.createdAt,
+      removesNewerCount,
+      editable: path.length === 0 && removesNewerCount === 0 && edgeIds?.length
+        ? {
+          kind: entry.feature.kind,
+          amount: entry.feature.amount,
+          edgeIds: [...edgeIds],
+          chamferAngle: entry.feature.chamferAngle,
+          endAmount: entry.feature.endAmount,
+          flipTaper: entry.feature.flipTaper,
+        }
+        : null,
+    };
+  });
   const childOptions = (shape.groupedShapes ?? []).flatMap((child, index) =>
     edgeTreatmentHistoryOptions(child, [...path, index], `${targetName} / ${child.name}`),
   );
@@ -6571,6 +6600,28 @@ export function SketchForgeEditor({
     busy: boolean;
     error: string | null;
   } | null>(null);
+  /**
+   * Eine Behandlung, die wieder aufgenommen werden soll: Zuruecknehmen ist
+   * schon geschehen, das Werkzeug wartet darauf, dass der zurueckgestellte
+   * Koerper in der Szene steht.
+   */
+  const [pendingEdgeEdit, setPendingEdgeEdit] = useState<{
+    shapeId: string;
+    kind: "fillet" | "chamfer" | "variableFillet";
+    amount: number;
+    edgeIds: number[];
+    chamferAngle?: number;
+    endAmount?: number;
+    flipTaper?: boolean;
+  } | null>(null);
+  const startEdgeModifierRef = useRef<((kind: CadModifierKind) => void) | null>(null);
+  const edgeModifierSeedRef = useRef<{
+    amount: number;
+    edgeIds: number[];
+    chamferAngle?: number;
+    endAmount?: number;
+    flipTaper?: boolean;
+  } | null>(null);
   const [pivotMode, setPivotMode] = useState(false);
   const [rotationPivot, setRotationPivot] = useState<{ shapeId: string; point: { x: number; y: number; z: number } } | null>(null);
   const [snapMode, setSnapMode] = useState<SnapMode | null>(null);
@@ -6808,17 +6859,37 @@ export function SketchForgeEditor({
         const rescuedAngle = message.selectableEdgeIds.length === 0
           ? rescueSharpAngleForEdges(message.edges, edgeModifierRef.current?.sharpAngle ?? 25)
           : null;
+        /*
+         * Eine wieder aufgenommene Behandlung bringt ihre Kanten mit. Die
+         * Vorschau faellt dann von sich aus an, weil die Wirkung an der
+         * Auswahl haengt - hier wird nur gesetzt.
+         */
+        const seed = edgeModifierSeedRef.current;
+        edgeModifierSeedRef.current = null;
+        const resumed = seed
+          ? resumedEdgeSelection(message.edges, seed.edgeIds, edgeModifierRef.current?.sharpAngle ?? 25)
+          : null;
         setEdgeModifier((current) => current ? {
           ...current,
           edges: message.edges,
-          sharpAngle: rescuedAngle ?? current.sharpAngle,
-          selectedEdgeIds: [],
+          sharpAngle: resumed?.edgeIds.length ? resumed.sharpAngle : (rescuedAngle ?? current.sharpAngle),
+          selectedEdgeIds: resumed?.edgeIds ?? [],
+          amount: seed && resumed?.edgeIds.length ? seed.amount : current.amount,
+          chamferAngle: seed?.chamferAngle ?? current.chamferAngle,
+          endAmount: seed?.endAmount ?? current.endAmount,
+          flipTaper: seed?.flipTaper ?? current.flipTaper,
           busy: false,
           prepared: true,
           preview: null,
           componentPreviews: [],
           error: current.hollow || message.selectableEdgeIds.length || rescuedAngle ? null : t("status.noManifoldEdges"),
         } : current);
+        if (seed) {
+          if (!resumed?.edgeIds.length) setNotice(t("status.edgeEditLost"));
+          else if (resumed.missing > 0) setNotice(t("status.edgeEditPartly", { count: resumed.edgeIds.length, total: seed.edgeIds.length }));
+          else setNotice(t("status.edgeEditResumed", { count: resumed.edgeIds.length }));
+          return;
+        }
         const hollowRequest = edgeModifierRef.current?.hollow;
         if (hollowRequest) {
           // Aushoehlen wartet auf keine Auswahl - der Auftrag geht sofort raus.
@@ -7653,6 +7724,44 @@ export function SketchForgeEditor({
     );
     setNotice(t("status.removedFeature", { label: restored.label }));
   }, [commitShapes, invalidateCadModifierSession, selectedEdgeFeatureCount, selectedEdgeHistoryOptions, selectedShape]);
+
+  /**
+   * Eine Behandlung aendern: Sie wird zurueckgenommen, und sobald der
+   * zurueckgestellte Koerper in der Szene steht, oeffnet das Werkzeug mit
+   * derselben Auswahl und demselben Wert.
+   *
+   * In zwei Schritten, weil das Zuruecknehmen durch die Szene geht: Das
+   * Werkzeug liest den ausgewaehlten Koerper aus dem Zustand, und der ist
+   * erst nach dem naechsten Durchlauf der zurueckgestellte.
+   */
+  const editEdgeTreatment = useCallback(async (optionId: string) => {
+    const option = selectedEdgeHistoryOptions.find((candidate) => candidate.id === optionId);
+    if (!option?.editable || !selectedShape) {
+      setNotice(t("status.chooseEdgeFeature"));
+      return;
+    }
+    const editable = option.editable;
+    const shapeId = selectedShape.id;
+    await removeEdgeTreatment(optionId);
+    const restored = shapesRef.current.find((shape) => shape.id === shapeId);
+    if (!restored) return;
+    setPendingEdgeEdit({ shapeId, ...editable });
+  }, [removeEdgeTreatment, selectedEdgeHistoryOptions, selectedShape]);
+
+  useEffect(() => {
+    if (!pendingEdgeEdit || edgeModifier) return;
+    if (!selectedShape || selectedShape.id !== pendingEdgeEdit.shapeId) return;
+    const seed = pendingEdgeEdit;
+    setPendingEdgeEdit(null);
+    edgeModifierSeedRef.current = {
+      amount: seed.amount,
+      edgeIds: seed.edgeIds,
+      chamferAngle: seed.chamferAngle,
+      endAmount: seed.endAmount,
+      flipTaper: seed.flipTaper,
+    };
+    startEdgeModifierRef.current?.(seed.kind);
+  }, [edgeModifier, pendingEdgeEdit, selectedShape]);
 
   const commitSketchProfile = useCallback(
     (next: SketchProfile, message?: string) => {
@@ -9908,6 +10017,7 @@ export function SketchForgeEditor({
       kind,
       amount,
       edgeCount: selectedEdgeIds.length,
+      edgeIds: [...selectedEdgeIds],
       ...(kind === "chamfer" ? { chamferAngle } : {}),
       ...(kind === "variableFillet" ? { endAmount, flipTaper } : {}),
     } satisfies NonNullable<WorkplaneShape["edgeTreatments"]>[number];
@@ -10079,6 +10189,7 @@ export function SketchForgeEditor({
       kind: edgeModifier.kind,
       amount: edgeModifier.amount,
       edgeCount: edgeModifier.selectedEdgeIds.length,
+      edgeIds: [...edgeModifier.selectedEdgeIds],
       ...(edgeModifier.kind === "chamfer" ? { chamferAngle: edgeModifier.chamferAngle } : {}),
       ...(edgeModifier.kind === "variableFillet" ? { endAmount: edgeModifier.endAmount, flipTaper: edgeModifier.flipTaper } : {}),
     } satisfies NonNullable<WorkplaneShape["edgeTreatments"]>[number];
@@ -10147,6 +10258,12 @@ export function SketchForgeEditor({
   useEffect(() => {
     cadPreviewSendRef.current = sendCadPreview;
   }, [sendCadPreview]);
+
+  // Das Wiederaufnehmen einer Behandlung liegt vor dieser Stelle und braucht
+  // das Werkzeug - darum ueber einen Verweis und nicht unmittelbar.
+  useEffect(() => {
+    startEdgeModifierRef.current = startEdgeModifier;
+  }, [startEdgeModifier]);
 
   /** Wer die Auswahl leert, will, dass Schluss ist - auch mit dem, was laeuft. */
   const discardPendingCadPreviews = useCallback(() => {
@@ -13093,6 +13210,7 @@ export function SketchForgeEditor({
           onSelectAll={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: modifierAvailableEdgeIds, preview: null, busy: modifierAvailableEdgeIds.length > 0, error: modifierAvailableEdgeIds.length ? null : current.error } : current)}
           onClear={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: [], preview: null, busy: false, error: t("status.selectHighlightedEdge") } : current)}
           onRemoveFeature={removeEdgeTreatment}
+          onEditFeature={(optionId) => { void editEdgeTreatment(optionId); }}
           onApply={applyEdgeModifier}
           onCancel={cancelEdgeModifier}
         />
