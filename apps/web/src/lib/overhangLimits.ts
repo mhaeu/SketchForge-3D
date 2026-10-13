@@ -25,6 +25,29 @@ export function normalizeOverhangAngle(value: unknown, fallback = DEFAULT_OVERHA
 }
 
 /**
+ * Ein Haar ueber dem eingestellten Winkel liegt die Schwelle, damit eine
+ * Flaeche **genau** auf dem Winkel aussen vor bleibt - eine Fase von 45 Grad
+ * bei der Vorgabe von 45 Grad, der haeufigste Fall von allen.
+ *
+ * Ohne das Haar entscheidet das Rauschen: Die Ansicht vergleicht
+ * `-normal.y > Schwelle`, und bei Gleichheit kippt der Vergleich von Punkt zu
+ * Punkt - dieselbe Fase war fleckig markiert oder nicht, je nach Blickwinkel.
+ *
+ * Gemessen, wie gross das Rauschen wirklich ist: Die Normalen einer echten
+ * 45-Grad-Fase aus dem Kern (Kasten 20 mm, alle vier unteren Kanten, 3 mm)
+ * weichen um hoechstens 1,2e-8 von sin(45 Grad) ab - sie kommen als float32,
+ * und das ist dessen letzte Stelle. In der Ansicht wird die Normale ueber das
+ * Dreieck geschoben und je Bildpunkt neu normiert, also etwa 1e-7.
+ *
+ * 0,01 Grad sind an der Schwelle 1,2e-4 - vier Groessenordnungen ueber dem
+ * Rauschen und weit unter allem, was eine echte Flaeche vom Winkel abweicht:
+ * Eine Flaeche mit 45,01 Grad wird weiter markiert. Layerling nimmt hier 0,4
+ * Grad; das ist mehr, als die Messung hergibt, und wuerde einen echten
+ * Ueberhang von 45,3 Grad verschweigen.
+ */
+export const OVERHANG_ANGLE_MARGIN = 0.01;
+
+/**
  * Ab wann eine Flaeche ueberhaengt, gemessen daran, wie weit ihre Normale nach
  * unten zeigt: `-normal.y` darueber heisst Ueberhang.
  *
@@ -35,5 +58,5 @@ export function normalizeOverhangAngle(value: unknown, fallback = DEFAULT_OVERHA
  * Denselben Wert bekommt der Schattenrechner in der Ansicht.
  */
 export function overhangDownwardLimit(angle: number) {
-  return Math.sin((normalizeOverhangAngle(angle) * Math.PI) / 180);
+  return Math.sin(((normalizeOverhangAngle(angle) + OVERHANG_ANGLE_MARGIN) * Math.PI) / 180);
 }

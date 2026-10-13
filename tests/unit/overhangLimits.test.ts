@@ -4,6 +4,7 @@ import {
   MAX_OVERHANG_ANGLE,
   MIN_OVERHANG_ANGLE,
   normalizeOverhangAngle,
+  OVERHANG_ANGLE_MARGIN,
   overhangDownwardLimit,
 } from "@/lib/overhangLimits";
 
@@ -32,12 +33,32 @@ describe("Ab wann eine Flaeche ueberhaengt", () => {
    * Der Winkel zaehlt von der Senkrechten, darum der Sinus: Eine senkrechte
    * Wand zeigt mit `-normal.y = 0` nach unten, eine waagerechte Decke mit 1.
    */
-  it("liegt bei 45 Grad in der Mitte", () => {
-    expect(overhangDownwardLimit(45)).toBeCloseTo(Math.SQRT1_2, 12);
+  it("liegt bei 45 Grad in der Mitte, ein Haar darueber", () => {
+    expect(overhangDownwardLimit(45)).toBeCloseTo(Math.sin(((45 + OVERHANG_ANGLE_MARGIN) * Math.PI) / 180), 12);
+    expect(overhangDownwardLimit(45) - Math.SQRT1_2).toBeCloseTo(0.000123, 6);
+  });
+
+  /**
+   * Das Haar ueber dem Winkel: Eine Flaeche **genau** auf dem Winkel - die
+   * Fase von 45 Grad bei der Vorgabe von 45 - bleibt aussen vor, auch wenn
+   * ihre Normale um das Rauschen eines float32 daneben liegt. Eine Flaeche,
+   * die wirklich steiler haengt, wird weiter gefangen: bei 45,02 Grad schon.
+   */
+  it("laesst eine Flaeche genau auf dem Winkel aussen vor", () => {
+    const limit = overhangDownwardLimit(45);
+    const at = (degrees: number) => Math.sin((degrees * Math.PI) / 180);
+    expect(at(45) > limit).toBe(false);
+    // Das gemessene Rauschen einer echten Fase aus dem Kern: 1,2e-8.
+    expect(at(45) + 1.2e-8 > limit).toBe(false);
+    // Und das der Ansicht, die je Bildpunkt neu normiert: etwa 1e-7.
+    expect(at(45) + 1e-7 > limit).toBe(false);
+    // Knapp darueber - das Haar ist 0,01 Grad breit.
+    expect(at(45.02) > limit).toBe(true);
+    expect(at(45.4) > limit).toBe(true);
   });
 
   it("wird mit kleinerem Winkel strenger", () => {
-    expect(overhangDownwardLimit(30)).toBeCloseTo(0.5, 12);
+    expect(overhangDownwardLimit(30)).toBeCloseTo(Math.sin(((30 + OVERHANG_ANGLE_MARGIN) * Math.PI) / 180), 12);
     expect(overhangDownwardLimit(30)).toBeLessThan(overhangDownwardLimit(45));
     expect(overhangDownwardLimit(70)).toBeGreaterThan(overhangDownwardLimit(45));
   });
@@ -58,6 +79,6 @@ describe("Ab wann eine Flaeche ueberhaengt", () => {
   });
 
   it("haelt sich auch an einen unbrauchbaren Winkel nicht fest", () => {
-    expect(overhangDownwardLimit(Number.NaN)).toBeCloseTo(Math.SQRT1_2, 12);
+    expect(overhangDownwardLimit(Number.NaN)).toBeCloseTo(overhangDownwardLimit(DEFAULT_OVERHANG_ANGLE), 12);
   });
 });
