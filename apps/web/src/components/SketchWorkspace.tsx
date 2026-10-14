@@ -17,6 +17,7 @@ import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_A
 import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
 import { constructionSnapPoints, nearestSketchSnapPoint } from "@/lib/sketchConstruction";
+import { normalizeSketchImageRotation, rotateSketchPoint, sketchImageCalibrationPatch, sketchImageCentredPatch } from "@/lib/sketchImageAlign";
 import { hasMarkedSweepPath, sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, snapGridStep } from "@/lib/workplaneSettings";
@@ -124,6 +125,24 @@ function snapValue(value: number, step: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Ein gedrehtes Bild an einem Griff skalieren.
+ *
+ * Die Griffe sitzen auf dem gedrehten Rahmen, also wird im Rahmen des Bildes
+ * gerechnet: den Zeiger zurueckdrehen, wie ungedreht skalieren, und die neue
+ * Mitte wieder vordrehen. Die gegenueberliegende Kante bleibt dabei stehen,
+ * genau wie beim ungedrehten Bild.
+ */
+function resizeRotatedSketchImage(start: SketchImage, handle: ResizeHandle, point: { x: number; z: number }): Partial<SketchImage> {
+  const rotation = start.rotation ?? 0;
+  if (rotation === 0) return resizeSketchImage(start, handle, point);
+  const centre = { x: start.x, z: start.z };
+  const local = rotateSketchPoint(point, centre, -rotation);
+  const resized = resizeSketchImage({ ...start, rotation: 0 }, handle, local);
+  const nextCentre = rotateSketchPoint({ x: resized.x ?? start.x, z: resized.z ?? start.z }, centre, rotation);
+  return { ...resized, x: nextCentre.x, z: nextCentre.z };
 }
 
 function resizeSketchImage(start: SketchImage, handle: ResizeHandle, point: { x: number; z: number }): Partial<SketchImage> {
@@ -668,7 +687,7 @@ export function SketchWorkspace({
       return images.map((image) => image.id === pointerAction.imageId ? { ...image, x: pointerAction.start.x + deltaX, z: pointerAction.start.z + deltaZ } : image);
     }
     if (pointerAction?.kind === "resize-image") {
-      return images.map((image) => image.id === pointerAction.imageId ? { ...image, ...resizeSketchImage(pointerAction.start, pointerAction.handle, pointerAction.current) } : image);
+      return images.map((image) => image.id === pointerAction.imageId ? { ...image, ...resizeRotatedSketchImage(pointerAction.start, pointerAction.handle, pointerAction.current) } : image);
     }
     return images;
   }, [pointerAction, profile.images]);
@@ -746,6 +765,16 @@ export function SketchWorkspace({
   /** Die Kreuzungen der Hilfslinien - Fangpunkte, die nicht in der Skizze stehen. */
   const constructionCrossings = useMemo(() => constructionSnapPoints(displayProfile), [displayProfile]);
   const [constructionSnap, setConstructionSnap] = useState<{ x: number; z: number } | null>(null);
+  /**
+   * Kalibrieren: zwei Klicks auf Stellen im Bild, deren Abstand man kennt.
+   * Gesammelt wird am rohen Zeiger, nicht am gerasteten Punkt - man zeigt
+   * auf etwas im Foto, und das liegt selten auf dem Raster.
+   */
+  const [calibration, setCalibration] = useState<{ imageId: string; points: Array<{ x: number; z: number }> } | null>(null);
+  useEffect(() => {
+    if (calibration && selected?.kind === "image" && selected.id === calibration.imageId) return;
+    if (calibration) setCalibration(null);
+  }, [calibration, selected]);
 
   /**
    * Die Hilfslinien, die stehen bleiben. Sie sagen auch nach dem Loslassen
@@ -833,7 +862,21 @@ export function SketchWorkspace({
   };
 
   const handlePanPointerDownCapture = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (isSketchPanGesture(event)) beginPan(event);
+    if (isSketchPanGesture(event)) {
+      beginPan(event);
+      return;
+    }
+    /*
+     * Beim Kalibrieren gehoert der Klick dem Kalibrieren - noch bevor das Bild
+     * ihn als Verschieben nimmt. Darum hier, in der Fangphase.
+     */
+    if (calibration && event.button === 0 && calibration.points.length < 2) {
+      const local = localFromEvent(event);
+      if (!local) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setCalibration({ ...calibration, points: [...calibration.points, { x: local.x, z: local.z }] });
+    }
   };
 
   const handlePlanePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -959,7 +1002,7 @@ export function SketchWorkspace({
         z: action.start.z + action.current.z - action.origin.z,
       }, t("sketch.imageMoved"));
     } else if (action.kind === "resize-image") {
-      onUpdateImage(action.imageId, resizeSketchImage(action.start, action.handle, action.current), t("sketch.imageResized"));
+      onUpdateImage(action.imageId, resizeRotatedSketchImage(action.start, action.handle, action.current), t("sketch.imageResized"));
     }
     setPointerAction(null);
   };
@@ -1094,6 +1137,7 @@ export function SketchWorkspace({
                 className={image.locked ? "locked" : undefined}
                 aria-label={image.name}
                 href={image.dataUrl}
+                transform={image.rotation ? `rotate(${image.rotation} ${image.x} ${image.z})` : undefined}
                 x={image.x - image.width / 2}
                 y={image.z - image.depth / 2}
                 width={image.width}
@@ -1125,6 +1169,22 @@ export function SketchWorkspace({
               />
             ))}
           </g>
+          {/* Ueber den Bildern, sonst deckte das Foto die Punkte zu. */}
+          {calibration ? (
+            <g className="sketch-calibration" pointerEvents="none">
+              {calibration.points.length === 2 ? (
+                <line
+                  x1={calibration.points[0].x}
+                  y1={calibration.points[0].z}
+                  x2={calibration.points[1].x}
+                  y2={calibration.points[1].z}
+                />
+              ) : null}
+              {calibration.points.map((point, index) => (
+                <circle key={index} cx={point.x} cy={point.z} r={5 * screenUnit} />
+              ))}
+            </g>
+          ) : null}
           <g className="sketch-reference-shapes" pointerEvents="none">
             {referenceShapes.filter((shape) => !shape.hidden).map((shape) => {
               const footprint = referenceFootprints.get(shape.id);
@@ -1704,7 +1764,10 @@ export function SketchWorkspace({
             ))}
           </g>
           {selectedImage && selectedImageBounds && tool === "select" ? (
-            <g className="sketch-image-selection">
+            <g
+              className="sketch-image-selection"
+              transform={selectedImage.rotation ? `rotate(${selectedImage.rotation} ${selectedImage.x} ${selectedImage.z})` : undefined}
+            >
               <rect
                 className="sketch-image-selection-box"
                 x={selectedImageBounds.minX}
@@ -1775,6 +1838,16 @@ export function SketchWorkspace({
         <SketchImageInspector
           image={selectedImage}
           accuracy={workspace.accuracy}
+          calibration={calibration?.imageId === selectedImage.id ? calibration.points : null}
+          onCalibrationStart={() => setCalibration({ imageId: selectedImage.id, points: [] })}
+          onCalibrationCancel={() => setCalibration(null)}
+          onCalibrationApply={(realDistance) => {
+            if (!calibration || calibration.points.length < 2) return;
+            const patch = sketchImageCalibrationPatch(selectedImage, calibration.points[0], calibration.points[1], realDistance);
+            if (!patch) return;
+            onUpdateImage(selectedImage.id, patch, t("sketch.imageCalibrated"));
+            setCalibration(null);
+          }}
           onClose={() => onSelectMany([], [], [])}
           onUpdate={(patch, message) => onUpdateImage(selectedImage.id, patch, message)}
           onDelete={() => onDeleteImage(selectedImage.id)}
@@ -1870,16 +1943,30 @@ export function SketchWorkspace({
 function SketchImageInspector({
   image,
   accuracy,
+  calibration,
+  onCalibrationStart,
+  onCalibrationCancel,
+  onCalibrationApply,
   onClose,
   onUpdate,
   onDelete,
 }: {
   image: SketchImage;
   accuracy: 1 | 2 | 3;
+  /** Die schon gesetzten Kalibrierpunkte, oder `null`, wenn nicht kalibriert wird. */
+  calibration: Array<{ x: number; z: number }> | null;
+  onCalibrationStart: () => void;
+  onCalibrationCancel: () => void;
+  onCalibrationApply: (realDistance: number) => void;
   onClose: () => void;
   onUpdate: (patch: Partial<SketchImage>, message?: string) => void;
   onDelete: () => void;
 }) {
+  const [realDistanceDraft, setRealDistanceDraft] = useState("");
+  const measuredDistance = calibration && calibration.length === 2
+    ? Math.hypot(calibration[1].x - calibration[0].x, calibration[1].z - calibration[0].z)
+    : null;
+  const realDistance = parseMeasurementInput(realDistanceDraft);
   const aspect = image.width / Math.max(0.5, image.depth);
   const updateWidth = (width: number) => onUpdate({
     width,
@@ -1928,6 +2015,73 @@ function SketchImageInspector({
             {image.lockAspect !== false ? <Link size={17} /> : <Link2Off size={17} />}
             <span>{image.lockAspect !== false ? t("sketch.aspectLocked") : t("sketch.aspectUnlocked")}</span>
           </button>
+        </div>
+      </div>
+      {/* Ausrichten: ein Foto wird damit vom Bild zum Mass. */}
+      <div className="property-card">
+        <div className="property-card-header static"><span>{t("sketch.imageAlign")}</span></div>
+        <div className="property-list">
+          <SketchImageRange
+            label={t("sketch.imageRotation")}
+            value={image.rotation ?? 0}
+            min={-180}
+            max={180}
+            accuracy={1}
+            suffix="°"
+            disabled={image.locked}
+            onChange={(rotation) => onUpdate({ rotation: normalizeSketchImageRotation(rotation) }, t("sketch.imageRotated"))}
+          />
+          <div className="sketch-image-align-row">
+            <button type="button" disabled={image.locked} onClick={() => onUpdate(sketchImageCentredPatch("x"), t("sketch.imageCentred"))}>
+              {t("sketch.imageCentreX")}
+            </button>
+            <button type="button" disabled={image.locked} onClick={() => onUpdate(sketchImageCentredPatch("z"), t("sketch.imageCentred"))}>
+              {t("sketch.imageCentreY")}
+            </button>
+          </div>
+          {calibration === null ? (
+            <button className="sketch-image-calibrate" type="button" disabled={image.locked} title={t("sketch.imageCalibrateHint")} onClick={() => { setRealDistanceDraft(""); onCalibrationStart(); }}>
+              {t("sketch.imageCalibrate")}
+            </button>
+          ) : (
+            <div className="sketch-image-calibration">
+              <p>
+                {calibration.length === 0
+                  ? t("sketch.imageCalibrateFirst")
+                  : calibration.length === 1
+                    ? t("sketch.imageCalibrateSecond")
+                    : t("sketch.imageCalibrateMeasured", { distance: formatDimension(measuredDistance ?? 0, accuracy) })}
+              </p>
+              {calibration.length === 2 ? (
+                <label className="sketch-image-calibration-field">
+                  <span>{t("sketch.imageCalibrateReal")}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoFocus
+                    value={realDistanceDraft}
+                    onChange={(event) => setRealDistanceDraft(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && Number.isFinite(realDistance) && realDistance > 0) onCalibrationApply(realDistance);
+                      if (event.key === "Escape") onCalibrationCancel();
+                    }}
+                  />
+                  <span>mm</span>
+                </label>
+              ) : null}
+              <div className="sketch-image-align-row">
+                <button type="button" onClick={onCalibrationCancel}>{t("common.cancel")}</button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={calibration.length < 2 || !(Number.isFinite(realDistance) && realDistance > 0)}
+                  onClick={() => onCalibrationApply(realDistance)}
+                >
+                  {t("sketch.imageCalibrateApply")}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </aside>

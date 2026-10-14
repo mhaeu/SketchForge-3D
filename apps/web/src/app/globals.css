@@ -4771,6 +4771,81 @@ html[data-theme="dark"] .editor-too-tall {
   border-color: #90cee2;
 }
 
+/* Ausrichten: mittig setzen, kalibrieren - dieselbe Knopfart wie das
+   Seitenverhaeltnis darueber. */
+.sketch-image-align-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.sketch-image-align-row button,
+.sketch-image-calibrate {
+  min-height: 34px;
+  color: #53697c;
+  background: #f7fafc;
+  border: 1px solid #d1dde5;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.sketch-image-align-row button.primary {
+  color: #ffffff;
+  background: #0879a5;
+  border-color: #0879a5;
+}
+
+.sketch-image-align-row button:disabled,
+.sketch-image-calibrate:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.sketch-image-calibration {
+  display: grid;
+  gap: 8px;
+}
+
+.sketch-image-calibration p {
+  margin: 0;
+  color: #0879a5;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sketch-image-calibration-field {
+  display: grid;
+  grid-template-columns: 1fr 96px auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.sketch-image-calibration-field input {
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid #90cee2;
+  border-radius: 5px;
+  text-align: right;
+}
+
+/* Die beiden Kalibrierpunkte im Bild und die Strecke dazwischen. */
+.sketch-calibration line {
+  stroke: #ff3b30;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.sketch-calibration circle {
+  fill: none;
+  stroke: #ff3b30;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .sketch-image-aspect-toggle:disabled,
 .sketch-image-position-field input:disabled,
 .sketch-image-number-input:disabled {

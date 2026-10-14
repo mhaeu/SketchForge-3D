@@ -249,6 +249,12 @@ export type SketchImage = {
   opacity?: number;
   lockAspect?: boolean;
   locked?: boolean;
+  /**
+   * Drehung um die Bildmitte, in Grad - positiv im Uhrzeigersinn auf dem
+   * Bildschirm, wie bei den Bezugskoerpern. Damit steht ein schraeg
+   * fotografiertes Teil gerade zur Drehachse.
+   */
+  rotation?: number;
 };
 
 export type SketchProfile = {
