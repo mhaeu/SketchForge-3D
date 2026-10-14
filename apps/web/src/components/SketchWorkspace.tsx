@@ -17,7 +17,7 @@ import { arcApex, arcBulgeAlong, arcBulgeThrough, arcCubics, isArcSegment, MIN_A
 import { alignSketchPoint, persistentSketchGuides, type SketchAlignmentGuide } from "@/lib/sketchAlignment";
 import { MIN_SKETCH_CIRCLE_RADIUS } from "@/lib/sketchCircles";
 import { constructionSnapPoints, nearestSketchSnapPoint } from "@/lib/sketchConstruction";
-import { normalizeSketchImageRotation, rotateSketchPoint, sketchImageCalibrationPatch, sketchImageCentredPatch } from "@/lib/sketchImageAlign";
+import { croppedSketchImagePatch, normalizeSketchImageRotation, rotateSketchPoint, sketchImageCalibrationPatch, sketchImageCentredPatch, sketchImageFullLocalFrame, uncroppedSketchImagePatch } from "@/lib/sketchImageAlign";
 import { hasMarkedSweepPath, sweepSpinePath } from "@/lib/sketchSweep";
 import { rotateSketchPoints } from "@/lib/sketchRotation";
 import { DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, snapGridStep } from "@/lib/workplaneSettings";
@@ -112,7 +112,7 @@ type PointerAction =
   | { kind: "pan"; pointerId: number; clientX: number; clientY: number }
   | { kind: "marquee"; pointerId: number; origin: { x: number; z: number }; current: { x: number; z: number } }
   | { kind: "move-image"; pointerId: number; imageId: string; origin: { x: number; z: number }; current: { x: number; z: number }; start: SketchImage }
-  | { kind: "resize-image"; pointerId: number; imageId: string; handle: ResizeHandle; current: { x: number; z: number }; start: SketchImage };
+  | { kind: "resize-image"; pointerId: number; imageId: string; handle: ResizeHandle; current: { x: number; z: number }; start: SketchImage; crop?: boolean };
 
 
 // Dieselbe Rechnung wie im Koerpermodus - ein eigenes Rastermass traegt seine
@@ -687,7 +687,7 @@ export function SketchWorkspace({
       return images.map((image) => image.id === pointerAction.imageId ? { ...image, x: pointerAction.start.x + deltaX, z: pointerAction.start.z + deltaZ } : image);
     }
     if (pointerAction?.kind === "resize-image") {
-      return images.map((image) => image.id === pointerAction.imageId ? { ...image, ...resizeRotatedSketchImage(pointerAction.start, pointerAction.handle, pointerAction.current) } : image);
+      return images.map((image) => image.id === pointerAction.imageId ? { ...image, ...(pointerAction.crop ? croppedSketchImagePatch(pointerAction.start, pointerAction.handle, pointerAction.current) : resizeRotatedSketchImage(pointerAction.start, pointerAction.handle, pointerAction.current)) } : image);
     }
     return images;
   }, [pointerAction, profile.images]);
@@ -771,6 +771,11 @@ export function SketchWorkspace({
    * auf etwas im Foto, und das liegt selten auf dem Raster.
    */
   const [calibration, setCalibration] = useState<{ imageId: string; points: Array<{ x: number; z: number }> } | null>(null);
+  /** Das Bild, dessen Griffe gerade beschneiden statt skalieren. */
+  const [cropImageId, setCropImageId] = useState<string | null>(null);
+  useEffect(() => {
+    if (cropImageId && !(selected?.kind === "image" && selected.id === cropImageId)) setCropImageId(null);
+  }, [cropImageId, selected]);
   useEffect(() => {
     if (calibration && selected?.kind === "image" && selected.id === calibration.imageId) return;
     if (calibration) setCalibration(null);
@@ -1002,7 +1007,11 @@ export function SketchWorkspace({
         z: action.start.z + action.current.z - action.origin.z,
       }, t("sketch.imageMoved"));
     } else if (action.kind === "resize-image") {
-      onUpdateImage(action.imageId, resizeRotatedSketchImage(action.start, action.handle, action.current), t("sketch.imageResized"));
+      onUpdateImage(
+        action.imageId,
+        action.crop ? croppedSketchImagePatch(action.start, action.handle, action.current) : resizeRotatedSketchImage(action.start, action.handle, action.current),
+        action.crop ? t("sketch.imageCropped") : t("sketch.imageResized"),
+      );
     }
     setPointerAction(null);
   };
@@ -1130,18 +1139,37 @@ export function SketchWorkspace({
             </g>
           ) : null}
           <g className="sketch-reference-images">
-            {displayImages.map((image) => (
+            {displayImages.map((image) => {
+              const full = sketchImageFullLocalFrame(image);
+              const clipId = `sketch-image-crop-${image.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+              return (
+              <g key={image.id} transform={image.rotation ? `rotate(${image.rotation} ${image.x} ${image.z})` : undefined}>
+                {image.crop ? (
+                  <clipPath id={clipId}>
+                    <rect x={image.x - image.width / 2} y={image.z - image.depth / 2} width={image.width} height={image.depth} />
+                  </clipPath>
+                ) : null}
+                {/* Beim Beschneiden zeigt ein Rahmen, wie weit das ganze Bild reicht. */}
+                {cropImageId === image.id && image.crop ? (
+                  <rect
+                    className="sketch-image-full-frame"
+                    x={full.x - full.width / 2}
+                    y={full.z - full.depth / 2}
+                    width={full.width}
+                    height={full.depth}
+                    pointerEvents="none"
+                  />
+                ) : null}
               <image
-                key={image.id}
                 data-sketch-entity="image"
                 className={image.locked ? "locked" : undefined}
                 aria-label={image.name}
                 href={image.dataUrl}
-                transform={image.rotation ? `rotate(${image.rotation} ${image.x} ${image.z})` : undefined}
-                x={image.x - image.width / 2}
-                y={image.z - image.depth / 2}
-                width={image.width}
-                height={image.depth}
+                clipPath={image.crop ? `url(#${clipId})` : undefined}
+                x={full.x - full.width / 2}
+                y={full.z - full.depth / 2}
+                width={full.width}
+                height={full.depth}
                 opacity={image.opacity ?? 0.55}
                 preserveAspectRatio="none"
                 pointerEvents={tool === "select" ? "auto" : "none"}
@@ -1167,7 +1195,9 @@ export function SketchWorkspace({
                   });
                 }}
               />
-            ))}
+              </g>
+              );
+            })}
           </g>
           {/* Ueber den Bildern, sonst deckte das Foto die Punkte zu. */}
           {calibration ? (
@@ -1825,6 +1855,7 @@ export function SketchWorkspace({
                       handle: handle.id,
                       current: point,
                       start: { ...selectedImage },
+                      crop: cropImageId === selectedImage.id,
                     });
                   }}
                 />
@@ -1838,6 +1869,9 @@ export function SketchWorkspace({
         <SketchImageInspector
           image={selectedImage}
           accuracy={workspace.accuracy}
+          cropping={cropImageId === selectedImage.id}
+          onCropToggle={() => setCropImageId((current) => current === selectedImage.id ? null : selectedImage.id)}
+          onUncrop={() => onUpdateImage(selectedImage.id, uncroppedSketchImagePatch(selectedImage), t("sketch.imageUncropped"))}
           calibration={calibration?.imageId === selectedImage.id ? calibration.points : null}
           onCalibrationStart={() => setCalibration({ imageId: selectedImage.id, points: [] })}
           onCalibrationCancel={() => setCalibration(null)}
@@ -1943,6 +1977,9 @@ export function SketchWorkspace({
 function SketchImageInspector({
   image,
   accuracy,
+  cropping,
+  onCropToggle,
+  onUncrop,
   calibration,
   onCalibrationStart,
   onCalibrationCancel,
@@ -1953,6 +1990,10 @@ function SketchImageInspector({
 }: {
   image: SketchImage;
   accuracy: 1 | 2 | 3;
+  /** Ob die Rahmengriffe gerade beschneiden statt skalieren. */
+  cropping: boolean;
+  onCropToggle: () => void;
+  onUncrop: () => void;
   /** Die schon gesetzten Kalibrierpunkte, oder `null`, wenn nicht kalibriert wird. */
   calibration: Array<{ x: number; z: number }> | null;
   onCalibrationStart: () => void;
@@ -2037,6 +2078,23 @@ function SketchImageInspector({
             </button>
             <button type="button" disabled={image.locked} onClick={() => onUpdate(sketchImageCentredPatch("z"), t("sketch.imageCentred"))}>
               {t("sketch.imageCentreY")}
+            </button>
+          </div>
+          {/* Beschneiden: die Griffe schneiden zu, statt zu skalieren. Das
+              Weggeschnittene bleibt gespeichert und kommt zurueck. */}
+          <div className="sketch-image-align-row">
+            <button
+              type="button"
+              className={cropping ? "primary" : ""}
+              aria-pressed={cropping}
+              disabled={image.locked}
+              title={t("sketch.imageCropHint")}
+              onClick={onCropToggle}
+            >
+              {t("sketch.imageCrop")}
+            </button>
+            <button type="button" disabled={image.locked || !image.crop} onClick={onUncrop}>
+              {t("sketch.imageUncrop")}
             </button>
           </div>
           {calibration === null ? (

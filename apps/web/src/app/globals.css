@@ -10272,3 +10272,13 @@ html[data-theme="dark"] .language-switch-menu button.active {
   border-color: rgba(0, 159, 227, 0.6);
   color: #0079b0;
 }
+
+/* Beim Beschneiden: wie weit das ganze Bild reicht. */
+.sketch-image-full-frame {
+  fill: none;
+  stroke: #0879a5;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.7;
+}

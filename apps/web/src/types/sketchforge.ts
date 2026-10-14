@@ -255,6 +255,12 @@ export type SketchImage = {
    * fotografiertes Teil gerade zur Drehachse.
    */
   rotation?: number;
+  /**
+   * Was am Rand weggeschnitten ist, als Anteil des ganzen Bildes. Das Bild
+   * behaelt seine Pixel: `x/z/width/depth` sind der sichtbare Ausschnitt, und
+   * das Weggeschnittene kommt auf Wunsch zurueck.
+   */
+  crop?: { left: number; top: number; right: number; bottom: number };
 };
 
 export type SketchProfile = {

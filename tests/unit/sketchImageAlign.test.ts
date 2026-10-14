@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  croppedSketchImagePatch,
+  normalizeSketchImageCrop,
   normalizeSketchImageRotation,
+  sketchImageFullFrame,
+  uncroppedSketchImagePatch,
   rotateSketchPoint,
   sketchImageCalibrationPatch,
   sketchImageCentredPatch,
@@ -106,5 +110,78 @@ describe("Das Bild kalibrieren", () => {
     expect(sketchImageCalibrationPatch(image, { x: 1, z: 1 }, { x: 1, z: 1 }, 50)).toBeNull();
     expect(sketchImageCalibrationPatch(image, { x: 0, z: 0 }, { x: 5, z: 0 }, 0)).toBeNull();
     expect(sketchImageCalibrationPatch(image, { x: 0, z: 0 }, { x: 5, z: 0 }, Number.NaN)).toBeNull();
+  });
+});
+
+/**
+ * Beschneiden: Die Rahmengriffe schneiden das Bild zu, statt es zu
+ * skalieren. Die Zusage, auf die es ankommt: Das ganze Bild bleibt, wo es
+ * ist, mit seinem Massstab - ein kalibriertes Foto bleibt kalibriert -, und
+ * das Weggeschnittene kommt unveraendert zurueck.
+ */
+describe("Das Bild beschneiden", () => {
+  const photo = { x: 0, z: 0, width: 40, depth: 20 };
+
+  it("schneidet an einer Kante zu und laesst den Massstab", () => {
+    // Die rechte Kante auf die Mitte ziehen.
+    const patch = croppedSketchImagePatch(photo, "e", { x: 0, z: 0 });
+    expect(patch.width).toBeCloseTo(20, 9);
+    expect(patch.depth).toBeCloseTo(20, 9);
+    expect(patch.x).toBeCloseTo(-10, 9);
+    expect(patch.crop).toEqual({ left: 0, top: 0, right: 0.5, bottom: 0 });
+    // Das ganze Bild steht noch am selben Ort, gleich gross.
+    const full = sketchImageFullFrame({ ...photo, ...patch });
+    expect(full.x).toBeCloseTo(0, 9);
+    expect(full.width).toBeCloseTo(40, 9);
+  });
+
+  it("bringt das Weggeschnittene unveraendert zurueck", () => {
+    const cropped = { ...photo, ...croppedSketchImagePatch(photo, "nw", { x: -10, z: -5 }) };
+    expect(cropped.crop).toEqual({ left: 0.25, top: 0.25, right: 0, bottom: 0 });
+    const restored = { ...cropped, ...uncroppedSketchImagePatch(cropped) };
+    expect(restored.x).toBeCloseTo(0, 9);
+    expect(restored.z).toBeCloseTo(0, 9);
+    expect(restored.width).toBeCloseTo(40, 9);
+    expect(restored.depth).toBeCloseTo(20, 9);
+    expect(restored.crop).toBeUndefined();
+  });
+
+  /**
+   * Ein gedrehtes Bild wird in seinem eigenen Rahmen beschnitten: Das ganze
+   * Bild bleibt dabei stehen, auch wenn der sichtbare Ausschnitt seine Mitte
+   * verschiebt - und Zuruecknehmen trifft es wieder genau.
+   */
+  it("beschneidet ein gedrehtes Bild in seinem eigenen Rahmen", () => {
+    const turned = { ...photo, x: 7, z: -3, rotation: 30 };
+    const [, , cornerC] = sketchImageCorners(turned);
+    // Die rechte untere Ecke halb zur Mitte ziehen.
+    const pull = { x: (cornerC.x + turned.x) / 2, z: (cornerC.z + turned.z) / 2 };
+    const cropped = { ...turned, ...croppedSketchImagePatch(turned, "se", pull) };
+    expect(cropped.crop!.right).toBeCloseTo(0.25, 9);
+    expect(cropped.crop!.bottom).toBeCloseTo(0.25, 9);
+    const full = sketchImageFullFrame(cropped);
+    expect(full.x).toBeCloseTo(7, 9);
+    expect(full.z).toBeCloseTo(-3, 9);
+    expect(full.width).toBeCloseTo(40, 9);
+    const restored = { ...cropped, ...uncroppedSketchImagePatch(cropped) };
+    expect(restored.x).toBeCloseTo(7, 9);
+    expect(restored.z).toBeCloseTo(-3, 9);
+  });
+
+  it("kommt nicht ueber das ganze Bild hinaus und nicht ueber die Gegenkante", () => {
+    // Weit nach aussen gezogen: bleibt beim ganzen Bild.
+    expect(croppedSketchImagePatch(photo, "e", { x: 500, z: 0 }).crop).toBeUndefined();
+    // Ueber die linke Kante hinaus: ein Rest bleibt stehen.
+    const squeezed = croppedSketchImagePatch(photo, "e", { x: -500, z: 0 });
+    expect(squeezed.width).toBeGreaterThan(0);
+    expect(squeezed.crop!.right).toBeCloseTo(0.98, 9);
+  });
+
+  it("haelt den gespeicherten Beschnitt in seinen Grenzen", () => {
+    expect(normalizeSketchImageCrop(undefined)).toBeUndefined();
+    expect(normalizeSketchImageCrop({ left: 0, top: 0, right: 0, bottom: 0 })).toBeUndefined();
+    expect(normalizeSketchImageCrop({ left: 0.1, top: 0.2, right: 0.3, bottom: 0 })).toEqual({ left: 0.1, top: 0.2, right: 0.3, bottom: 0 });
+    // Nichts mehr sichtbar: verworfen.
+    expect(normalizeSketchImageCrop({ left: 0.6, top: 0, right: 0.6, bottom: 0 })).toBeUndefined();
   });
 });

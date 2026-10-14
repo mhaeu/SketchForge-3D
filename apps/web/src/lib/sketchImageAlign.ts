@@ -93,3 +93,103 @@ export function sketchImageCalibrationPatch(
     depth: image.depth * scale,
   };
 }
+
+/**
+ * Wie viel vom Bild an jeder Seite weggeschnitten ist, als Anteil der ganzen
+ * Bildbreite bzw. -hoehe. Links und oben im Rahmen des Bildes, ungedreht.
+ */
+export type SketchImageCrop = { left: number; top: number; right: number; bottom: number };
+
+const NO_CROP: SketchImageCrop = { left: 0, top: 0, right: 0, bottom: 0 };
+
+/** Mindestens so viel bleibt sichtbar, als Anteil - sonst verschwaende das Bild. */
+const MIN_VISIBLE_SHARE = 0.02;
+
+export function normalizeSketchImageCrop(value: unknown): SketchImageCrop | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Partial<SketchImageCrop>;
+  const part = (entry: unknown) => (typeof entry === "number" && Number.isFinite(entry) ? Math.min(1, Math.max(0, entry)) : 0);
+  const crop = { left: part(raw.left), top: part(raw.top), right: part(raw.right), bottom: part(raw.bottom) };
+  if (crop.left + crop.right > 1 - MIN_VISIBLE_SHARE || crop.top + crop.bottom > 1 - MIN_VISIBLE_SHARE) return undefined;
+  return crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0 ? undefined : crop;
+}
+
+/**
+ * Das ganze Bild, so wie es ohne Beschnitt laege: Mitte (in der Skizze),
+ * Breite und Tiefe. Der sichtbare Ausschnitt ist `image.x/z/width/depth`;
+ * weggeschnitten ist nichts verloren, es steht nur nicht im Bild.
+ */
+export function sketchImageFullFrame(image: Pick<SketchImage, "x" | "z" | "width" | "depth" | "rotation" | "crop">) {
+  const crop = image.crop ?? NO_CROP;
+  const fullWidth = image.width / Math.max(MIN_VISIBLE_SHARE, 1 - crop.left - crop.right);
+  const fullDepth = image.depth / Math.max(MIN_VISIBLE_SHARE, 1 - crop.top - crop.bottom);
+  // Im Rahmen des Bildes: um wie viel die ganze Mitte neben der sichtbaren liegt.
+  const offset = {
+    x: image.x + ((crop.right - crop.left) * fullWidth) / 2,
+    z: image.z + ((crop.bottom - crop.top) * fullDepth) / 2,
+  };
+  const centre = rotateSketchPoint(offset, { x: image.x, z: image.z }, image.rotation ?? 0);
+  return { x: centre.x, z: centre.z, width: fullWidth, depth: fullDepth };
+}
+
+/**
+ * An einem Griff beschneiden: Die Kante dieses Griffs wandert, das ganze Bild
+ * bleibt, wo es ist, und mit ihm der Massstab.
+ *
+ * Gerechnet wird im Rahmen des Bildes - wie beim Skalieren eines gedrehten
+ * Bildes. Eine Kante kann nicht ueber das ganze Bild hinaus und nicht naeher
+ * als `MIN_VISIBLE_SHARE` an die gegenueberliegende.
+ */
+export function croppedSketchImagePatch(
+  image: Pick<SketchImage, "x" | "z" | "width" | "depth" | "rotation" | "crop">,
+  handle: string,
+  point: SketchImagePoint,
+): Partial<SketchImage> {
+  const full = sketchImageFullFrame(image);
+  const rotation = image.rotation ?? 0;
+  // Der Zeiger im Rahmen des ganzen Bildes, ungedreht, Ursprung in seiner Mitte.
+  const local = rotateSketchPoint(point, { x: full.x, z: full.z }, -rotation);
+  const u = (local.x - full.x) / full.width + 0.5;
+  const v = (local.z - full.z) / full.depth + 0.5;
+  const crop = { ...(image.crop ?? NO_CROP) };
+  if (handle.includes("w")) crop.left = Math.min(Math.max(0, u), 1 - crop.right - MIN_VISIBLE_SHARE);
+  if (handle.includes("e")) crop.right = Math.min(Math.max(0, 1 - u), 1 - crop.left - MIN_VISIBLE_SHARE);
+  if (handle.includes("n")) crop.top = Math.min(Math.max(0, v), 1 - crop.bottom - MIN_VISIBLE_SHARE);
+  if (handle.includes("s")) crop.bottom = Math.min(Math.max(0, 1 - v), 1 - crop.top - MIN_VISIBLE_SHARE);
+  return frameForCrop(full, rotation, crop);
+}
+
+/** Der sichtbare Ausschnitt zu einem ganzen Bild und seinem Beschnitt. */
+function frameForCrop(full: { x: number; z: number; width: number; depth: number }, rotation: number, crop: SketchImageCrop): Partial<SketchImage> {
+  const width = full.width * (1 - crop.left - crop.right);
+  const depth = full.depth * (1 - crop.top - crop.bottom);
+  const localCentre = {
+    x: full.x + ((crop.left - crop.right) * full.width) / 2,
+    z: full.z + ((crop.top - crop.bottom) * full.depth) / 2,
+  };
+  const centre = rotateSketchPoint(localCentre, { x: full.x, z: full.z }, rotation);
+  return { x: centre.x, z: centre.z, width, depth, crop: normalizeSketchImageCrop(crop) };
+}
+
+/** Den Beschnitt aufheben: Das ganze Bild steht wieder da, am selben Ort. */
+export function uncroppedSketchImagePatch(image: Pick<SketchImage, "x" | "z" | "width" | "depth" | "rotation" | "crop">): Partial<SketchImage> {
+  const full = sketchImageFullFrame(image);
+  return { x: full.x, z: full.z, width: full.width, depth: full.depth, crop: undefined };
+}
+
+/**
+ * Wo das ganze Bild liegt, im **ungedrehten** Rahmen um die sichtbare Mitte -
+ * so, wie es gezeichnet wird: Das Bild steht ungedreht da, ein Ausschnitt
+ * schneidet es zu, und um die sichtbare Mitte wird das Ganze gedreht.
+ */
+export function sketchImageFullLocalFrame(image: Pick<SketchImage, "x" | "z" | "width" | "depth" | "crop">) {
+  const crop = image.crop ?? NO_CROP;
+  const width = image.width / Math.max(MIN_VISIBLE_SHARE, 1 - crop.left - crop.right);
+  const depth = image.depth / Math.max(MIN_VISIBLE_SHARE, 1 - crop.top - crop.bottom);
+  return {
+    x: image.x + ((crop.right - crop.left) * width) / 2,
+    z: image.z + ((crop.bottom - crop.top) * depth) / 2,
+    width,
+    depth,
+  };
+}
