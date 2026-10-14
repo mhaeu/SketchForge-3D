@@ -1,3 +1,4 @@
+import { normalizeSketchImageCrop, normalizeSketchImageRotation } from "@/lib/sketchImageAlign";
 import { strFromU8, strToU8, unzip, zip, type AsyncZippable } from "fflate";
 import { editorHistoryEntry, hydrateEditorHistoryState, type EditorHistoryEntry } from "@/lib/editorHistory";
 import { normalizePlacementWorkplane, placementWorkplaneIsBase, type PlacementWorkplane } from "@/lib/placementWorkplane";
@@ -1372,7 +1373,19 @@ async function restoreShapeFromNode(
         const record = image.assetId ? assetById.get(image.assetId) : undefined;
         if (!record || record.kind !== "image") throw new Error(`Sketch '${node.objectId}' has a missing image asset`);
         const { assetId: _assetId, ...rest } = image;
-        return { ...rest, dataUrl: bytesToDataUrl(files[record.path], record.mediaType) };
+        /*
+         * Drehung und Beschnitt in ihre Grenzen: Ein Beschnitt, der nichts
+         * uebrig liesse, faellt weg, und eine Drehung landet in -180..180.
+         */
+        const crop = normalizeSketchImageCrop(rest.crop);
+        const rotation = normalizeSketchImageRotation(rest.rotation);
+        const { crop: _crop, rotation: _rotation, ...plain } = rest;
+        return {
+          ...plain,
+          ...(crop ? { crop } : {}),
+          ...(rotation !== 0 ? { rotation } : {}),
+          dataUrl: bytesToDataUrl(files[record.path], record.mediaType),
+        };
       }),
     };
   }

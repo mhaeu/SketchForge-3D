@@ -435,6 +435,53 @@ describe("SketchForge .skf project packages", () => {
     expect(restored.shapes[0].sketchProfile?.images?.[0].locked).toBe(true);
   });
 
+  /**
+   * Drehung und Beschnitt eines Referenzbildes kommen mit dem Entwurf zurueck -
+   * und ein Beschnitt, der nichts uebrig liesse, faellt beim Laden weg, statt
+   * ein unsichtbares Bild zu hinterlassen.
+   */
+  it("restores the rotation and crop of a reference image, and drops a crop that leaves nothing", async () => {
+    const dataUrl = "data:image/png;base64,AAECAwQ=";
+    const sketch = (crop: { left: number; top: number; right: number; bottom: number }, rotation: number) => shape("sketch", `sketch-${rotation}`, {
+      sketchProfile: {
+        points: [
+          { id: "p1", x: 0, z: 0 },
+          { id: "p2", x: 10, z: 0 },
+          { id: "p3", x: 0, z: 10 },
+        ],
+        segments: [
+          { id: "s1", startId: "p1", endId: "p2" },
+          { id: "s2", startId: "p2", endId: "p3" },
+          { id: "s3", startId: "p3", endId: "p1" },
+        ],
+        images: [{
+          id: "image-1",
+          name: "Reference",
+          dataUrl,
+          mimeType: "image/png",
+          pixelWidth: 2,
+          pixelHeight: 2,
+          x: 0,
+          z: 0,
+          width: 10,
+          depth: 10,
+          rotation,
+          crop,
+        }],
+      },
+    });
+    const kept = await importSkfProject(await exportSkfProject(input([sketch({ left: 0.1, top: 0, right: 0.2, bottom: 0.05 }, 33)])));
+    const keptImage = kept.shapes[0].sketchProfile?.images?.[0];
+    expect(keptImage?.rotation).toBe(33);
+    expect(keptImage?.crop).toEqual({ left: 0.1, top: 0, right: 0.2, bottom: 0.05 });
+
+    // Nichts mehr sichtbar, und eine Drehung ueber 180 Grad hinaus.
+    const repaired = await importSkfProject(await exportSkfProject(input([sketch({ left: 0.6, top: 0, right: 0.6, bottom: 0 }, 400)])));
+    const repairedImage = repaired.shapes[0].sketchProfile?.images?.[0];
+    expect(repairedImage?.crop).toBeUndefined();
+    expect(repairedImage?.rotation).toBe(40);
+  });
+
   it("deduplicates derived geometry when legacy imported objects share one mesh", async () => {
     const mesh = {
       positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
