@@ -154,6 +154,8 @@ import {
   rescueSharpAngleForEdges,
   resumedEdgeSelection,
   selectableCadModifierEdge,
+  topCadModifierEdgeIds,
+  verticalCadModifierEdgeIds,
   type CadModifierRequestPhase,
   SKETCH_CAD_DEFLECTION,
 } from "@/lib/cadModifierRuntime";
@@ -10115,7 +10117,15 @@ export function SketchForgeEditor({
     const { response, sourceParts } = await prepareCadModifierForMcp(shape, sharpAngle);
     const selectableIds = response.edges.filter((edge) => selectableCadModifierEdge(edge, sharpAngle)).map((edge) => edge.id);
     const requestedIds = mcpNumberArray(params.edgeIds);
-    const selectedEdgeIds = params.edgeIds === "all" || params.allEdges === true ? selectableIds : requestedIds.filter((edgeId) => selectableIds.includes(edgeId));
+    const selectedEdgeIds = params.edgeIds === "all" || params.allEdges === true
+      ? selectableIds
+      : params.edgeIds === "top"
+        // Wie die Schaltflaeche "Obere Kanten" im Werkzeug.
+        ? topCadModifierEdgeIds(response.edges, selectableIds)
+        : params.edgeIds === "vertical"
+          // Wie die Schaltflaeche "Senkrechte Kanten".
+          ? verticalCadModifierEdgeIds(response.edges, selectableIds)
+          : requestedIds.filter((edgeId) => selectableIds.includes(edgeId));
     const missingIds = requestedIds.filter((edgeId) => !selectableIds.includes(edgeId));
     if (selectedEdgeIds.length === 0) {
       throw new Error(t("status.selectValidEdgeId"));
@@ -13355,6 +13365,16 @@ export function SketchForgeEditor({
           onTangentChainChange={(tangentChain) => setEdgeModifier((current) => current?.prepared ? { ...current, tangentChain } : current)}
           onPreserveEdgeSizeChange={(preserveEdgeSize) => setEdgeModifier((current) => current?.prepared ? { ...current, preserveEdgeSize } : current)}
           onSelectAll={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: modifierAvailableEdgeIds, preview: null, busy: modifierAvailableEdgeIds.length > 0, error: modifierAvailableEdgeIds.length ? null : current.error } : current)}
+          onSelectTop={() => setEdgeModifier((current) => {
+            if (!current?.prepared) return current;
+            const topIds = topCadModifierEdgeIds(current.edges, modifierAvailableEdgeIds);
+            return { ...current, selectedEdgeIds: topIds, preview: null, busy: topIds.length > 0, error: topIds.length ? null : t("edge.noTopEdges") };
+          })}
+          onSelectVertical={() => setEdgeModifier((current) => {
+            if (!current?.prepared) return current;
+            const verticalIds = verticalCadModifierEdgeIds(current.edges, modifierAvailableEdgeIds);
+            return { ...current, selectedEdgeIds: verticalIds, preview: null, busy: verticalIds.length > 0, error: verticalIds.length ? null : t("edge.noVerticalEdges") };
+          })}
           onClear={() => setEdgeModifier((current) => current?.prepared ? { ...current, selectedEdgeIds: [], preview: null, busy: false, error: t("status.selectHighlightedEdge") } : current)}
           onRemoveFeature={removeEdgeTreatment}
           onEditFeature={(optionId) => { void editEdgeTreatment(optionId); }}

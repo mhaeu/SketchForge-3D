@@ -20,6 +20,8 @@ import {
   edgeModifierSelectionStatus,
   isCadModifierWasmMemoryFault,
   selectableCadModifierEdge,
+  topCadModifierEdgeIds,
+  verticalCadModifierEdgeIds,
 } from "@/lib/cadModifierRuntime";
 import type { CadModifierEdge } from "@/lib/cadModifierTypes";
 
@@ -349,5 +351,71 @@ describe("Eine Kante von der Kamera aus", () => {
   it("laesst eine Kante ohne Normalen stehen", () => {
     expect(cadModifierEdgeFacesCamera(undefined, origin, camera)).toBe(true);
     expect(cadModifierEdgeFacesCamera([0, 0, 1], origin, camera)).toBe(true);
+  });
+});
+
+describe("Obere und senkrechte Kanten", () => {
+  /** Eine Kante aus Punkten in der Welt, y nach oben. */
+  const edge = (id: number, ...points: Array<[number, number, number]>): CadModifierEdge => ({
+    id,
+    points: points.flat(),
+    display: true,
+    selectable: true,
+    angle: 90,
+    boundary: false,
+    manifold: true,
+  });
+
+  /** Die zwoelf Kanten eines Quaders 20 x 10 x 5, Boden auf y = 0. */
+  function boxEdges(): CadModifierEdge[] {
+    const corners: Array<[number, number]> = [[0, 0], [20, 0], [20, 10], [0, 10]];
+    const edges: CadModifierEdge[] = [];
+    corners.forEach(([x, z], index) => {
+      const [nx, nz] = corners[(index + 1) % 4];
+      edges.push(edge(index, [x, 0, z], [nx, 0, nz]));
+      edges.push(edge(4 + index, [x, 5, z], [nx, 5, nz]));
+      edges.push(edge(8 + index, [x, 0, z], [x, 5, z]));
+    });
+    return edges;
+  }
+  const all = (edges: CadModifierEdge[]) => edges.map((entry) => entry.id);
+
+  it("waehlt am Quader die vier Kanten des Deckels und die vier Ecken", () => {
+    const edges = boxEdges();
+    expect(topCadModifierEdgeIds(edges, all(edges)).sort((a, b) => a - b)).toEqual([4, 5, 6, 7]);
+    expect(verticalCadModifierEdgeIds(edges, all(edges)).sort((a, b) => a - b)).toEqual([8, 9, 10, 11]);
+  });
+
+  it("nimmt nur, was das Werkzeug bei seiner Schwelle anbietet", () => {
+    const edges = boxEdges();
+    expect(verticalCadModifierEdgeIds(edges, [8, 4, 0])).toEqual([8]);
+    expect(topCadModifierEdgeIds(edges, [8, 0])).toEqual([]);
+  });
+
+  /** Eine schraege Kante steht nicht senkrecht, auch wenn sie nach oben reicht. */
+  it("laesst die schraegen Kanten einer Pyramide aus", () => {
+    const edges = [
+      edge(1, [0, 0, 0], [5, 8, 5]),
+      edge(2, [10, 0, 0], [5, 8, 5]),
+      // Kaum schraeg: 0,02 mm seitlich auf 8 mm Hoehe ist mehr als ein Tausendstel.
+      edge(3, [0, 0, 0], [0.02, 8, 0]),
+      // Im Rahmen: 0,005 mm auf 8 mm, wie eine gerundete Kantenabtastung.
+      edge(4, [0, 0, 0], [0.005, 8, 0]),
+    ];
+    expect(verticalCadModifierEdgeIds(edges, all(edges))).toEqual([4]);
+  });
+
+  /** Eine abgetastete gebogene Kante, die oben rundum laeuft, ist eine obere. */
+  it("zaehlt eine abgetastete Kante oben nur, wenn sie ganz oben bleibt", () => {
+    const rim = edge(1, ...Array.from({ length: 9 }, (_, index): [number, number, number] => [Math.cos(index), 12, Math.sin(index)]));
+    const wall = edge(2, [1, 0, 0], [1, 12, 0]);
+    const dipping = edge(3, [0, 12, 0], [0.5, 11.9, 0], [1, 12, 0]);
+    expect(topCadModifierEdgeIds([rim, wall, dipping], [1, 2, 3])).toEqual([1]);
+    expect(verticalCadModifierEdgeIds([rim, wall, dipping], [1, 2, 3])).toEqual([2]);
+  });
+
+  it("findet nichts in einer leeren Liste", () => {
+    expect(topCadModifierEdgeIds([], [])).toEqual([]);
+    expect(verticalCadModifierEdgeIds([], [])).toEqual([]);
   });
 });

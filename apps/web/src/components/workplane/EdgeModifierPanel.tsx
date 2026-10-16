@@ -169,6 +169,8 @@ export function EdgeModifierPanel({
   onPreserveEdgeSizeChange,
   onOnlyVisibleEdgesChange,
   onSelectAll,
+  onSelectTop,
+  onSelectVertical,
   onClear,
   onRemoveFeature,
   onEditFeature,
@@ -207,6 +209,10 @@ export function EdgeModifierPanel({
   onPreserveEdgeSizeChange: (value: boolean) => void;
   onOnlyVisibleEdgesChange: (value: boolean) => void;
   onSelectAll: () => void;
+  /** Nur die Kanten ganz oben, etwa der Rand einer Ausstechform. */
+  onSelectTop?: () => void;
+  /** Die Kanten, die senkrecht stehen, etwa die Ecken eines Quaders. */
+  onSelectVertical?: () => void;
   onClear: () => void;
   onRemoveFeature: (id: string) => void;
   onEditFeature: (id: string) => void;
@@ -253,6 +259,8 @@ export function EdgeModifierPanel({
 
       <div className="edge-modifier-quick-actions">
         <button type="button" disabled={!prepared || busy} onClick={onSelectAll}>{t("edge.allSharpEdges")}</button>
+        {onSelectTop ? <button type="button" disabled={!prepared || busy} title={t("edge.topEdgesHint")} onClick={onSelectTop}>{t("edge.topEdges")}</button> : null}
+        {onSelectVertical ? <button type="button" disabled={!prepared || busy} title={t("edge.verticalEdgesHint")} onClick={onSelectVertical}>{t("edge.verticalEdges")}</button> : null}
         <button type="button" disabled={!prepared || busy} onClick={onClear}>{t("edge.clear")}</button>
       </div>
 

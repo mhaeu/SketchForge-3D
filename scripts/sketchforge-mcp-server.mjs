@@ -227,7 +227,7 @@ const tools = [
         edgeIds: {
           anyOf: [
             { type: "array", items: { type: "number" } },
-            { type: "string", enum: ["all"] },
+            { type: "string", enum: ["all", "top", "vertical"], description: "all: every sharp edge; top: the edges along the very top; vertical: the edges that stand straight up." },
           ],
         },
         allEdges: { type: "boolean" },

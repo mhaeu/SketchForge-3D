@@ -296,3 +296,73 @@ export function cadModifierEdgeFacesCamera(
   }
   return false;
 }
+
+/**
+ * Die Kanten ganz oben am Koerper - etwa der Rand einer Ausstechform, die aus
+ * einem Strich hochgezogen ist. Eine Kante zaehlt, wenn **jeder** ihrer
+ * Punkte auf der hoechsten Hoehe aller Kanten liegt; eine Kante, die nur mit
+ * einem Ende hinaufreicht (die Ecke eines Quaders), zaehlt nicht.
+ *
+ * Gewaehlt wird aus `candidateIds`, den Kanten, die das Werkzeug bei seiner
+ * Schwelle anbietet. Die Punkte liegen in der Welt, y nach oben.
+ *
+ * Nach Layerling (#154).
+ */
+export function topCadModifierEdgeIds(edges: readonly CadModifierEdge[], candidateIds: readonly number[]): number[] {
+  const candidates = new Set(candidateIds);
+  let top = Number.NEGATIVE_INFINITY;
+  let bottom = Number.POSITIVE_INFINITY;
+  edges.forEach((edge) => {
+    for (let index = 1; index < edge.points.length; index += 3) {
+      top = Math.max(top, edge.points[index]);
+      bottom = Math.min(bottom, edge.points[index]);
+    }
+  });
+  if (!Number.isFinite(top)) return [];
+  // Ein Zehntausendstel der Hoehe, mindestens ein Tausendstel Millimeter:
+  // genug fuer die Rundung der Kantenpunkte, weit unter jeder echten Stufe.
+  const tolerance = Math.max(0.001, (top - bottom) * 1e-4);
+  return edges
+    .filter((edge) => candidates.has(edge.id) && edge.points.length >= 6)
+    .filter((edge) => {
+      for (let index = 1; index < edge.points.length; index += 3) {
+        if (edge.points[index] < top - tolerance) return false;
+      }
+      return true;
+    })
+    .map((edge) => edge.id);
+}
+
+/**
+ * Die Kanten, die senkrecht stehen: Jeder Punkt liegt ueber derselben Stelle,
+ * nur die Hoehe aendert sich - die Ecken eines Quaders, die Stellen, an denen
+ * die Waende eines hochgezogenen Umrisses aneinanderstossen. Damit rundet eine
+ * Verrundung alle stehenden Ecken in einem Zug.
+ *
+ * Mindestens 0,01 mm hoch, und seitlich weicht keiner der Punkte um mehr als
+ * ein Tausendstel der Kantenhoehe ab (mindestens 0,001 mm) - eine schraege
+ * Kante einer Pyramide ist keine senkrechte.
+ *
+ * Nach Layerling 1.82.0 (#427).
+ */
+export function verticalCadModifierEdgeIds(edges: readonly CadModifierEdge[], candidateIds: readonly number[]): number[] {
+  const candidates = new Set(candidateIds);
+  return edges
+    .filter((edge) => candidates.has(edge.id) && edge.points.length >= 6)
+    .filter((edge) => {
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (let index = 1; index < edge.points.length; index += 3) {
+        minY = Math.min(minY, edge.points[index]);
+        maxY = Math.max(maxY, edge.points[index]);
+      }
+      const height = maxY - minY;
+      if (!(height > 0.01)) return false;
+      const tolerance = Math.max(0.001, height * 1e-3);
+      for (let index = 3; index + 2 < edge.points.length; index += 3) {
+        if (Math.abs(edge.points[index] - edge.points[0]) > tolerance || Math.abs(edge.points[index + 2] - edge.points[2]) > tolerance) return false;
+      }
+      return true;
+    })
+    .map((edge) => edge.id);
+}
