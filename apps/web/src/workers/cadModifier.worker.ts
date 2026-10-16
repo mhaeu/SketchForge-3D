@@ -391,11 +391,44 @@ function reconstructSolid(cad: OcctKernel, part: CadModifierMeshPart) {
       candidate = cad.removeDegenerateEdges(candidate);
       candidate = cad.unifySameDomain(candidate);
       if (cad.isSolid(candidate) && cadShapeIsValid(cad, candidate)) return candidate;
+      /*
+       * Ein Netz aus mehreren losen Stuecken - eine Gruppe von Loechern, zwei
+       * nebeneinander gruppierte Koerper - naeht sich zu einer Huelle je
+       * Stueck, und das ist kein einzelner Koerper. Jedes Stueck wird einer,
+       * und sie werden vereinigt. Nach Layerling 1.79.0 (#394).
+       */
+      const joined = joinedShellSolids(cad, candidate);
+      if (joined) return joined;
     } catch {
       // Try the next tolerance. Curved tessellations can need looser vertex sewing.
     }
   }
   throw new Error("The selected mesh is open or non-manifold. Repair it before adding edge treatments.");
+}
+
+/**
+ * Die Huellen eines genaehten Netzes, das in mehrere geschlossene Stuecke
+ * zerfallen ist, zu einem Koerper vereinigt. `null`, wenn es nur eine Huelle
+ * gibt oder eine davon nicht geschlossen ist - dann ist das Netz wirklich
+ * offen, und die Meldung stimmt.
+ */
+function joinedShellSolids(cad: OcctKernel, sewn: ShapeHandle) {
+  const shells = cad.isShell(sewn) ? [sewn] : cad.getSubShapes(sewn, "shell");
+  if (shells.length < 2) return null;
+  const solids: ShapeHandle[] = [];
+  for (const shell of shells) {
+    let solid = cad.makeSolid(shell);
+    // Eine nach innen gekehrte Huelle ergibt ein negatives Volumen.
+    if (!(cad.getVolume(solid) > 0)) solid = cad.makeSolid(cad.reverseShape(shell));
+    if (!(cad.getVolume(solid) > 0) || !cadShapeIsValid(cad, solid)) return null;
+    solids.push(solid);
+  }
+  let joined = solids[0];
+  for (let index = 1; index < solids.length; index += 1) {
+    joined = cad.fuse(joined, solids[index]);
+  }
+  joined = cad.unifySameDomain(cad.simplify(joined));
+  return cad.getSubShapes(joined, "solid").length > 0 && cadShapeIsValid(cad, joined) ? joined : null;
 }
 
 function reconstructParts(cad: OcctKernel, parts: CadModifierMeshPart[]) {

@@ -6173,6 +6173,30 @@ function cleanShapePatch(patch: ShapeUpdatePatch): Partial<WorkplaneShape> {
   return next;
 }
 
+/**
+ * Die Koerper einer Gruppe fuer das Kantenwerkzeug, mit den Gruppen darin
+ * geoeffnet, wo das nichts aendert: eine Gruppe aus lauter Loechern (der
+ * uebliche Weg, ein Muster zu schneiden) oder aus lauter Koerpern.
+ * Geschlossen kam sie im Kern als ein Netz aus mehreren losen Stuecken an,
+ * das sich zu keinem einzelnen Koerper naehen liess ("open or
+ * non-manifold"), und ihre Rundungen waren dort Facetten; geoeffnet ist
+ * jedes Loch wieder die genaue Form, die es war. Eine Gruppe, die Koerper
+ * und Loecher mischt, schneidet nur ihre eigenen Koerper und bleibt darum
+ * zu. Nach Layerling 1.79.0 (#394).
+ */
+function restoreGroupedChildrenForEdges(group: WorkplaneShape): WorkplaneShape[] {
+  return restoreGroupedChildren(group).flatMap((child) => {
+    const grandChildren = child.groupedShapes ?? [];
+    const opensCleanly = grandChildren.length > 0
+      && !child.importedMesh
+      && !shapeHasShapeDeform(child)
+      && (child.groupOperation === undefined || child.groupOperation === "group")
+      && (grandChildren.every((part) => part.hole) || grandChildren.every((part) => !part.hole))
+      && (child.hole || grandChildren.every((part) => !part.hole));
+    return opensCleanly ? restoreGroupedChildrenForEdges(child) : [child];
+  });
+}
+
 function restoreGroupedChildren(group: WorkplaneShape): WorkplaneShape[] {
   const children = group.groupedShapes ?? [];
   if (children.length === 0) {
@@ -9929,7 +9953,7 @@ export function SketchForgeEditor({
     const appliedEdgeTreatmentCount = edgeTreatmentFeatureCount(selectedShape);
     const hasAppliedEdgeTreatment = Boolean(selectedShape.importedMesh && selectedShape.edgeTreatments?.length);
     const sourceParts = (selectedShape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasShapeDeform(selectedShape)
-      ? restoreGroupedChildren(selectedShape)
+      ? restoreGroupedChildrenForEdges(selectedShape)
       : [selectedShape]).flatMap(cadModifierSourceParts);
     const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; stepText?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((shape) => {
       const frame = shape.cadBrepFrame;
@@ -10031,7 +10055,7 @@ export function SketchForgeEditor({
     const appliedEdgeTreatmentCount = edgeTreatmentFeatureCount(shape);
     const hasAppliedEdgeTreatment = Boolean(shape.importedMesh && shape.edgeTreatments?.length);
     const sourceParts = (shape.groupedShapes?.length && !hasAppliedEdgeTreatment && !shapeHasShapeDeform(shape)
-      ? restoreGroupedChildren(shape)
+      ? restoreGroupedChildrenForEdges(shape)
       : [shape]).flatMap(cadModifierSourceParts);
     const partInputs: Array<{ shape: WorkplaneShape; mesh?: MeshData; brep?: string; stepText?: string; brepTransform?: number[]; primitive?: CadModifierPrimitivePart }> = sourceParts.map((partShape) => {
       const frame = partShape.cadBrepFrame;
