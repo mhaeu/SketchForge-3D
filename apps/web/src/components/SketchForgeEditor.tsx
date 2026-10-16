@@ -5016,7 +5016,7 @@ async function exportSolidVolume(source: readonly WorkplaneShape[]) {
   // Koerper, den die Datei so nicht enthaelt.
   const holes = source.filter((shape) => shape.hole && isSolidShape(shape) && !shape.hidden);
   const carved = await cutLooseExportHoles(solids, holes, solids.map(meshForShape));
-  const { meshes, failed } = await unionOverlappingExportMeshes(solids, carved.meshes);
+  const { meshes, failed } = await unionOverlappingExportMeshes(solids, carved.meshes, holes);
   const volumeMm3 = meshes.reduce((sum, mesh) => sum + closedMeshVolume(mesh.vertices, mesh.faces), 0);
   return { volumeMm3, solids: solids.length, bodies: meshes.length, unionFailed: failed };
 }
@@ -5093,15 +5093,29 @@ async function cutLooseExportHoles(solids: WorkplaneShape[], holes: readonly Wor
   return { meshes: result, cut, failed };
 }
 
-async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: MeshData[]) {
+/**
+ * Sich durchdringende Koerper der Ausfuhr zu einem verschmelzen.
+ *
+ * Vereinigt wird aus den Formen, nicht aus den Netzen - und damit aus Formen
+ * **ohne** die losen Loecher, die `cutLooseExportHoles` vorher in die Netze
+ * geschnitten hat. Darum schneidet diese Stelle die Loecher, die den
+ * vereinigten Koerper treffen, noch einmal hinein. Vorher fehlte ein loses
+ * Loch in der Datei, sobald sein Koerper einen anderen beruehrte: gemessen
+ * an einer Platte 40 x 40 x 4 mit einem losen Loch von 10 mm, 6,09 cm3
+ * allein, mit einem aufgesetzten Quader 10 x 10 x 10 aber 7,00 statt 6,69 -
+ * die Platte war wieder voll.
+ */
+async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: MeshData[], holes: readonly WorkplaneShape[] = []) {
   const clusters = overlappingExportClusters(meshes.map((mesh) => meshBounds(mesh.vertices)));
   if (!clusters.some((cluster) => cluster.length > 1)) {
-    return { meshes, merged: 0, failed: 0 };
+    return { meshes, merged: 0, failed: 0, holesFailed: 0 };
   }
   const runtime = await getManifoldRuntime().catch(() => null);
+  const holeBounds = holes.map((hole) => meshBounds(meshForShape(hole).vertices));
   const result: MeshData[] = [];
   let merged = 0;
   let failed = 0;
+  let holesFailed = 0;
   for (const cluster of clusters) {
     if (cluster.length === 1) {
       result.push(meshes[cluster[0]]);
@@ -5110,7 +5124,16 @@ async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: Me
     const created: ManifoldSolid[] = [];
     let united: MeshData | null = null;
     try {
-      const union = runtime ? shapesToManifoldUnion(runtime, cluster.map((index) => shapes[index]), created, true) : null;
+      let union = runtime ? shapesToManifoldUnion(runtime, cluster.map((index) => shapes[index]), created, true) : null;
+      const clusterBounds = meshBounds(cluster.flatMap((index) => meshes[index].vertices));
+      const reaching = holesReachingBounds(clusterBounds, holeBounds).map((holeIndex) => holes[holeIndex]);
+      if (runtime && union && reaching.length > 0) {
+        const cutter = shapesToManifoldUnion(runtime, reaching.map(paddedCutterShape), created, true);
+        const carved = cutter ? union.subtract(cutter) : null;
+        if (carved) created.push(carved);
+        if (carved && carved.status() === "NoError" && carved.numTri() > 0) union = carved;
+        else holesFailed += 1;
+      }
       if (union && union.status() === "NoError" && union.numTri() > 0) {
         united = manifoldMeshToMeshData(union.getMesh(), meshes[cluster[0]].name);
       }
@@ -5127,7 +5150,7 @@ async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: Me
       failed += 1;
     }
   }
-  return { meshes: result, merged, failed };
+  return { meshes: result, merged, failed, holesFailed };
 }
 
 /**
@@ -12216,7 +12239,8 @@ export function SketchForgeEditor({
     void cutLooseExportHoles(exportable, exportHoleShapes, meshes)
       .then(async (carved) => {
         if (carved.failed > 0) setNotice(t("status.exportHoleFailed"));
-        return { ...(await unionOverlappingExportMeshes(exportable, carved.meshes)), holesCut: carved.cut, holesFailed: carved.failed };
+        const united = await unionOverlappingExportMeshes(exportable, carved.meshes, exportHoleShapes);
+        return { ...united, holesCut: carved.cut, holesFailed: carved.failed + united.holesFailed };
       })
       .then(async ({ meshes: ready, merged, failed, holesFailed }) => {
         const result = format === "stl"
