@@ -250,7 +250,7 @@ import { filledSketchProfile, sketchHasHoles } from "@/lib/sketchHollow";
 import { createRoundedBoxGeometry } from "@/lib/roundedBoxGeometry";
 import { createHoneycombGeometry } from "@/lib/honeycombGeometry";
 import { DEFAULT_CAMERA_ORIENTATION, screenAlignedNudge, type CameraOrientation } from "@/lib/screenAlignedNudge";
-import { placeSketchExtrusion } from "@/lib/sketchPlacement";
+import { placeSketchExtrusion, sketchOutlineCentre } from "@/lib/sketchPlacement";
 import { sketchGeometryFromSvg, sketchProfileWithSvg } from "@/lib/sketchSvgImport";
 import { sketchGeometryProfile, withoutConstructionLines } from "@/lib/sketchConstruction";
 import { sketchEditWorkplane } from "@/lib/sketchEditPlane";
@@ -8597,7 +8597,15 @@ export function SketchForgeEditor({
         const built = sketchOperation === "sweep"
           ? sweptShapeFromSketchProfile(sketchProfile, existing)
           : await cadShapeFromSketchProfile(sketchProfile, height, existing);
-        resolved = placeSketchExtrusion(built, activeSketchWorkplane, existing);
+        /*
+         * Ein hochgezogener Koerper wandert mit seinem Umriss, damit stehen
+         * bleibt, was man nicht angefasst hat. Nur, wenn er auch vorher eine
+         * Hochziehung war - eine Drehung oder Fuehrung hat eine andere Mitte.
+         */
+        const outlineShift = existing?.sketchProfile && sketchOperation !== "sweep" && (existing.sketchOperation ?? "extrude") === "extrude"
+          ? { previous: sketchOutlineCentre(existing.sketchProfile), next: sketchOutlineCentre(sketchProfile) }
+          : undefined;
+        resolved = placeSketchExtrusion(built, activeSketchWorkplane, existing, outlineShift);
       }
     } catch (error) {
       setNotice(error instanceof Error
