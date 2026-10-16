@@ -1,93 +1,90 @@
 import { describe, expect, it } from "vitest";
-import {
-  TOOLBAR_BASE_ICON_SIZE,
-  TOOLBAR_ICON_STEPS,
-  toolbarDensityFor,
-  toolbarWidthAtBase,
-  toolbarWidthAtSize,
-  type ToolbarMeasurement,
-} from "@/lib/toolbarDensity";
+import { toolbarDensityFor, toolbarRowWidth, type ToolbarDensity, type ToolbarRowItem } from "@/lib/toolbarDensity";
 
 /**
- * Eine Leiste mit 34 Symbolen, wie sie der Editor im Koerpermodus traegt, und
- * 1660 px festen Abschnitten bei voller Symbolgroesse plus 220 px Namensfeld.
+ * Die Leiste im Koerpermodus, wie Chromium sie auslegt, in einer Zeile
+ * gemessen am laufenden Editor (2600 px Fenster): voll 2276 px, mittel 2153,
+ * kompakt 1846 - jeweils samt Namensfeld (220 px, kompakt 160).
  */
-function measured(available: number, currentIconSize = TOOLBAR_BASE_ICON_SIZE): ToolbarMeasurement {
-  const icons = 34;
-  return {
-    available,
-    // Bei kleineren Symbolen misst die Leiste entsprechend weniger.
-    fixed: 1660 - icons * (TOOLBAR_BASE_ICON_SIZE - currentIconSize),
-    flexible: 220,
-    icons,
-    currentIconSize,
-  };
-}
+const MEASURED: Record<ToolbarDensity, number> = { full: 2276, medium: 2153, compact: 1846 };
 
-describe("Wie breit die Leiste waere", () => {
-  it("rechnet die Messung auf die volle Symbolgroesse zurueck", () => {
-    // Egal, bei welcher Stufe gemessen wurde: 1660 + 220 = 1880.
-    for (const step of TOOLBAR_ICON_STEPS) {
-      expect(toolbarWidthAtBase(measured(1600, step.size))).toBeCloseTo(1880, 6);
-    }
+describe("Wie breit eine Zeile der Leiste waere", () => {
+  it("zaehlt Kaesten mit ihrer Breite und den Fuellstreifen mit seiner Mindestbreite", () => {
+    const row: ToolbarRowItem[] = [{ kind: "box", width: 300 }, { kind: "spacer", minWidth: 220 }, { kind: "box", width: 208 }];
+    expect(toolbarRowWidth(row)).toBe(728);
   });
 
-  it("nennt die Breite jeder Stufe", () => {
-    const measurement = measured(1600);
-    expect(toolbarWidthAtSize(measurement, 43)).toBeCloseTo(1880, 6);
-    // 34 Symbole, je 4 px schmaler: 136 px weniger.
-    expect(toolbarWidthAtSize(measurement, 39)).toBeCloseTo(1744, 6);
-    expect(toolbarWidthAtSize(measurement, 35)).toBeCloseTo(1608, 6);
+  /**
+   * Der Fehler, der die Leiste flackern liess: In der kleinsten Stufe loesen
+   * sich die Gruppenkaesten auf (`display: contents`) und messen 0 px. Ihre
+   * Abschnitte stehen dann selbst in der Zeile und muessen mitzaehlen.
+   */
+  it("zaehlt die Abschnitte eines aufgeloesten Gruppenkastens", () => {
+    const row: ToolbarRowItem[] = [
+      { kind: "contents", children: [{ kind: "box", width: 400 }, { kind: "box", width: 500 }] },
+      { kind: "spacer", minWidth: 160 },
+      { kind: "contents", children: [{ kind: "box", width: 760 }] },
+      { kind: "box", width: 208 },
+    ];
+    expect(toolbarRowWidth(row)).toBe(2028);
+  });
+
+  it("rechnet den Abstand zwischen den Eintraegen dazu, auch zwischen aufgeloesten", () => {
+    const row: ToolbarRowItem[] = [{ kind: "contents", children: [{ kind: "box", width: 100 }, { kind: "box", width: 100 }] }, { kind: "box", width: 100 }];
+    expect(toolbarRowWidth(row, 4)).toBe(308);
+    expect(toolbarRowWidth([], 4)).toBe(0);
   });
 });
 
 describe("Welche Stufe gilt", () => {
+  const at = (widths: Record<ToolbarDensity, number>) => (density: ToolbarDensity) => widths[density];
+
   it("nimmt die volle Groesse, wenn sie passt", () => {
-    expect(toolbarDensityFor(measured(1900))).toBe("full");
+    expect(toolbarDensityFor(2400, at(MEASURED))).toBe("full");
   });
 
   it("geht eine Stufe zurueck, wenn die volle nicht passt", () => {
-    expect(toolbarDensityFor(measured(1800))).toBe("medium");
+    expect(toolbarDensityFor(2200, at(MEASURED))).toBe("medium");
   });
 
   it("geht zwei Stufen zurueck, wenn auch die mittlere nicht passt", () => {
-    expect(toolbarDensityFor(measured(1700))).toBe("compact");
+    expect(toolbarDensityFor(2000, at(MEASURED))).toBe("compact");
   });
 
   /**
-   * Passt keine Stufe, bleibt die kleinste und die Leiste bricht um. Das ist
-   * besser, als die hinteren Gruppen ueber den Rand laufen zu lassen - genau
-   * das war der Zustand, der zum Zoomen auf 67 Prozent zwang.
+   * Passt keine Stufe, bleibt die kleinste und die Leiste bricht um - bei
+   * 1400 px der Fall, an dem das Flackern gemessen wurde.
    */
   it("bleibt bei der kleinsten, wenn gar nichts passt", () => {
-    expect(toolbarDensityFor(measured(900))).toBe("compact");
+    expect(toolbarDensityFor(1400, at(MEASURED))).toBe("compact");
   });
 
   /**
-   * Die tragende Eigenschaft: Dieselbe Leiste in derselben Breite muss
-   * dieselbe Stufe ergeben, ganz gleich, welche Stufe gerade gilt. Sonst
-   * springt sie hin und her, weil jede Stufe die Messung aendert, auf der sie
-   * beruht.
+   * Die tragende Eigenschaft: Gefragt wird jede Stufe nach ihrer eigenen
+   * Breite, und die Antwort haengt nicht davon ab, welche gerade gilt. Die
+   * alte Rechnung nahm die Messung der geltenden Stufe und rechnete sie hoch -
+   * in der kleinsten Stufe also von 208 px aus, und "voll" passte scheinbar.
    */
-  it("entscheidet gleich, egal bei welcher Stufe gemessen wurde", () => {
-    for (const available of [900, 1600, 1700, 1750, 1800, 1900, 2400]) {
-      const decisions = TOOLBAR_ICON_STEPS.map((step) => toolbarDensityFor(measured(available, step.size)));
-      expect(new Set(decisions).size, `bei ${available}px`).toBe(1);
-    }
+  it("fragt jede Stufe nach ihrer eigenen Breite, von der groessten an", () => {
+    const asked: ToolbarDensity[] = [];
+    toolbarDensityFor(1400, (density) => {
+      asked.push(density);
+      return MEASURED[density];
+    });
+    expect(asked).toEqual(["full", "medium", "compact"]);
   });
 
   it("nimmt die volle Groesse, solange nichts zu messen ist", () => {
-    expect(toolbarDensityFor({ ...measured(0), available: 0 })).toBe("full");
-    expect(toolbarDensityFor({ ...measured(0), available: -5 })).toBe("full");
+    expect(toolbarDensityFor(0, at(MEASURED))).toBe("full");
+    expect(toolbarDensityFor(-5, at(MEASURED))).toBe("full");
   });
 
   /**
-   * Weniger Symbole heissen weniger Breite: Im Skizzenmodus traegt die Leiste
-   * andere Werkzeuge, und dieselbe Fensterbreite darf dort eine groessere
-   * Stufe hergeben.
+   * Weniger Werkzeuge heissen weniger Breite: Im Skizzenmodus traegt die
+   * Leiste andere, und dieselbe Fensterbreite darf dort eine groessere Stufe
+   * hergeben.
    */
   it("richtet sich nach dem, was wirklich in der Leiste steht", () => {
-    const narrow: ToolbarMeasurement = { available: 1700, fixed: 900, flexible: 0, icons: 18, currentIconSize: 43 };
-    expect(toolbarDensityFor(narrow)).toBe("full");
+    expect(toolbarDensityFor(1400, at({ full: 1100, medium: 1000, compact: 900 }))).toBe("full");
   });
 });

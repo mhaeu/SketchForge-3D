@@ -8,9 +8,19 @@
  * nach Fensterbreite waere immer geraten - der Editor misst die Leiste und
  * fragt hier nach der Stufe.
  *
+ * Gemessen wird **jede Stufe selbst**, nicht eine hochgerechnet. Frueher
+ * wurde die Leiste in der Stufe gemessen, die gerade galt, und auf die volle
+ * Symbolgroesse zurueckgerechnet - als aendere eine Stufe nur die Symbole.
+ * Die kleinste aendert aber mehr: Die Abschnitte verlieren ihre
+ * Mindestbreite, das Namensfeld wird schmaler, und die Gruppenkaesten loesen
+ * sich auf (`display: contents`), damit sie einzeln umbrechen koennen. Ein
+ * aufgeloester Kasten misst 0 px. Gemessen im Browser bei 1400 px: voll 2056
+ * px feste Abschnitte, kompakt angeblich 208 - also "passt voll", dann
+ * "passt nicht", und die Leiste sprang in jedem Bild (alle 17 ms) zwischen
+ * voll und kompakt, 185 und 261 px hoch, und der Arbeitsbereich darunter mit.
+ *
  * Nach Layerling, das seine Umschaltbreiten ebenfalls an der gemessenen
- * Breite nachgezogen hat (Issue #54) - nur messen wir sie bei jeder
- * Aenderung neu, statt die Zahlen einmal abzulesen.
+ * Breite nachgezogen hat (Issue #54).
  */
 
 export type ToolbarDensity = "full" | "medium" | "compact";
@@ -23,47 +33,46 @@ export const TOOLBAR_ICON_STEPS: ReadonlyArray<{ density: ToolbarDensity; size: 
 
 export const TOOLBAR_BASE_ICON_SIZE = TOOLBAR_ICON_STEPS[0].size;
 
-export type ToolbarMeasurement = {
-  /** Wie breit die Leiste sein darf. */
-  available: number;
-  /** Die Summe der festen Abschnitte, so breit wie gerade gemessen. */
-  fixed: number;
-  /** Was die dehnbaren Streifen mindestens brauchen (das Namensfeld). */
-  flexible: number;
-  /** Wie viele Symbole in der Leiste stehen. */
-  icons: number;
-  /** Die Symbolgroesse, bei der `fixed` gemessen wurde. */
-  currentIconSize: number;
-};
-
 /**
- * Wie breit die Leiste bei voller Symbolgroesse waere.
+ * Was in einer Zeile der Leiste steht, so wie der Browser es auslegt.
  *
- * Jedes Symbol ist bei der gemessenen Stufe `base - current` schmaler als bei
- * voller Groesse. Zurueckgerechnet haengt die Zahl nicht mehr an der Stufe,
- * die gerade gilt - und genau darauf kommt es an: Sonst springt die Leiste
- * zwischen zwei Stufen hin und her, weil jede Stufe die Messung aendert, auf
- * der sie beruht.
+ * - `box`: ein Kasten mit seiner Breite (samt Rand aussen).
+ * - `spacer`: ein dehnbarer Streifen, der nur seine Mindestbreite braucht -
+ *   er waechst in den freien Platz hinein und wuerde sonst die Summe immer so
+ *   gross machen wie die Leiste.
+ * - `contents`: ein Kasten, der sich aufgeloest hat; seine Kinder stehen
+ *   selbst in der Zeile.
  */
-export function toolbarWidthAtBase(measurement: ToolbarMeasurement) {
-  const gap = TOOLBAR_BASE_ICON_SIZE - measurement.currentIconSize;
-  return measurement.fixed + measurement.flexible + measurement.icons * gap;
+export type ToolbarRowItem =
+  | { kind: "box"; width: number }
+  | { kind: "spacer"; minWidth: number }
+  | { kind: "contents"; children: ToolbarRowItem[] };
+
+/** Die einzelnen Eintraege einer Zeile, aufgeloeste Kaesten aufgeklappt. */
+function flattenRow(items: ReadonlyArray<ToolbarRowItem>): Array<Exclude<ToolbarRowItem, { kind: "contents" }>> {
+  return items.flatMap((item) => (item.kind === "contents" ? flattenRow(item.children) : [item]));
 }
 
-/** Wie breit die Leiste bei dieser Symbolgroesse waere. */
-export function toolbarWidthAtSize(measurement: ToolbarMeasurement, size: number) {
-  return toolbarWidthAtBase(measurement) - measurement.icons * (TOOLBAR_BASE_ICON_SIZE - size);
+/** Wie breit diese Eintraege in einer Zeile waeren, mit dem Abstand dazwischen. */
+export function toolbarRowWidth(items: ReadonlyArray<ToolbarRowItem>, gap = 0) {
+  const flat = flattenRow(items);
+  const widths = flat.reduce((sum, item) => sum + (item.kind === "box" ? item.width : item.minWidth), 0);
+  return widths + Math.max(0, flat.length - 1) * gap;
 }
 
 /**
  * Die groesste Stufe, die noch in eine Zeile passt.
  *
+ * `rowWidthAt` misst die Leiste in einer Stufe. Weil jede Stufe fuer sich
+ * gemessen wird, haengt die Antwort nicht an der Stufe, die gerade gilt - und
+ * genau darauf kommt es an, sonst springt die Leiste hin und her.
+ *
  * Passt keine, bleibt die kleinste: Dann bricht die Leiste um, und das ist
  * besser, als die hinteren Gruppen ueber den Rand laufen zu lassen - genau
  * das war der Zustand, der zum Zoomen auf 67 Prozent zwang.
  */
-export function toolbarDensityFor(measurement: ToolbarMeasurement): ToolbarDensity {
-  if (!(measurement.available > 0)) return "full";
-  const fitting = TOOLBAR_ICON_STEPS.find((step) => toolbarWidthAtSize(measurement, step.size) <= measurement.available);
+export function toolbarDensityFor(available: number, rowWidthAt: (density: ToolbarDensity) => number): ToolbarDensity {
+  if (!(available > 0)) return "full";
+  const fitting = TOOLBAR_ICON_STEPS.find((step) => rowWidthAt(step.density) <= available);
   return (fitting ?? TOOLBAR_ICON_STEPS[TOOLBAR_ICON_STEPS.length - 1]).density;
 }

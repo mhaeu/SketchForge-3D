@@ -226,7 +226,7 @@ import { dropTogetherTranslation, layFlatAngleDegrees, layFlatRotation } from "@
 import { mateMotion, mateTurnDegrees, type MateFacePick, type MateMode } from "@/lib/mateFaces";
 import { selectionCentre, setDownRotation, setDownTranslation } from "@/lib/setDownOnFace";
 import { bodiesTooTall } from "@/lib/buildVolume";
-import { toolbarDensityFor, TOOLBAR_BASE_ICON_SIZE } from "@/lib/toolbarDensity";
+import { toolbarDensityFor, toolbarRowWidth, type ToolbarRowItem } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
 
 /** Womit das Aushoehlen anfaengt: der Deckel offen, der Rest zu. */
@@ -3571,35 +3571,37 @@ function reflectionMatrixForAxis(axis: AlignAxis) {
 /**
  * Die Werkzeugleiste messen und ihre Stufe setzen.
  *
- * Gemessen wird die Summe der festen Abschnitte. Der Fuellstreifen zaehlt
- * nicht mit, denn er waechst in den freien Platz hinein und wuerde die Summe
- * immer so gross machen wie die Leiste; vom Namensfeld zaehlt nur seine
- * Mindestbreite. Welche Stufe daraus folgt, rechnet `toolbarDensityFor` -
- * und zwar so, dass die Entscheidung nicht an der Stufe haengt, die gerade
- * gilt.
+ * Jede Stufe wird fuer sich ausgelegt und gemessen, alles in einem Zug: Der
+ * Browser malt dazwischen nicht, also sieht niemand die Stufen, die nur
+ * probiert werden. Weil die Antwort nicht von der Stufe abhaengt, die gerade
+ * gilt, kommt nach dem Umschalten dieselbe heraus, und die Leiste bleibt
+ * stehen (siehe toolbarDensity.ts, warum sie das vorher nicht tat).
  */
 function applyToolbarDensity(bar: HTMLElement, content: HTMLElement) {
   const available = content.clientWidth;
   if (available <= 0) return;
-  let fixed = 0;
-  let flexible = 0;
-  Array.from(content.children).forEach((child) => {
-    if (!(child instanceof HTMLElement)) return;
-    if (!child.classList.contains("toolbar-spacer")) {
-      fixed += child.offsetWidth;
-      return;
-    }
-    const minWidth = Number.parseFloat(getComputedStyle(child).minWidth);
-    flexible += Number.isFinite(minWidth) ? minWidth : 0;
-  });
-  const density = toolbarDensityFor({
-    available,
-    fixed,
-    flexible,
-    icons: content.querySelectorAll(".toolbar-icon, .shape-menu-trigger, .action-icon-button").length,
-    currentIconSize: Number.parseFloat(getComputedStyle(bar).getPropertyValue("--toolbar-icon-size")) || TOOLBAR_BASE_ICON_SIZE,
+  const gap = Number.parseFloat(getComputedStyle(content).columnGap) || 0;
+  const density = toolbarDensityFor(available, (step) => {
+    if (bar.dataset.density !== step) bar.dataset.density = step;
+    return toolbarRowWidth(toolbarRowItems(content), gap);
   });
   if (bar.dataset.density !== density) bar.dataset.density = density;
+}
+
+/** Was in der Leiste steht, so wie der Browser es gerade auslegt. */
+function toolbarRowItems(parent: HTMLElement): ToolbarRowItem[] {
+  return Array.from(parent.children).flatMap((child): ToolbarRowItem[] => {
+    if (!(child instanceof HTMLElement)) return [];
+    const style = getComputedStyle(child);
+    if (style.display === "none") return [];
+    if (style.display === "contents") return [{ kind: "contents", children: toolbarRowItems(child) }];
+    if (child.classList.contains("toolbar-spacer")) {
+      const minWidth = Number.parseFloat(style.minWidth);
+      return [{ kind: "spacer", minWidth: Number.isFinite(minWidth) ? minWidth : 0 }];
+    }
+    const margins = (Number.parseFloat(style.marginLeft) || 0) + (Number.parseFloat(style.marginRight) || 0);
+    return [{ kind: "box", width: child.offsetWidth + margins }];
+  });
 }
 
 /** Wie der gefasste Punkt in der Rueckmeldung heisst. */
