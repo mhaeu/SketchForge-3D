@@ -1462,8 +1462,18 @@ function shapeMaterialSignature(shape: WorkplaneShape): string {
     color: shape.color,
     opacity: shape.opacity ?? 1,
     hole: Boolean(shape.hole),
+    /*
+     * Das Bild nur ueber seine Kennung, nicht ueber seinen Inhalt. Die
+     * Signatur trug die ganze Daten-URL, und sie wird bei jedem Abgleich neu
+     * gebaut - waehrend eines Ziehens also bei jeder Bewegung. Gemessen mit
+     * einem Bild von 4 MB: 10,9 ms je Koerper und Abgleich, fast ein ganzes
+     * Bild bei 60 Hz. Ein neues Bild ist immer ein neuer Gegenstand (keine
+     * Stelle aendert eines an Ort und Stelle), und den erkennt die Kennung;
+     * die Laenge kommt fuer alle Faelle dazu und kostet nichts. Nach
+     * Layerling 1.76.1 (#170).
+     */
     imagePlate: shapeResourceId(shape.imagePlate),
-    imageData: shape.imagePlate?.dataUrl ?? "",
+    imageBytes: shape.imagePlate?.dataUrl.length ?? 0,
     sourceFormat: shape.importedMesh?.sourceFormat ?? "",
     mirrored: mirroredAxisCount(shape) % 2,
     cadEdges: shapeResourceId(shape.cadDisplayEdges),
