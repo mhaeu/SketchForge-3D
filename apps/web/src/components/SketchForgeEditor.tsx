@@ -160,7 +160,7 @@ import {
   SKETCH_CAD_DEFLECTION,
 } from "@/lib/cadModifierRuntime";
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
-import { appendEditorHistorySnapshot, boundedEditorHistoryState, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistoryState, continuesKeyRun, editorHistoryEntry, type KeyRun, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
 import { closedMeshVolume } from "@/lib/meshVolume";
 import { DEFAULT_PRINT_MATERIAL, PRINT_MATERIALS, normalizePrintMaterial, printEstimate, type PrintMaterial } from "@/lib/printEstimate";
@@ -7552,12 +7552,13 @@ export function SketchForgeEditor({
     if (limitChanged) syncProjectShapes(shapesRef.current, true);
   }, [syncProjectShapes, workspaceSettings.historyLimit]);
 
-  const appendHistoryEntry = useCallback((entry: EditorHistoryEntry) => {
+  const appendHistoryEntry = useCallback((entry: EditorHistoryEntry, replaceCurrent = false) => {
     const result = appendEditorHistorySnapshot(
       historyRef.current,
       historyIndexRef.current,
       entry,
       workspaceSettingsRef.current.historyLimit,
+      replaceCurrent,
     );
     if (result.entries !== historyRef.current) {
       historyRef.current = result.entries;
@@ -7574,8 +7575,9 @@ export function SketchForgeEditor({
       nextSelection: string[],
       nextNotes: WorkplaneNote[] = notesRef.current,
       nextWorkplane: PlacementWorkplane = placementWorkplaneRef.current,
+      replaceCurrent = false,
     ) =>
-      appendHistoryEntry(editorHistoryEntry(nextShapes, nextSelection, nextNotes, nextWorkplane)),
+      appendHistoryEntry(editorHistoryEntry(nextShapes, nextSelection, nextNotes, nextWorkplane), replaceCurrent),
     [appendHistoryEntry],
   );
 
@@ -7673,8 +7675,11 @@ export function SketchForgeEditor({
     });
   }, [onProjectWorkspaceChange, placementElevation, placementWorkplane, projectId, snapGrid]);
 
+  /** Der letzte Schritt der Pfeiltasten; ein Zug von Druecken ist ein Schritt im Verlauf. */
+  const keyRunRef = useRef<KeyRun | null>(null);
+
   const commitShapes = useCallback(
-    (next: WorkplaneShape[], nextSelection: string | string[] | null = selectedIds, message?: string) => {
+    (next: WorkplaneShape[], nextSelection: string | string[] | null = selectedIds, message?: string, keyRunKey?: string) => {
       const canonicalNext = next.map(canonicalizeShape);
       const requestedSelection = Array.isArray(nextSelection) ? nextSelection : nextSelection ? [nextSelection] : [];
       const validSelection = requestedSelection.filter((id, index) => requestedSelection.indexOf(id) === index && canonicalNext.some((shape) => shape.id === id));
@@ -7687,7 +7692,24 @@ export function SketchForgeEditor({
       setShapes(canonicalNext);
       setSelectedIds(validSelection);
       if (nextNotes !== notes) setNotes(nextNotes);
-      const changed = appendHistorySnapshot(canonicalNext, validSelection, nextNotes);
+      const now = Date.now();
+      const currentIndex = historyIndexRef.current;
+      const replaceCurrent = keyRunKey !== undefined
+        && continuesKeyRun(keyRunRef.current, keyRunKey, now, historyRef.current[currentIndex], currentIndex === historyRef.current.length - 1);
+      const lengthBefore = historyRef.current.length;
+      const changed = appendHistorySnapshot(canonicalNext, validSelection, nextNotes, placementWorkplaneRef.current, replaceCurrent);
+      /*
+       * Nur ein Schritt, den die Tasten eben gemacht haben, darf der naechste
+       * Druck ersetzen. Endete der Zug, wo er anfing, ist sein Eintrag weg und
+       * der neueste ist wieder einer von vorher - etwa das Anlegen des
+       * Koerpers. Den darf kein Druck ersetzen, sonst nahme Rueckgaengig das
+       * Anlegen nicht mehr zurueck; der Zug beginnt dann neu.
+       */
+      const newest = historyRef.current[historyIndexRef.current];
+      const collapsed = replaceCurrent && historyRef.current.length < lengthBefore;
+      keyRunRef.current = keyRunKey === undefined || collapsed
+        ? null
+        : changed && newest ? { key: keyRunKey, at: now, entry: newest } : keyRunRef.current;
       if (message) {
         setNotice(message);
       }
@@ -10633,6 +10655,7 @@ export function SketchForgeEditor({
         ),
         selectedIds,
         delta > 0 ? t("status.movedSelectionUp") : t("status.movedSelectionDown"),
+        `move:${selectedIds.join(",")}`,
       );
     },
     [commitShapes, hasSelection, placementWorkplane, selectedIds, shapes],
@@ -12588,6 +12611,7 @@ export function SketchForgeEditor({
         ),
         selectedIds,
         selectedShapes.length === 1 ? t("status.movedOne") : t("status.movedMany", { count: selectedShapes.length }),
+        `move:${selectedIds.join(",")}`,
       );
     },
     [commitShapes, hasSelection, placementWorkplane, selectedIds, selectedShapes.length, shapes],

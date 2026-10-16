@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendEditorHistorySnapshot, boundedEditorHistory, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, immutableResourceFingerprint, projectSceneFingerprint, projectShapesFingerprint, workplaneForHistoryIndex } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistory, continuesKeyRun, KEY_RUN_GAP_MS, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, immutableResourceFingerprint, projectSceneFingerprint, projectShapesFingerprint, workplaneForHistoryIndex } from "@/lib/editorHistory";
 import { horizontalPlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
@@ -237,5 +237,50 @@ describe("editor history snapshots", () => {
     expect(lastThirty.index).toBe(30);
     expect(lastThirty.entries[0].shapes[0].x).toBe(90);
     expect(lastThirty.entries[30].shapes[0].x).toBe(120);
+  });
+});
+
+/**
+ * Nach Layerling 1.76.0 (#370): Ein Zug von Pfeiltastendruecken ist ein
+ * Schritt im Verlauf, nicht einer je Druck.
+ */
+describe("Ein Zug von Pfeiltasten", () => {
+  const at = (x: number) => editorHistoryEntry([box({ x })], ["box-1"]);
+
+  it("ersetzt den neuesten Eintrag, statt einen anzuhaengen", () => {
+    let state = appendEditorHistorySnapshot([at(0)], 0, at(1));
+    expect(state.entries.map((entry) => entry.fingerprint)).toEqual([at(0).fingerprint, at(1).fingerprint]);
+    for (const x of [2, 3, 4, 5]) state = appendEditorHistorySnapshot(state.entries, state.index, at(x), "unlimited", true);
+    // Fuenf Druecke, ein Schritt: Rueckgaengig fuehrt von 5 zurueck auf 0.
+    expect(state.entries.map((entry) => entry.fingerprint)).toEqual([at(0).fingerprint, at(5).fingerprint]);
+    expect(state.index).toBe(1);
+  });
+
+  it("laesst keinen Eintrag zurueck, wenn der Zug dort endet, wo er anfing", () => {
+    const moved = appendEditorHistorySnapshot([at(0)], 0, at(1));
+    const back = appendEditorHistorySnapshot(moved.entries, moved.index, at(0), "unlimited", true);
+    expect(back.entries.map((entry) => entry.fingerprint)).toEqual([at(0).fingerprint]);
+    expect(back.index).toBe(0);
+  });
+
+  it("ersetzt nie den ersten Eintrag und nie einen, hinter dem noch etwas liegt", () => {
+    const first = appendEditorHistorySnapshot([at(0)], 0, at(1), "unlimited", true);
+    expect(first.entries).toHaveLength(2);
+    const entries = [at(0), at(1), at(2)];
+    // Zurueckgegangen auf 1: Der naechste Druck zweigt ab, wie jede Aenderung.
+    const branch = appendEditorHistorySnapshot(entries, 1, at(7), "unlimited", true);
+    expect(branch.entries.map((entry) => entry.fingerprint)).toEqual([at(0).fingerprint, at(1).fingerprint, at(7).fingerprint]);
+  });
+
+  it("gehoert nur zusammen, was bald, auf dasselbe und ohne Dazwischen kommt", () => {
+    const entry = at(1);
+    const run = { key: "move:box-1", at: 1000, entry };
+    expect(continuesKeyRun(run, "move:box-1", 1000 + KEY_RUN_GAP_MS, entry, true)).toBe(true);
+    expect(continuesKeyRun(run, "move:box-1", 1001 + KEY_RUN_GAP_MS, entry, true)).toBe(false);
+    expect(continuesKeyRun(run, "move:box-2", 1100, entry, true)).toBe(false);
+    // Ein gleicher, aber anderer Eintrag: Dazwischen ist etwas geschehen.
+    expect(continuesKeyRun(run, "move:box-1", 1100, at(1), true)).toBe(false);
+    expect(continuesKeyRun(run, "move:box-1", 1100, entry, false)).toBe(false);
+    expect(continuesKeyRun(null, "move:box-1", 1100, entry, true)).toBe(false);
   });
 });

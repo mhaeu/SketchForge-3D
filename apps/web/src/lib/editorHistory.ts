@@ -362,11 +362,46 @@ export function boundedEditorHistoryState(
   return { entries: bounded, index: index - start };
 }
 
+/**
+ * Wie lange zwei Pfeiltastendruecke auseinanderliegen duerfen und noch ein
+ * Zug sind. Anderthalb Sekunden: Wer tippt und schaut und weitertippt, bleibt
+ * darunter; wer etwas anderes tut, kommt darueber.
+ */
+export const KEY_RUN_GAP_MS = 1500;
+
+/**
+ * Der letzte Schritt einer Pfeiltaste: was sie bewegt hat, wann, und welchen
+ * Eintrag sie im Verlauf hinterlassen hat.
+ *
+ * Jeder Druck war ein eigener Schritt - fuenfmal nach rechts, und Rueckgaengig
+ * nahm einen Millimeter zurueck. Jetzt ersetzt ein Druck, der bald nach dem
+ * letzten kommt, dasselbe bewegt und dessen Eintrag noch der neueste ist,
+ * diesen Eintrag, statt einen anzuhaengen. So nimmt Rueckgaengig den ganzen
+ * Zug zurueck. Nach Layerling 1.76.0 (#370).
+ */
+export type KeyRun = { key: string; at: number; entry: unknown };
+
+export function continuesKeyRun(run: KeyRun | null, key: string, now: number, currentEntry: unknown, currentIsNewest: boolean) {
+  return run !== null
+    && run.key === key
+    && currentIsNewest
+    && currentEntry !== undefined
+    // Derselbe Eintrag, nicht nur ein gleicher: Dazwischen ist nichts geschehen.
+    && run.entry === currentEntry
+    && now - run.at <= KEY_RUN_GAP_MS;
+}
+
+/**
+ * Einen neuen Stand hinter den aktuellen legen. Mit `replaceCurrent` ersetzt
+ * er stattdessen den neuesten - fuer einen Zug von Pfeiltastendruecken. Endet
+ * der Zug dort, wo er anfing, bleibt kein Eintrag zurueck.
+ */
 export function appendEditorHistorySnapshot(
   entries: EditorHistoryEntry[],
   requestedIndex: number,
   entry: EditorHistoryEntry,
   limit: EditorHistoryExportLimit = "unlimited",
+  replaceCurrent = false,
 ) {
   const index = Math.min(Math.max(0, requestedIndex), Math.max(0, entries.length - 1));
   const current = entries[index];
@@ -379,6 +414,13 @@ export function appendEditorHistorySnapshot(
     };
   }
 
+  if (replaceCurrent && index > 0 && index === entries.length - 1) {
+    const before = entries[index - 1];
+    const replaced = before.fingerprint === entry.fingerprint
+      ? entries.slice(0, index)
+      : [...entries.slice(0, index), entry];
+    return { entries: replaced, index: replaced.length - 1, changed: true };
+  }
   const nextEntries = boundedEditorHistory([...entries.slice(0, index + 1), entry], limit);
   return { entries: nextEntries, index: nextEntries.length - 1, changed: true };
 }
