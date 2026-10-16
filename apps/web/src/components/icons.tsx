@@ -477,6 +477,18 @@ export function ToolbarHolePatternIcon(props: IconProps) {
   );
 }
 
+/** Eine Platte, aus deren Deckflaeche ein Aufsatz waechst - und ein Pfeil heraus. */
+export function ToolbarFaceToolIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M6 34 L24 42 L42 34 L24 26 Z" fill="currentColor" opacity="0.35" />
+      <path d="M14 30 L24 34.5 L34 30 L34 22 L24 26.5 L14 22 Z" fill="currentColor" opacity="0.82" />
+      <path d="M14 22 L24 17.5 L34 22 L24 26.5 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M24 15 V5 M19.5 9.5 L24 5 L28.5 9.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function ToolbarHollowIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>

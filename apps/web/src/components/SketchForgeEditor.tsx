@@ -90,6 +90,7 @@ import {
   ToolbarPatternIcon,
   ToolbarHollowIcon,
   ToolbarHolePatternIcon,
+  ToolbarFaceToolIcon,
   SketchConstructionIcon,
   ToolbarSplitIcon,
   ToolbarMateFacesIcon,
@@ -195,6 +196,8 @@ import { importedShapeFrom3mf } from "@/lib/threemfImport";
 import { exportMeshesToStl } from "@/lib/stlExport";
 import { importedShapeFromSvg, invalidSvgMeshReason } from "@/lib/svgImport";
 import { toSvgProjection, type SvgProjectionLayer } from "@/lib/svgExport";
+import { FACE_TOOL_MAX_DEPTH, faceToolBodyFrame, faceToolSettingsOn, insetFaceProfile, normalizeFaceTool, type FaceToolSettings } from "@/lib/faceTool";
+import { FaceToolPanel } from "@/components/workplane/FaceToolPanel";
 import { arrowNudgeStep, normalizeSnapGrid, normalizeWorkspaceSettings, workplaneSettingsFingerprint } from "@/lib/workplaneSettings";
 import {
   normalizePlacementWorkplane,
@@ -210,7 +213,7 @@ import {
 } from "@/lib/placementWorkplane";
 import { bodyTrimOutcome, boreCutShape, boreIsExact, cavityPlanForSelection, cutReachForShapes, shapeHasBore, shapesInClickOrder, workplaneCutBox, type CutSide } from "@/lib/cutTools";
 import { cavityFitPatch } from "@/lib/cavityFit";
-import { paddedCutterShape } from "@/lib/cutterPadding";
+import { CUTTER_END_PADDING, paddedCutterShape } from "@/lib/cutterPadding";
 import { createHoleTester, pointInsideCuboid, type HoleTester } from "@/lib/holePointTest";
 import {
   holePatternCutter,
@@ -6674,6 +6677,23 @@ export function SketchForgeEditor({
     error: string | null;
   } | null>(null);
   /**
+   * Das Flaechenwerkzeug: eine Flaeche herausziehen oder eine Tasche
+   * hineinschneiden. Wie das Lochmuster erst die Flaeche, dann die Zahlen;
+   * `maxDepth` ist die Dicke des Koerpers hinter der Flaeche.
+   */
+  const [faceTool, setFaceTool] = useState<{
+    shapeId: string;
+    picking: boolean;
+    workplane: PlacementWorkplane | null;
+    face: HolePatternFace | null;
+    maxDepth: number;
+    settings: FaceToolSettings;
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
+  /** Der eingezogene Umriss zur gegenwaertigen Einstellung, fuer Vorschau und Bau. */
+  const [faceToolProfile, setFaceToolProfile] = useState<SketchProfile | null>(null);
+  /**
    * Eine Behandlung, die wieder aufgenommen werden soll: Zuruecknehmen ist
    * schon geschehen, das Werkzeug wartet darauf, dass der zurueckgestellte
    * Koerper in der Szene steht.
@@ -9427,6 +9447,8 @@ export function SketchForgeEditor({
   splitToolRef.current = splitTool;
   const holePatternToolRef = useRef(holePatternTool);
   holePatternToolRef.current = holePatternTool;
+  const faceToolRef = useRef(faceTool);
+  faceToolRef.current = faceTool;
 
   /** Die Koerper, die das Teilen nimmt: ausgewaehlt, nicht gesperrt, mit Flaeche. */
   const splitTargets = useMemo(
@@ -9467,6 +9489,7 @@ export function SketchForgeEditor({
       setNotice(t("status.holePatternNeedsOne"));
       return;
     }
+    setFaceTool(null);
     setHolePatternTool({
       shapeId: targets[0].id,
       picking: true,
@@ -9480,6 +9503,34 @@ export function SketchForgeEditor({
       error: null,
     });
   }, [holePatternTool, selectedShapes]);
+
+  /**
+   * Das Flaechenwerkzeug braucht wie das Lochmuster genau einen Koerper. Die
+   * beiden schliessen einander aus - beide warten auf denselben Klick.
+   */
+  const toggleFaceTool = useCallback(() => {
+    if (faceTool) {
+      setFaceTool(null);
+      setNotice(t("status.faceToolCancelled"));
+      return;
+    }
+    const targets = selectedShapes.filter((shape) => !shape.locked && !shape.hole && !isReferencePoint(shape) && isSolidShape(shape));
+    if (targets.length !== 1) {
+      setNotice(t("status.faceToolNeedsOne"));
+      return;
+    }
+    setHolePatternTool(null);
+    setFaceTool({
+      shapeId: targets[0].id,
+      picking: true,
+      workplane: null,
+      face: null,
+      maxDepth: FACE_TOOL_MAX_DEPTH,
+      settings: normalizeFaceTool({}),
+      busy: false,
+      error: null,
+    });
+  }, [faceTool, selectedShapes]);
 
   /**
    * Der Klick auf die Flaeche. Aus ihren Dreiecken wird ihr Rand - samt den
@@ -9497,13 +9548,20 @@ export function SketchForgeEditor({
   }) => {
     const target = shapesRef.current.find((shape) => shape.id === picked.shapeId);
     if (!target) return;
+    // Dieselbe Flaeche, dieselbe Rechnung - nur wartet gerade das Flaechenwerkzeug darauf.
+    const forFaceTool = Boolean(faceToolRef.current?.picking);
+    const fail = (message: string) => {
+      if (forFaceTool) setFaceTool((current) => current ? { ...current, error: message } : current);
+      else setHolePatternTool((current) => current ? { ...current, error: message } : current);
+    };
+    if (forFaceTool && picked.shapeId !== faceToolRef.current?.shapeId) return;
     if (picked.triangles.length < 2) {
-      setHolePatternTool((current) => current ? { ...current, error: t("holePattern.curvedFace") } : current);
+      fail(t("holePattern.curvedFace"));
       return;
     }
     const loops = planarRegionLoops(picked.positions, picked.triangles);
     if (!loops) {
-      setHolePatternTool((current) => current ? { ...current, error: t("holePattern.faceUnreadable") } : current);
+      fail(t("holePattern.faceUnreadable"));
       return;
     }
     const workplane = placementWorkplaneFromSurface(picked.centre, picked.normal, placementWorkplane.xAxis);
@@ -9521,6 +9579,10 @@ export function SketchForgeEditor({
       reach = Math.max(reach, -(new THREE.Vector3(x, y, z).sub(origin).dot(normal)));
     });
     const maxDepth = Math.max(0.4, Math.round(reach * 100) / 100);
+    if (forFaceTool) {
+      setFaceTool((current) => current ? { ...current, picking: false, workplane, face, maxDepth, error: null } : current);
+      return;
+    }
     setHolePatternTool((current) => current ? {
       ...current,
       shapeId: picked.shapeId,
@@ -9532,6 +9594,109 @@ export function SketchForgeEditor({
       error: null,
     } : current);
   }, [placementWorkplane]);
+
+  /**
+   * Der eingezogene Umriss des Flaechenwerkzeugs. Er braucht den
+   * Manifold-Kern, der asynchron kommt; darum ein Effekt und kein Memo.
+   * Vorschau und Bau nehmen denselben Umriss.
+   */
+  useEffect(() => {
+    const face = faceTool?.face;
+    if (!face) {
+      setFaceToolProfile(null);
+      return;
+    }
+    const settings = faceToolSettingsOn(faceTool.maxDepth, faceTool.settings);
+    let cancelled = false;
+    void getManifoldRuntime().then((runtime) => {
+      if (cancelled) return;
+      setFaceToolProfile(insetFaceProfile(runtime, face, settings.inset, settings.radius));
+    }).catch(() => {
+      if (!cancelled) setFaceToolProfile(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [faceTool?.face, faceTool?.maxDepth, faceTool?.settings]);
+
+  /** Der Umriss als Ringe auf der Flaeche, wie die Loecher des Musters. */
+  const faceToolRings = useMemo(() => {
+    const workplane = faceTool?.workplane;
+    if (!workplane || !faceToolProfile) return null;
+    const byId = new Map(faceToolProfile.points.map((point) => [point.id, point]));
+    const rings: number[][] = [];
+    const seen = new Set<string>();
+    faceToolProfile.segments.forEach((segment) => {
+      if (seen.has(segment.id)) return;
+      const ring: number[] = [];
+      let current = segment;
+      for (let guard = 0; guard <= faceToolProfile.segments.length; guard += 1) {
+        seen.add(current.id);
+        const point = byId.get(current.startId);
+        if (point) {
+          const world = placementWorkplanePoint(workplane, point.x, point.z);
+          ring.push(world.x, world.y, world.z);
+        }
+        const next = faceToolProfile.segments.find((candidate) => candidate.startId === current.endId && !seen.has(candidate.id));
+        if (!next) break;
+        current = next;
+      }
+      if (ring.length >= 9) rings.push(ring);
+    });
+    return { rings };
+  }, [faceTool?.workplane, faceToolProfile]);
+
+  /**
+   * Die Flaeche herausziehen oder die Tasche schneiden: der Umriss als
+   * Skizzenkoerper hochgezogen, auf die Flaeche gestellt - etwas in den
+   * Koerper hinein, damit beide verschmelzen -, als Tasche eine Aussparung,
+   * und mit dem Koerper gruppiert. Ein Schritt im Verlauf.
+   */
+  const applyFaceTool = useCallback(async () => {
+    const current = faceToolRef.current;
+    if (!current?.workplane || !current.face) return;
+    const target = shapesRef.current.find((shape) => shape.id === current.shapeId);
+    if (!target) return;
+    const settings = faceToolSettingsOn(current.maxDepth, current.settings);
+    const runtime = await getManifoldRuntime().catch(() => null);
+    const profile = runtime ? insetFaceProfile(runtime, current.face, settings.inset, settings.radius) : null;
+    if (!profile) {
+      setFaceTool((tool) => tool ? { ...tool, error: t("faceTool.nothingLeft") } : tool);
+      return;
+    }
+    setFaceTool({ ...current, busy: true, error: null });
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    let body: WorkplaneShape;
+    try {
+      const frame = faceToolBodyFrame(current.workplane, settings, current.maxDepth);
+      const built = await cadShapeFromSketchProfile(profile, frame.height);
+      const placed = placeSketchExtrusion({
+        ...built,
+        name: settings.direction === "in" ? t("faceTool.bodyIn") : t("faceTool.bodyOut"),
+        color: target.color,
+      }, frame.workplane);
+      body = canonicalizeShape(settings.direction === "in" ? withHoleMode(placed, true) : placed);
+    } catch (error) {
+      setFaceTool((tool) => tool ? { ...tool, busy: false, error: error instanceof Error ? error.message : t("status.cannotExtrude") } : tool);
+      return;
+    }
+    const result = await buildGroupedShapeFromSelection([target, body]);
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setFaceTool((tool) => tool ? { ...tool, busy: false, error: t("status.groupChanged") } : tool);
+      return;
+    }
+    if (!result.group) {
+      setFaceTool((tool) => tool ? { ...tool, busy: false, error: result.failureNotice } : tool);
+      return;
+    }
+    const group = canonicalizeShape({ ...result.group, groupOperation: "group" });
+    setFaceTool(null);
+    commitShapes(
+      [...shapesRef.current.filter((shape) => shape.id !== target.id), group],
+      group.id,
+      settings.direction === "in" ? t("status.faceToolIn") : t("status.faceToolOut"),
+    );
+  }, [commitShapes]);
 
   /** Die Mitten zur gegenwaertigen Einstellung - dieselbe Rechnung, die spaeter setzt. */
   const holePatternPlaces = useMemo(() => {
@@ -9558,7 +9723,16 @@ export function SketchForgeEditor({
 
     const workplane = current.workplane;
     const settings = current.settings;
-    const depth = current.through ? current.maxDepth : Math.min(current.depth, current.maxDepth);
+    /*
+     * Eine Aussparung wird beim Gruppieren an beiden Enden um 0,05 mm
+     * verlaengert (cutterPadding.ts). Ein Loch durch den ganzen Koerper soll
+     * das, ein blindes nicht: Es kam 0,05 mm zu tief heraus - gemessen an 15
+     * Loechern von 4 mm, 2 mm tief getippt, 25,743 mm3 je Loch, das ist das
+     * 96-Eck mal 2,05 mm. Darum ist das blinde Loch um die Zugabe kuerzer.
+     */
+    const depth = current.through
+      ? current.maxDepth
+      : Math.max(CUTTER_END_PADDING, Math.min(current.depth, current.maxDepth) - CUTTER_END_PADDING);
     const radians = ((settings.angle ?? 0) * Math.PI) / 180;
     // Das Muster dreht sich in der Flaeche, also dreht sich auch die
     // Laengsachse der Aussparung mit - sonst stuende ein Schlitz quer zu
@@ -12741,6 +12915,17 @@ export function SketchForgeEditor({
           setNotice(t("status.mateCancelled"));
           return;
         }
+        if (faceTool) {
+          if (faceTool.picking && faceTool.face) {
+            setFaceTool({ ...faceTool, picking: false });
+            setNotice("");
+            return;
+          }
+          if (faceTool.busy) return;
+          setFaceTool(null);
+          setNotice(t("status.faceToolCancelled"));
+          return;
+        }
         if (holePatternTool) {
           // Wie beim Teilen: Zeigt es gerade, nimmt Escape nur das Zeigen
           // zurueck - die eingestellten Zahlen sollen bleiben.
@@ -12955,6 +13140,7 @@ export function SketchForgeEditor({
     setDownMode,
     snapMode,
     holePatternTool,
+    faceTool,
     splitTool,
     toggleHidden,
     toggleSetDownTool,
@@ -13083,6 +13269,8 @@ export function SketchForgeEditor({
         splitActive={Boolean(splitTool)}
         holePatternActive={Boolean(holePatternTool)}
         onHolePattern={toggleHolePatternTool}
+        faceToolActive={Boolean(faceTool)}
+        onFaceTool={toggleFaceTool}
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
         onHollow={startHollow}
@@ -13227,9 +13415,9 @@ export function SketchForgeEditor({
           notes={notes}
           notesVisible={notesVisible}
           showOverhangs={overhangsVisible}
-          holePatternMode={Boolean(holePatternTool?.picking)}
+          holePatternMode={Boolean(holePatternTool?.picking || faceTool?.picking)}
           onHolePatternPick={pickHolePatternFace}
-          holePatternPreview={holePatternRings}
+          holePatternPreview={faceTool ? faceToolRings : holePatternRings}
           splitPickMode={Boolean(splitTool?.picking)}
           onSplitFacePick={laySplitPlaneOnFace}
           splitPreview={splitTool && splitPlane ? { normal: splitPlane.normal, origin: splitPlane.origin, size: splitPlane.size } : null}
@@ -13316,6 +13504,28 @@ export function SketchForgeEditor({
           onCancel={() => {
             setMateTool(null);
             setNotice(t("status.mateCancelled"));
+          }}
+        />
+      ) : null}
+      {faceTool ? (
+        <FaceToolPanel
+          settings={faceTool.settings}
+          hasFace={Boolean(faceTool.face && faceToolProfile)}
+          maxDepth={faceTool.maxDepth}
+          workspace={workspaceSettings}
+          busy={faceTool.busy}
+          error={faceTool.error ?? (faceTool.face && !faceToolProfile ? t("faceTool.nothingLeft") : null)}
+          picking={faceTool.picking}
+          onPickToggle={() => setFaceTool((current) => current ? { ...current, picking: !current.picking } : current)}
+          onSettingsChange={(patch) => setFaceTool((current) => current ? {
+            ...current,
+            settings: normalizeFaceTool({ ...current.settings, ...patch }),
+            error: null,
+          } : current)}
+          onApply={() => { void applyFaceTool(); }}
+          onCancel={() => {
+            setFaceTool(null);
+            setNotice(t("status.faceToolCancelled"));
           }}
         />
       ) : null}
@@ -13715,6 +13925,8 @@ function SecondaryToolbar({
   splitActive,
   holePatternActive,
   onHolePattern,
+  faceToolActive,
+  onFaceTool,
   onPivot,
   pivotActive,
   onHollow,
@@ -13836,6 +14048,8 @@ function SecondaryToolbar({
   splitActive: boolean;
   holePatternActive: boolean;
   onHolePattern: () => void;
+  faceToolActive: boolean;
+  onFaceTool: () => void;
   onPivot: () => void;
   pivotActive: boolean;
   onHollow: () => void;
@@ -14153,6 +14367,8 @@ function SecondaryToolbar({
     { label: t("editor.tool.split"), icon: ToolbarSplitIcon, action: onSplit, enabled: hasSelection, active: splitActive },
     // Neben dem Teilen, weil es dieselbe Frage stellt: welche Flaeche?
     { label: t("editor.tool.holePattern"), icon: ToolbarHolePatternIcon, action: onHolePattern, enabled: hasSelection, active: holePatternActive },
+    // Und daneben das Flaechenwerkzeug: ebenfalls erst die Flaeche.
+    { label: t("editor.tool.faceTool"), icon: ToolbarFaceToolIcon, action: onFaceTool, enabled: hasSelection, active: faceToolActive },
   ];
   const arrangeTools = [
     { label: t("editor.tool.snapToGrid"), icon: ToolbarSnapGridIcon, action: onSnap, enabled: hasSelection },
