@@ -3,6 +3,8 @@ import type { WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 import { toolbarShapeAssets } from "@/lib/shapeCatalog";
 import { formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, normalizeScaleForUnits, parseMeasurementInput, scaleOptionsForUnits } from "@/lib/measurementUnits";
 import {
+  arrowNudgeStep,
+  FREE_ARROW_STEP,
   shapeClickOutcome, canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 
 describe("workplane settings helpers", () => {
@@ -279,5 +281,21 @@ describe("Ein Klick auf einen Koerper", () => {
     expect(click({ selectBeforeMove: true })).toEqual({ select: "replace", drag: false });
     expect(click({ selectBeforeMove: true, alreadySelected: true })).toEqual({ select: "none", drag: true });
     expect(click({ selectBeforeMove: true, alreadySelected: true, hasWorkplanePoint: false })).toEqual({ select: "none", drag: false });
+  });
+});
+
+describe("Wie weit eine Pfeiltaste bewegt", () => {
+  it("folgt dem Raster, Umschalt nimmt das Fuenffache", () => {
+    expect(arrowNudgeStep("1.0 mm", false)).toBe(1);
+    expect(arrowNudgeStep("1.0 mm", true)).toBe(5);
+    expect(arrowNudgeStep("5.0 mm", false)).toBe(5);
+    expect(arrowNudgeStep("0.25 mm", false)).toBe(0.25);
+    expect(arrowNudgeStep("Brick", false)).toBe(8);
+  });
+
+  it("geht ohne Raster in Hundertstelmillimetern", () => {
+    expect(arrowNudgeStep("Off", false)).toBe(FREE_ARROW_STEP);
+    expect(FREE_ARROW_STEP).toBe(0.01);
+    expect(arrowNudgeStep("Off", true)).toBeCloseTo(0.05, 12);
   });
 });

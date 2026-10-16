@@ -195,7 +195,7 @@ import { importedShapeFrom3mf } from "@/lib/threemfImport";
 import { exportMeshesToStl } from "@/lib/stlExport";
 import { importedShapeFromSvg, invalidSvgMeshReason } from "@/lib/svgImport";
 import { toSvgProjection, type SvgProjectionLayer } from "@/lib/svgExport";
-import { normalizeSnapGrid, normalizeWorkspaceSettings, workplaneSettingsFingerprint } from "@/lib/workplaneSettings";
+import { arrowNudgeStep, normalizeSnapGrid, normalizeWorkspaceSettings, workplaneSettingsFingerprint } from "@/lib/workplaneSettings";
 import {
   normalizePlacementWorkplane,
   placementPatchForNewShape,
@@ -12878,7 +12878,7 @@ export function SketchForgeEditor({
         return;
       }
 
-      const step = event.shiftKey ? 5 : 1;
+      const step = arrowNudgeStep(snapGrid, event.shiftKey);
       if (shortcut && event.key === "ArrowUp") {
         event.preventDefault();
         raiseSelected(step);
@@ -12937,6 +12937,7 @@ export function SketchForgeEditor({
     pasteShape,
     pivotMode,
     raiseSelected,
+    snapGrid,
     redo,
     rotateSelectedBy,
     rotateSelectedClosedSketch45,

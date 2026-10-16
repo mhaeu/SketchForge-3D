@@ -157,6 +157,25 @@ export function snapGridStep(size: GridSize) {
   if (custom) return custom.size / custom.divisor;
   return Number.parseFloat(size) || 1;
 }
+
+/** Wie weit eine Pfeiltaste ohne Raster bewegt, in mm. */
+export const FREE_ARROW_STEP = 0.01;
+
+/**
+ * Wie weit eine Pfeiltaste die Auswahl bewegt, in mm.
+ *
+ * Bisher immer ein Millimeter (fuenf mit Umschalt), ganz gleich, welches
+ * Raster galt - bei einem Raster von 5 mm brauchte es fuenf Druecke bis zum
+ * naechsten Rasterpunkt, bei einem von 0,25 mm sprang man ueber drei hinweg,
+ * und ohne Raster, wo die Maus frei zieht, ging es nicht feiner als einen
+ * Millimeter. Jetzt ist der Schritt das Raster, ohne Raster 0,01 mm; Umschalt
+ * nimmt das Fuenffache. Nach Layerling 1.67.6 (#293) und 1.75.0 (#370).
+ */
+export function arrowNudgeStep(size: GridSize, shift: boolean) {
+  const grid = snapGridStep(size);
+  const base = grid > 0 ? grid : FREE_ARROW_STEP;
+  return shift ? base * 5 : base;
+}
 // Jede Art, deren Vorgaben sich in den Einstellungen setzen lassen. Fehlt eine
 // hier, wirft das Normalisieren ihre gespeicherten Vorgaben beim naechsten
 // Laden weg - das Fenster bietet sie an, behalten wuerde sie niemand.
