@@ -350,6 +350,18 @@ export function normalizeShapeCustomizations(value: unknown, fallback: ShapeCust
   return normalized;
 }
 
+/**
+ * Wie weit eine Lage hoechstens eingetippt werden kann, in mm: 100 m.
+ *
+ * Weit jenseits jeder Platte - das ist keine Grenze fuer einen Entwurf,
+ * sondern ein Schutz gegen einen Tippfehler wie 1e9. Vorher hielten die
+ * Hoehe ueber der Platte und der Hebepfeil bei 220 mm an, der Groesse der
+ * alten festen Platte, und ein Koerper, der hoeher lag, sprang beim
+ * naechsten Ziehen an einem Griff auf 220 zurueck. Nach Layerling 1.81.0
+ * (#425).
+ */
+export const POSITION_TYPED_LIMIT = 100_000;
+
 export function shapeDimensionLimit(workspace: WorkplaneWorkspaceSettings, kind: ShapeKind, appDefault: number) {
   return workspace.shapeCustomizations[kind]?.maxDimension ?? appDefault;
 }

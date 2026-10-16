@@ -111,7 +111,7 @@ import {
 import { sceneAxisLetter } from "@/lib/axisLabels";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
-import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS, customSnapGridLabel, snapGridOptions } from "@/lib/workplaneSettings";
+import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS, POSITION_TYPED_LIMIT, customSnapGridLabel, snapGridOptions } from "@/lib/workplaneSettings";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
 import {
   MAX_THREAD_CLEARANCE,
@@ -2627,9 +2627,15 @@ function RangeProperty({
 }) {
   const allowsAboveSliderMax = ["length", "width", "height", "diameter", "pitch", "threadLength", "clearance", "segments", "x", "y", "z"].includes(id)
     || id.endsWith("Length") || id.endsWith("Width");
+  /*
+   * Eine Lage nimmt jede Zahl, nach beiden Seiten - der Regler reicht nur
+   * so weit wie die Platte. Vorher kappte das Feld nach unten am Regler und
+   * zeigte einen Koerper, der tiefer lag, auf dessen Rand.
+   */
+  const freePosition = id === "x" || id === "y" || id === "z";
   const isLength = propertyUsesLengthUnit(id);
   const accuracy = workspace.accuracy;
-  const actualValue = Math.max(min, Number.isFinite(value) ? value : min);
+  const actualValue = freePosition && Number.isFinite(value) ? value : Math.max(min, Number.isFinite(value) ? value : min);
   const controlValue = isLength ? millimetersToDisplay(actualValue, workspace) : actualValue;
   const controlMin = isLength ? millimetersToDisplay(min, workspace) : min;
   const controlMax = isLength ? millimetersToDisplay(max, workspace) : max;
@@ -2650,7 +2656,9 @@ function RangeProperty({
     const next = parseMeasurementInput(draft);
     const finiteNext = Number.isFinite(next) ? next : controlValue;
     const nextModelValue = toModelValue(finiteNext);
-    const stored = allowsAboveSliderMax ? Math.max(min, nextModelValue) : clamp(nextModelValue, min, max);
+    const stored = freePosition
+      ? clamp(nextModelValue, -POSITION_TYPED_LIMIT, POSITION_TYPED_LIMIT)
+      : allowsAboveSliderMax ? Math.max(min, nextModelValue) : clamp(nextModelValue, min, max);
     onChange(stored);
     /*
      * Gemerkt wird die Rechnung gegen den Wert, der wirklich stehen bleibt -

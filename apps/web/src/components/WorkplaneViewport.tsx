@@ -52,7 +52,7 @@ import { createPyramidGeometry, normalizePyramidTop } from "@/lib/pyramidGeometr
 import type { CameraOrientation } from "@/lib/screenAlignedNudge";
 import { viewFaceOrientation, workplaneCameraOrientation, worldCameraOrientation, type ViewCubeFace } from "@/lib/viewCubeOrientation";
 import { projectThumbnailDimensions } from "@/lib/projectThumbnail";
-import { shapeClickOutcome, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, snapGridStep, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
+import { shapeClickOutcome, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, POSITION_TYPED_LIMIT, shapeDimensionLimit, snapGridStep, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 import { interiorWorkplaneGridCoordinates, workplaneThemePalette, WORKPLANE_LINE_ELEVATION, WORKPLANE_MAJOR_GRID_INTERVAL } from "@/lib/workplaneGrid";
 import { DEFAULT_OVERHANG_ANGLE, OVERHANG_PLATE_TOLERANCE, overhangDownwardLimit } from "@/lib/overhangLimits";
 import { OVERHANG_PROGRAM_CACHE_KEY, patchOverhangFragmentShader, patchOverhangVertexShader } from "@/lib/overhangShader";
@@ -137,8 +137,9 @@ const CAMERA_HOME = new THREE.Vector3(118, 96, 118);
 const CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
 const MIN_SHAPE_SIZE = 0.01;
 const CUT_PREVIEW_PADDING = 0.01;
-const MIN_ELEVATION = -180;
-const MAX_ELEVATION = 220;
+// Die Hoehe ueber der Platte haelt nicht mehr bei 220 mm an (siehe POSITION_TYPED_LIMIT).
+const MIN_ELEVATION = -POSITION_TYPED_LIMIT;
+const MAX_ELEVATION = POSITION_TYPED_LIMIT;
 const CAMERA_MIN_TARGET_Y = -70;
 const CAMERA_MAX_TARGET_Y = 120;
 const ROTATION_PROTRACTOR_OUTER_RADIUS = 94;
