@@ -165,24 +165,19 @@ describe("Der Punkt in der Aussparung", () => {
     };
 
     const cached = createHoleTester(buildBounds);
-    const withCache = Date.now();
     for (let step = 0; step < 400; step += 1) cached.inside([0, 0, 0], grouped);
-    const cachedMs = Date.now() - withCache;
 
-    const uncached = Date.now();
-    for (let step = 0; step < 400; step += 1) createHoleTester(buildBounds).inside([0, 0, 0], grouped);
-    const uncachedMs = Date.now() - uncached;
-
-    // Die eigentliche Zusage ist die Zahl der Aufrufe; die Zeit ist ihre Folge.
-    expect(cached.boundsLookups()).toBe(1);
     /*
-     * Darum hier nur das Fuenffache als Grenze, obwohl gemessen das
-     * Siebenundfuenfzigfache herauskam: Unter mehreren gleichzeitig laufenden
-     * Pruefdateien schwankt eine Wanduhrmessung stark, und eine knappe Grenze
-     * waere eine Pruefung, die manchmal ohne Grund rot wird. Ohne den Pruefer
-     * waere das Verhaeltnis eins.
+     * Die Zusage ist die Zahl der Aufrufe: ein Netz je Gruppe, nicht eines je
+     * Punkt. Die Zeit ist ihre Folge - gemessen einmal das Siebenundfuenfzig-
+     * fache -, aber sie wird hier nicht mehr geprueft. Eine Wanduhrmessung
+     * schwankt, sobald nebenher etwas laeuft, und die Grenze wurde zweimal
+     * ohne Grund rot, auch beim Fuenffachen.
      */
-    expect(cachedMs * 5).toBeLessThan(uncachedMs);
+    expect(cached.boundsLookups()).toBe(1);
+    const uncached = createHoleTester(buildBounds);
+    uncached.inside([0, 0, 0], grouped);
+    expect(uncached.boundsLookups()).toBe(1);
   }, 60000);
 });
 
