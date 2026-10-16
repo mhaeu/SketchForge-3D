@@ -893,6 +893,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "prop.bevel": "Abschrägung",
   "prop.topRadius": "Radius oben",
   "prop.baseRadius": "Radius unten",
+  "prop.innerDiameter": "Innendurchmesser",
   "prop.thickness": "Wandstärke",
   "prop.toothSize": "Zahngröße",
   "prop.toothWidth": "Zahnbreite",

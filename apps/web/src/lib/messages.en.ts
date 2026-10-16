@@ -839,6 +839,7 @@ export const MESSAGES_EN = {
   "prop.bevel": "Bevel",
   "prop.topRadius": "Top Radius",
   "prop.baseRadius": "Base Radius",
+  "prop.innerDiameter": "Inner diameter",
   "prop.thickness": "Thickness",
   "prop.toothSize": "Tooth Size",
   "prop.toothWidth": "Tooth Width",

@@ -112,6 +112,7 @@ import { sceneAxisLetter } from "@/lib/axisLabels";
 import { linkedResizeValues, normalizeShapeOpacity, NO_LINKED_RESIZE_AXES, RESIZE_AXES, resizeAxisIsLinked, resizedShapeSize, shapeDepth, shapeHasTaper, shapeOverallFootprintDimensions, shapeSideHeightPatch, shapeSideHeights, shapeSupportsExtrudeDeform, shapeTaperDimensions, shapeTopFaceEdgePatch, shapeTopFaceEdges, shapeWidth, type LinkedResizeAxes, type ResizeAxis } from "@/lib/workplaneShapes";
 import { normalizeSketchRevolveSettings } from "@/lib/sketchRevolve";
 import { MAX_HIGH_RESOLUTION_SIDES, MAX_HIGH_RESOLUTION_STEPS, POSITION_TYPED_LIMIT, customSnapGridLabel, snapGridOptions } from "@/lib/workplaneSettings";
+import { maxTubeInnerDiameter, tubeInnerDiameter, tubeWallForInnerDiameter } from "@/lib/tubeWall";
 import { THREAD_GROUPS, THREAD_TABLES } from "@/lib/threadGenerator";
 import {
   MAX_THREAD_CLEARANCE,
@@ -318,7 +319,7 @@ function propertyUsesLengthUnit(id: string) {
   if (/^(side|height)(Left|Right|Front|Back)$/.test(id)) return true;
   if (id === "cornerFillet" || id === "topBottomFillet") return true;
   if (id === "honeycombCellSize" || id === "honeycombWallThickness" || id === "honeycombFrameWidth") return true;
-  return ["radius", "length", "width", "height", "bevel", "topRadius", "baseRadius", "thickness", "toothSize", "toothWidth", "centerHole", "topLength", "topWidth", "bottomLength", "bottomWidth", "diameter", "pitch", "threadLength", "clearance", "headHeight", "chamfer", "headChamfer", "rimChamfer", "wire", "x", "y", "z", "crossSize", "markerSize"].includes(id);
+  return ["radius", "length", "width", "height", "bevel", "topRadius", "baseRadius", "thickness", "innerDiameter", "toothSize", "toothWidth", "centerHole", "topLength", "topWidth", "bottomLength", "bottomWidth", "diameter", "pitch", "threadLength", "clearance", "headHeight", "chamfer", "headChamfer", "rimChamfer", "wire", "x", "y", "z", "crossSize", "markerSize"].includes(id);
 }
 
 type OptionKeys = ReadonlyArray<{ value: string; label: MessageKey }>;
@@ -1207,6 +1208,20 @@ function getShapePropertiesWithAppLimits(
   if (shape.kind === "tube" || shape.kind === "ring") {
     return [
       { id: "thickness", label: t("prop.thickness"), value: shape.bevel ?? 4, min: 0.5, max: 20, onChange: (bevel) => onUpdate({ bevel }) },
+      // Gleich unter der Wand: Wer eine Buchse fuer eine Welle braucht, kennt
+      // diesen Durchmesser, nicht die Wand. Er setzt die Wand.
+      {
+        id: "innerDiameter",
+        label: t("prop.innerDiameter"),
+        value: tubeInnerDiameter(shape.bevel ?? 4, width, depth),
+        min: 0,
+        max: maxTubeInnerDiameter(width),
+        step: 0.1,
+        onChange: (inner) => {
+          const bevel = tubeWallForInnerDiameter(inner, width, depth);
+          if (bevel !== null) onUpdate({ bevel });
+        },
+      },
       { id: "length", label: t("prop.length"), value: depth, min: MIN_SHAPE_SIZE, max: 160, onChange: setDepth },
       { id: "width", label: t("prop.width"), value: width, min: MIN_SHAPE_SIZE, max: 160, onChange: setWidth },
       { id: "height", label: t("prop.height"), value: shape.height, min: MIN_SHAPE_SIZE, max: 160, onChange: setHeight },
