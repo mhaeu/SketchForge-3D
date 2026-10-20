@@ -5,6 +5,7 @@ import { formatMeasurementNumber, lengthDisplayUnit, millimetersToDisplay, norma
 import {
   arrowNudgeStep,
   FREE_ARROW_STEP,
+  SHIFT_ARROW_STEP,
   shapeClickOutcome, canBeginShapeDrag, DEFAULT_SNAP_GRID, DEFAULT_WORKPLANE_WORKSPACE, normalizeSnapGrid, normalizeWorkspaceSettings, shapeDimensionLimit, workplaneSettingsFingerprint, workspaceHydrationSyncDecision } from "@/lib/workplaneSettings";
 
 describe("workplane settings helpers", () => {
@@ -285,9 +286,8 @@ describe("Ein Klick auf einen Koerper", () => {
 });
 
 describe("Wie weit eine Pfeiltaste bewegt", () => {
-  it("folgt dem Raster, Umschalt nimmt das Fuenffache", () => {
+  it("folgt dem Raster", () => {
     expect(arrowNudgeStep("1.0 mm", false)).toBe(1);
-    expect(arrowNudgeStep("1.0 mm", true)).toBe(5);
     expect(arrowNudgeStep("5.0 mm", false)).toBe(5);
     expect(arrowNudgeStep("0.25 mm", false)).toBe(0.25);
     expect(arrowNudgeStep("Brick", false)).toBe(8);
@@ -296,6 +296,17 @@ describe("Wie weit eine Pfeiltaste bewegt", () => {
   it("geht ohne Raster in Hundertstelmillimetern", () => {
     expect(arrowNudgeStep("Off", false)).toBe(FREE_ARROW_STEP);
     expect(FREE_ARROW_STEP).toBe(0.01);
-    expect(arrowNudgeStep("Off", true)).toBeCloseTo(0.05, 12);
+  });
+
+  /** Umschalt ist der grobe Schritt: 5 mm, bei jedem Raster und auch ohne. */
+  it("nimmt mit Umschalt 5 mm", () => {
+    expect(SHIFT_ARROW_STEP).toBe(5);
+    for (const size of ["Off", "0.1 mm", "0.25 mm", "1.0 mm", "2.0 mm", "5.0 mm"] as const) {
+      expect(arrowNudgeStep(size, true), size).toBe(5);
+    }
+  });
+
+  it("macht den groben Schritt nie kleiner als den feinen", () => {
+    expect(arrowNudgeStep("Brick", true)).toBe(8);
   });
 });

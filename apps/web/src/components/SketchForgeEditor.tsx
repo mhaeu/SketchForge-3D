@@ -7511,9 +7511,24 @@ export function SketchForgeEditor({
     }
   }, [alignAnchorId, selectedIds, selectedShapes.length]);
 
+  /** Die Pfeiltasten, die gerade unten sind, und was waehrenddessen gespeichert werden wollte. */
+  const heldArrowKeysRef = useRef(new Set<string>());
+  const pendingArrowSyncRef = useRef<{ shapes: WorkplaneShape[]; force: boolean } | null>(null);
   const syncProjectShapes = useCallback(
     (nextShapes: WorkplaneShape[], force = false) => {
       if (!projectId || !onProjectShapesChange) {
+        return;
+      }
+      /*
+       * Solange eine Pfeiltaste gehalten wird, wartet das Speichern aufs
+       * Loslassen. Die Verzoegerung unten (120 ms) reichte dafuer nicht: Vor
+       * der ersten Tastenwiederholung liegt rund eine halbe Sekunde, also
+       * speicherte ein gehaltener Pfeil zweimal - nach dem ersten Druck und
+       * nach dem Loslassen - und rechnete bei jeder Wiederholung den
+       * Fingerabdruck des ganzen Entwurfs. Wie bei Formsmith746 (e9cb8e8).
+       */
+      if (heldArrowKeysRef.current.size > 0) {
+        pendingArrowSyncRef.current = { shapes: nextShapes, force: force || Boolean(pendingArrowSyncRef.current?.force) };
         return;
       }
       if (projectInteractionActiveRef.current) {
@@ -7626,6 +7641,32 @@ export function SketchForgeEditor({
     const timer = window.setTimeout(() => syncProjectShapes(shapesRef.current), 180);
     return () => window.clearTimeout(timer);
   }, [projectInteractionActive, syncProjectShapes]);
+
+  /*
+   * Losgelassen - oder das Fenster verliert den Fokus, dann kommt kein
+   * Loslassen mehr: jetzt einmal speichern, was waehrenddessen anfiel.
+   */
+  useEffect(() => {
+    const release = (key?: string) => {
+      if (key !== undefined) {
+        if (!heldArrowKeysRef.current.delete(key)) return;
+      } else {
+        heldArrowKeysRef.current.clear();
+      }
+      if (heldArrowKeysRef.current.size > 0) return;
+      const pending = pendingArrowSyncRef.current;
+      pendingArrowSyncRef.current = null;
+      if (pending) syncProjectShapes(pending.shapes, pending.force);
+    };
+    const onKeyUp = (event: KeyboardEvent) => release(event.key);
+    const onBlur = () => release();
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [syncProjectShapes]);
 
   const updateProjectInteractionActive = useCallback(
     (active: boolean) => {
@@ -13064,6 +13105,7 @@ export function SketchForgeEditor({
       }
 
       const step = arrowNudgeStep(snapGrid, event.shiftKey);
+      if (hasSelection && event.key.startsWith("Arrow")) heldArrowKeysRef.current.add(event.key);
       if (shortcut && event.key === "ArrowUp") {
         event.preventDefault();
         raiseSelected(step);
