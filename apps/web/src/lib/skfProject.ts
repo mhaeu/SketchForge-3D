@@ -13,11 +13,10 @@ import { normalizeSnapGrid, normalizeWorkspaceSettings } from "@/lib/workplaneSe
 import type { GridSize, ProjectAsset, ProjectAssetSourceFormat, SketchOperation, SketchRevolveSettings, WorkplaneNote, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 export const SKF_SCHEMA_ID = "com.sketchforge.project";
-export const SKF_FORMAT_VERSION = 1;
-export const SKF_MINIMUM_READER_VERSION = 1;
+export const SKF_FORMAT_VERSION = 2;
+export const SKF_MINIMUM_READER_VERSION = 2;
 /**
- * Die hoechste Fassung, die dieser Leser oeffnet - hoeher als die, die er
- * schreibt.
+ * Die hoechste Fassung, die dieser Leser oeffnet.
  *
  * Formsmith746 (unser `origin`) schreibt seit seinem Commit e9cb8e8 Fassung 2:
  * Kantendaten (`cadDisplayEdges`) liegen nicht mehr in jedem Koerper, sondern
@@ -25,8 +24,16 @@ export const SKF_MINIMUM_READER_VERSION = 1;
  * verweist mit `cadDisplayEdgesAssetId` darauf. Sonst ist der Aufbau derselbe.
  * Solche Dateien verlangen ausdruecklich einen Leser der Fassung 2
  * (`minimumReaderVersion: 2`) - ohne diese Zeile liesse sich dort
- * Gespeichertes hier nicht mehr oeffnen. Geschrieben wird weiter Fassung 1,
- * die beide Seiten lesen.
+ * Gespeichertes hier nicht mehr oeffnen.
+ *
+ * Geschrieben wird seit dem 20.10.2026 ebenfalls Fassung 2. Gemessen an drei
+ * bearbeiteten Koerpern mit je 60 Kanten in 50 Verlaufsstaenden: Fassung 1
+ * schrieb 16 MB `project.json` und brauchte rund 1 s je Speichern (die ersten
+ * Male 3 bis 4 s) - und das automatische Speichern schreibt bei jeder
+ * Aenderung ein ganzes Paket. Mit 300 Kanten je Koerper scheiterte es an der
+ * Grenze von 64 MB, der Entwurf wurde gar nicht mehr gespeichert. Der Preis:
+ * Aeltere Fassungen beider Seiten, auch Formsmith746 1.0.9, oeffnen diese
+ * Dateien nicht mehr.
  */
 export const SKF_HIGHEST_READABLE_VERSION = 2;
 export const SKF_CREATED_WITH_VERSION = "1.1.0";
@@ -124,7 +131,7 @@ export type SkfFeatureV1 = {
 
 export type SkfProjectDocumentV1 = {
   schema: typeof SKF_SCHEMA_ID;
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   minimumReaderVersion: number;
   createdWithVersion: string;
   metadata: {
@@ -328,6 +335,63 @@ function bytesToDataUrl(bytes: Uint8Array, mediaType: string) {
   return `data:${mediaType};base64,${globalThis.btoa(binary)}`;
 }
 
+/**
+ * Was ein Speichern schon kodiert und gehasht hat, fuer das naechste.
+ *
+ * Das automatische Speichern schreibt bei jeder Aenderung ein ganzes Paket,
+ * mit allen Verlaufsstaenden. Netze, Kanten, genaue Koerper und Bilder sind
+ * dabei fast immer dieselben Gegenstaende wie beim letzten Mal - verschoben
+ * wird ein Koerper, nicht sein Netz. Gegenstaende merkt sich eine WeakMap
+ * (sie faellt mit ihnen weg); Texte (B-Rep, Bilder als Daten-URL) lassen sich
+ * dort nicht ablegen, die haelt eine begrenzte Liste. Nach Formsmith746
+ * (e9cb8e8).
+ */
+type EncodedResource = { bytes: Uint8Array; sha256: string };
+const objectEncodings = new WeakMap<object, Promise<EncodedResource>>();
+const textEncodings = new Map<string, Promise<EncodedResource>>();
+/** So viele Zeichen Text haelt die Liste hoechstens - die aeltesten fallen zuerst. */
+const MAX_CACHED_TEXT_UNITS = 64 * 1024 * 1024;
+let cachedTextUnits = 0;
+
+async function encodedResource(bytes: Uint8Array): Promise<EncodedResource> {
+  if (bytes.byteLength > SKF_LIMITS.assetBytes) throw new Error("Resource exceeds the per-asset size limit");
+  return { bytes, sha256: await sha256Hex(bytes) };
+}
+
+function encodedObject(key: object, encode: () => Uint8Array) {
+  let pending = objectEncodings.get(key);
+  if (!pending) {
+    pending = encodedResource(encode());
+    objectEncodings.set(key, pending);
+    pending.catch(() => objectEncodings.delete(key));
+  }
+  return pending;
+}
+
+function encodedText(key: string, encode: () => Uint8Array) {
+  let pending = textEncodings.get(key);
+  if (pending) {
+    // Wieder vorn einreihen: zuletzt benutzt faellt zuletzt heraus.
+    textEncodings.delete(key);
+    textEncodings.set(key, pending);
+    return pending;
+  }
+  pending = encodedResource(encode());
+  if (key.length <= MAX_CACHED_TEXT_UNITS) {
+    while (cachedTextUnits + key.length > MAX_CACHED_TEXT_UNITS && textEncodings.size > 0) {
+      const oldest = textEncodings.keys().next().value as string;
+      textEncodings.delete(oldest);
+      cachedTextUnits -= oldest.length;
+    }
+    textEncodings.set(key, pending);
+    cachedTextUnits += key.length;
+    pending.catch(() => {
+      if (textEncodings.delete(key)) cachedTextUnits -= key.length;
+    });
+  }
+  return pending;
+}
+
 class SkfArchiveBuilder {
   readonly files: ArchiveFiles = {};
   readonly assets: SkfAssetRecordV1[] = [];
@@ -342,7 +406,16 @@ class SkfArchiveBuilder {
     options: { fileName?: string; sourceFormat?: ProjectAssetSourceFormat } = {},
   ) {
     if (bytes.byteLength > SKF_LIMITS.assetBytes) throw new Error(`${options.fileName ?? kind} exceeds the per-asset size limit`);
-    const sha256 = await sha256Hex(bytes);
+    return this.addEncodedAsset(kind, { bytes, sha256: await sha256Hex(bytes) }, mediaType, options);
+  }
+
+  addEncodedAsset(
+    kind: SkfAssetKind,
+    encoded: EncodedResource,
+    mediaType: string,
+    options: { fileName?: string; sourceFormat?: ProjectAssetSourceFormat } = {},
+  ) {
+    const { bytes, sha256 } = encoded;
     const key = `${kind}:${sha256}`;
     const existing = this.recordByKindAndHash.get(key);
     if (existing) return existing;
@@ -382,9 +455,29 @@ class SkfArchiveBuilder {
   addDerivedMesh(mesh: NonNullable<WorkplaneShape["importedMesh"]>) {
     const cached = this.derivedMeshByResource.get(mesh);
     if (cached) return cached;
-    const pending = this.addAsset("derived-mesh", encodeMeshCache(mesh), "application/vnd.sketchforge.mesh");
+    // Das Netz selbst ist der Schluessel: Seine Zahlen aendern sich nie an Ort und Stelle.
+    const pending = encodedObject(mesh.positions, () => encodeMeshCache(mesh))
+      .then((encoded) => this.addEncodedAsset("derived-mesh", encoded, "application/vnd.sketchforge.mesh"));
     this.derivedMeshByResource.set(mesh, pending);
     return pending;
+  }
+
+  /** Fassung 2: ein Kantensatz als eigene Datei, so oft er auch vorkommt. */
+  async addDisplayEdges(edges: NonNullable<WorkplaneShape["cadDisplayEdges"]>) {
+    const encoded = await encodedObject(edges, () => strToU8(JSON.stringify(edges)));
+    return this.addEncodedAsset("display-edges", encoded, "application/vnd.sketchforge.display-edges+json");
+  }
+
+  /** Ein genauer Koerper als Text - je Text einmal kodiert und gehasht. */
+  async addText(kind: "brep", value: string, mediaType: string) {
+    return this.addEncodedAsset(kind, await encodedText(value, () => strToU8(value)), mediaType);
+  }
+
+  /** Ein Bild als Daten-URL - je Bild einmal dekodiert und gehasht. */
+  async addImage(dataUrl: string, fileName?: string) {
+    const encoded = await encodedText(dataUrl, () => decodeDataUrl(dataUrl).bytes);
+    const mediaType = dataUrl.match(/^data:([^;,]+)/)?.[1] ?? "application/octet-stream";
+    return this.addEncodedAsset("image", encoded, mediaType, { fileName });
   }
 }
 
@@ -467,6 +560,7 @@ async function serializeShapeNode(
     groupedShapes,
     edgeTreatmentHistory,
     cadBrep,
+    cadDisplayEdges,
     imagePlate,
     sketchProfile,
     ...baseDefinition
@@ -475,16 +569,14 @@ async function serializeShapeNode(
 
   if (imagePlate) {
     const { dataUrl, ...plateDefinition } = imagePlate;
-    const decoded = decodeDataUrl(dataUrl);
-    const asset = await builder.addAsset("image", decoded.bytes, decoded.mediaType, { fileName: `${shape.name}-image` });
+    const asset = await builder.addImage(dataUrl, `${shape.name}-image`);
     definition.imagePlate = { ...plateDefinition, assetId: asset.id };
   }
 
   if (sketchProfile) {
     const images = await Promise.all((sketchProfile.images ?? []).map(async (image) => {
       const { dataUrl, ...imageDefinition } = image;
-      const decoded = decodeDataUrl(dataUrl);
-      const asset = await builder.addAsset("image", decoded.bytes, decoded.mediaType, { fileName: image.name });
+      const asset = await builder.addImage(dataUrl, image.name);
       return { ...imageDefinition, assetId: asset.id };
     }));
     definition.sketchProfile = {
@@ -508,7 +600,7 @@ async function serializeShapeNode(
     if (!canRegenerate) {
       meshAssetId = (await builder.addDerivedMesh(importedMesh)).id;
       if (importedMesh.brepStep) {
-        brepStepAssetId = (await builder.addAsset("brep", strToU8(importedMesh.brepStep), "application/step")).id;
+        brepStepAssetId = (await builder.addText("brep", importedMesh.brepStep, "application/step")).id;
       }
     }
     importedReference = {
@@ -524,7 +616,9 @@ async function serializeShapeNode(
   }
 
   let cadBrepAssetId: string | undefined;
-  if (cadBrep) cadBrepAssetId = (await builder.addAsset("brep", strToU8(cadBrep), "application/vnd.sketchforge.brep")).id;
+  if (cadBrep) cadBrepAssetId = (await builder.addText("brep", cadBrep, "application/vnd.sketchforge.brep")).id;
+  // Fassung 2: Die Kanten stehen nicht im Koerper, sondern einmal als eigene Datei.
+  const cadDisplayEdgesAssetId = cadDisplayEdges ? (await builder.addDisplayEdges(cadDisplayEdges)).id : undefined;
 
   const groupedShapeNodeIds: string[] = [];
   for (const child of groupedShapes ?? []) {
@@ -564,6 +658,7 @@ async function serializeShapeNode(
     ...(groupedShapeNodeIds.length ? { groupedShapeNodeIds } : {}),
     ...(serializedEdgeHistory.length ? { edgeTreatmentHistory: serializedEdgeHistory } : {}),
     ...(cadBrepAssetId ? { cadBrepAssetId } : {}),
+    ...(cadDisplayEdgesAssetId ? { cadDisplayEdgesAssetId } : {}),
   });
   return nodeId;
 }

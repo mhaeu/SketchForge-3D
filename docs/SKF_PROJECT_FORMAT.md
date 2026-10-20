@@ -8,7 +8,7 @@ SketchForge uses a packaged container (format option B). A `.skf` file is a ZIP 
 
 This was selected over pure JSON because imported STL/STEP data and exact B-Rep can be large, Base64 would add size and parsing overhead, and an archive lets SketchForge validate and hash each asset independently. The editable model is still JSON and can be inspected by opening `project.json` from the package.
 
-## Version 1 layout
+## Version 2 layout
 
 ```text
 project.skf
@@ -17,7 +17,8 @@ project.skf
     ├── source/          Original imported STL, SVG, or STEP files
     ├── derived-mesh/    Exact caches for baked operations or legacy imports
     ├── brep/            Exact STEP/B-Rep payloads
-    └── image/           Deduplicated sketch/reference images
+    ├── image/           Deduplicated sketch/reference images
+    └── display-edges/   Shared CAD display-edge arrays (JSON), since version 2
 ```
 
 `project.json` contains these top-level sections:
@@ -59,7 +60,7 @@ Current safety limits are 512 MB compressed, 1 GB expanded, 256 MB per asset, 64
 
 ## Compatibility and migrations
 
-The current format is version 1. Readers refuse a higher `formatVersion` or `minimumReaderVersion` instead of partially loading it. The importer also contains an explicit migration for the documented version 0 pure-JSON prototype and preserves its object IDs and valid history.
+New saves use format version 2 and minimum reader version 2, the same layout Formsmith746 writes since its commit e9cb8e8. Version 2 differs from version 1 in one place: a body's CAD display edges are not stored inline in its definition but once per distinct edge array as a `display-edges` asset, referenced from the node as `cadDisplayEdgesAssetId` (the edge version stays in the definition). Measured on three edited bodies with 60 edges each across 50 undo states, version 1 wrote 16 MB of `project.json` and took about 1 s per save, and with 300 edges it exceeded the 64 MB limit; version 2 writes 103 KB and takes about 0.2 s. Mesh coordinates, B-Rep text, images and edges are encoded and hashed once per immutable resource and reused by later saves. Older applications, including Formsmith746 1.0.9, reject version 2 files rather than dropping shared edges. The reader accepts version 1 and 2 and writes version 2 on the next save. Readers refuse a higher `formatVersion` or `minimumReaderVersion` instead of partially loading it. The importer also contains an explicit migration for the documented version 0 pure-JSON prototype and preserves its object IDs and valid history.
 
 Future schema changes should add a version-to-version migration, run validation after every migration, and never mutate the user's original file.
 
