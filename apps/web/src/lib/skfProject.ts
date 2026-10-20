@@ -15,6 +15,20 @@ import type { GridSize, ProjectAsset, ProjectAssetSourceFormat, SketchOperation,
 export const SKF_SCHEMA_ID = "com.sketchforge.project";
 export const SKF_FORMAT_VERSION = 1;
 export const SKF_MINIMUM_READER_VERSION = 1;
+/**
+ * Die hoechste Fassung, die dieser Leser oeffnet - hoeher als die, die er
+ * schreibt.
+ *
+ * Formsmith746 (unser `origin`) schreibt seit seinem Commit e9cb8e8 Fassung 2:
+ * Kantendaten (`cadDisplayEdges`) liegen nicht mehr in jedem Koerper, sondern
+ * einmal als eigene Datei unter `assets/display-edges/`, und der Koerper
+ * verweist mit `cadDisplayEdgesAssetId` darauf. Sonst ist der Aufbau derselbe.
+ * Solche Dateien verlangen ausdruecklich einen Leser der Fassung 2
+ * (`minimumReaderVersion: 2`) - ohne diese Zeile liesse sich dort
+ * Gespeichertes hier nicht mehr oeffnen. Geschrieben wird weiter Fassung 1,
+ * die beide Seiten lesen.
+ */
+export const SKF_HIGHEST_READABLE_VERSION = 2;
 export const SKF_CREATED_WITH_VERSION = "1.1.0";
 export const SKF_MEDIA_TYPE = "application/vnd.sketchforge.project+zip";
 
@@ -42,7 +56,7 @@ const FEATURE_TYPES = new Set([
   "group", "boolean-subtraction", "boolean-intersection", "mirror", "sketch-extrusion", "sketch-revolve", "fillet", "chamfer",
 ]);
 
-type SkfAssetKind = "source" | "derived-mesh" | "brep" | "image";
+type SkfAssetKind = "source" | "derived-mesh" | "brep" | "image" | "display-edges";
 
 export type SkfAssetRecordV1 = {
   id: string;
@@ -82,6 +96,8 @@ export type SkfShapeNodeV1 = {
     beforeNodeId: string;
   }>;
   cadBrepAssetId?: string;
+  /** Fassung 2: die Kantendaten als eigene Datei, von allen Staenden geteilt. */
+  cadDisplayEdgesAssetId?: string;
 };
 
 export type SkfStateV1 = {
@@ -232,6 +248,7 @@ function extensionForAsset(kind: SkfAssetKind, mediaType: string, sourceFormat?:
   if (kind === "source" && sourceFormat) return sourceFormat === "step" ? "step" : sourceFormat;
   if (kind === "derived-mesh") return "skfmesh";
   if (kind === "brep") return "brep";
+  if (kind === "display-edges") return "json";
   if (mediaType.includes("png")) return "png";
   if (mediaType.includes("jpeg")) return "jpg";
   if (mediaType.includes("webp")) return "webp";
@@ -1214,11 +1231,11 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
   const document = objectRecord(raw, "project.json") as unknown as SkfProjectDocumentV1;
   if (document.schema !== SKF_SCHEMA_ID) throw new Error("This file is not a SketchForge project");
   if (!Number.isInteger(document.formatVersion)) throw new Error("SketchForge formatVersion is missing");
-  if (document.formatVersion > SKF_FORMAT_VERSION) {
+  if (document.formatVersion > SKF_HIGHEST_READABLE_VERSION) {
     throw new Error(`This project uses .skf format ${document.formatVersion}, which requires a newer SketchForge version`);
   }
-  if (document.formatVersion < SKF_FORMAT_VERSION) throw new Error(`Packaged .skf format ${document.formatVersion} requires migration support that is not available`);
-  if (!Number.isInteger(document.minimumReaderVersion) || document.minimumReaderVersion > SKF_FORMAT_VERSION) {
+  if (document.formatVersion < 1) throw new Error(`Packaged .skf format ${document.formatVersion} requires migration support that is not available`);
+  if (!Number.isInteger(document.minimumReaderVersion) || document.minimumReaderVersion > SKF_HIGHEST_READABLE_VERSION) {
     throw new Error("This project requires a newer SketchForge reader and was not opened");
   }
   const metadata = objectRecord(document.metadata, "metadata");
@@ -1236,7 +1253,9 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
     const asset = document.assets[index];
     const id = stringValue(asset?.id, `assets[${index}].id`);
     if (assetById.has(id)) throw new Error(`Duplicate asset ID '${id}'`);
-    if (!asset || !["source", "derived-mesh", "brep", "image"].includes(asset.kind)) throw new Error(`Asset '${id}' has an unknown type`);
+    if (!asset || !["source", "derived-mesh", "brep", "image", "display-edges"].includes(asset.kind)) throw new Error(`Asset '${id}' has an unknown type`);
+    // Kantendateien gibt es erst ab Fassung 2; in einer Datei der Fassung 1 ist so ein Eintrag falsch.
+    if (asset.kind === "display-edges" && document.formatVersion < 2) throw new Error(`Asset '${id}' has an unknown type`);
     if (!safeArchivePath(asset.path) || assetPaths.has(asset.path)) throw new Error(`Asset '${id}' has an unsafe or duplicate path`);
     assetPaths.add(asset.path);
     const bytes = files[asset.path];
@@ -1277,6 +1296,7 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
         ["baseWidth", "baseDepth", "baseHeight", "triangleCount"].forEach((field) => finiteNumber(node.importedMesh?.[field as keyof SkfImportedMeshReferenceV1], `object '${objectId}'.${field}`));
       }
       if (node.cadBrepAssetId && assetById.get(node.cadBrepAssetId)?.kind !== "brep") throw new Error(`Object '${objectId}' has a missing exact B-Rep asset`);
+      if (node.cadDisplayEdgesAssetId && assetById.get(node.cadDisplayEdgesAssetId)?.kind !== "display-edges") throw new Error(`Object '${objectId}' has a missing display-edge asset`);
       nodeById.set(nodeId, node);
     });
     const roots = stringArray(state.rootNodeIds, `state '${stateId}'.rootNodeIds`);
@@ -1342,6 +1362,44 @@ async function defaultSourceImporter(asset: ProjectAsset) {
   throw new Error("SketchForge cannot reconstruct this source asset format");
 }
 
+/**
+ * Die Kantendaten einer Datei der Fassung 2, je Datei einmal gelesen. Alle
+ * Koerper und Staende, die auf dieselbe Kantendatei zeigen, bekommen dasselbe
+ * Feld - so teilen sie es auch im Speicher und im Verlauf, wie beim Schreiber.
+ * Geprueft wird wie beim Schreiber von Formsmith746: eine Liste von Kanten,
+ * jede mit Punkten in Dreiergruppen, alle endlich, insgesamt nicht mehr als
+ * ein Netz tragen darf.
+ */
+const displayEdgeCache = new WeakMap<ArchiveFiles, Map<string, NonNullable<WorkplaneShape["cadDisplayEdges"]>>>();
+
+function restoredDisplayEdges(record: SkfAssetRecordV1, files: ArchiveFiles): NonNullable<WorkplaneShape["cadDisplayEdges"]> {
+  let byId = displayEdgeCache.get(files);
+  if (!byId) {
+    byId = new Map();
+    displayEdgeCache.set(files, byId);
+  }
+  const cached = byId.get(record.id);
+  if (cached) return cached;
+  let value: unknown;
+  try {
+    value = JSON.parse(strFromU8(files[record.path]));
+  } catch {
+    throw new Error("Invalid display-edge resource");
+  }
+  if (!Array.isArray(value) || value.length > SKF_LIMITS.meshNumbers) throw new Error("Invalid display-edge resource");
+  let coordinates = 0;
+  for (const edge of value) {
+    if (!edge || !Array.isArray(edge.points) || edge.points.length % 3 !== 0) throw new Error("Invalid display-edge points");
+    coordinates += edge.points.length;
+    if (coordinates > SKF_LIMITS.meshNumbers || edge.points.some((point: unknown) => typeof point !== "number" || !Number.isFinite(point))) {
+      throw new Error("Invalid display-edge coordinates");
+    }
+  }
+  const edges = value as NonNullable<WorkplaneShape["cadDisplayEdges"]>;
+  byId.set(record.id, edges);
+  return edges;
+}
+
 async function restoreShapeFromNode(
   nodeId: string,
   nodeById: Map<string, SkfShapeNodeV1>,
@@ -1358,6 +1416,9 @@ async function restoreShapeFromNode(
   if (!node) throw new Error(`Missing shape node '${nodeId}'`);
   restoring.add(nodeId);
   const definition = { ...node.definition } as Record<string, unknown>;
+  if (node.cadDisplayEdgesAssetId) {
+    definition.cadDisplayEdges = restoredDisplayEdges(assetById.get(node.cadDisplayEdgesAssetId)!, files);
+  }
   const serializedPlate = definition.imagePlate as (Record<string, unknown> & { assetId?: string }) | undefined;
   if (serializedPlate?.assetId) {
     const record = assetById.get(serializedPlate.assetId);

@@ -9,6 +9,7 @@ import {
   importSkfProject,
   inspectSkfProjectPackage,
   SKF_FORMAT_VERSION,
+  SKF_HIGHEST_READABLE_VERSION,
   SKF_LIMITS,
   SKF_SCHEMA_ID,
   type SkfProjectDocumentV1,
@@ -558,7 +559,8 @@ describe("SketchForge .skf project packages", () => {
   it("rejects unsupported future versions before restoring any state", async () => {
     const exported = await exportSkfProject(input([shape("box")]));
     const future = mutateProject(exported, (document) => {
-      (document as { formatVersion: number }).formatVersion = SKF_FORMAT_VERSION + 1;
+      // Eins ueber dem, was gelesen wird - Fassung 2 schreiben wir nicht, lesen sie aber.
+      (document as { formatVersion: number }).formatVersion = SKF_HIGHEST_READABLE_VERSION + 1;
     });
 
     await expect(importSkfProject(future)).rejects.toThrow("requires a newer SketchForge version");
