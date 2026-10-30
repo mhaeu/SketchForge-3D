@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Spline, Split, Trash2, Waves, Waypoints } from "lucide-react";
+import { canAlignSketchSelection, type SketchAlignMode } from "@/lib/sketchAlign";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Spline, Split, Trash2, Waves, Waypoints } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { SnapGridControl } from "@/components/workplane/ShapeInspector";
 import { SketchRevolvePreview } from "@/components/SketchRevolvePreview";
@@ -74,6 +75,8 @@ type SketchWorkspaceProps = {
   onRoundPoint: (id: string) => void;
   /** Kurve durch die gewaehlten Punkte (drei oder mehr). */
   onCurveThroughPoints: (pointIds: string[]) => void;
+  /** Gewaehlte Umrisse aneinander ausrichten. */
+  onAlignSketch: (pointIds: string[], mode: SketchAlignMode) => void;
   /** Den Zug, zu dem diese Kante gehoert, als Weg festlegen - oder wieder freigeben. */
   onMarkPath: (segmentId: string) => void;
   /** Die Woelbung eines Bogens setzen - null macht wieder eine Strecke daraus. */
@@ -560,6 +563,7 @@ export function SketchWorkspace({
   onSetPointMode,
   onRoundPoint,
   onCurveThroughPoints,
+  onAlignSketch,
   onMarkPath,
   onBendSegment,
   onClearMeasurement,
@@ -1902,9 +1906,21 @@ export function SketchWorkspace({
           <button type="button" title={t("sketch.roundCorner")} onClick={() => onRoundPoint(selectedPoint.id)}><Circle /><span>{t("sketch.round")}</span></button>
         </div>
       ) : null}
-      {selected?.kind === "multiple" && selected.pointIds.length >= 3 && tool === "select" ? (
+      {selected?.kind === "multiple" && tool === "select" && (selected.pointIds.length >= 3 || canAlignSketchSelection(displayProfile, selected.pointIds)) ? (
         <div className="sketch-point-actions" aria-label={t("sketch.pointActions")}>
-          <button type="button" title={t("sketch.curveThroughPointsHint")} onClick={() => onCurveThroughPoints(selected.pointIds)}><Spline /><span>{t("sketch.curveThroughPoints")}</span></button>
+          {selected.pointIds.length >= 3 ? (
+            <button type="button" title={t("sketch.curveThroughPointsHint")} onClick={() => onCurveThroughPoints(selected.pointIds)}><Spline /><span>{t("sketch.curveThroughPoints")}</span></button>
+          ) : null}
+          {canAlignSketchSelection(displayProfile, selected.pointIds) ? ([
+            ["left", AlignStartVertical, "sketch.alignLeft"],
+            ["centerX", AlignCenterVertical, "sketch.alignCenterX"],
+            ["right", AlignEndVertical, "sketch.alignRight"],
+            ["top", AlignStartHorizontal, "sketch.alignTop"],
+            ["centerZ", AlignCenterHorizontal, "sketch.alignCenterZ"],
+            ["bottom", AlignEndHorizontal, "sketch.alignBottom"],
+          ] as const).map(([mode, Icon, label]) => (
+            <button key={mode} type="button" title={t(label)} aria-label={t(label)} onClick={() => onAlignSketch(selected.pointIds, mode)}><Icon /></button>
+          )) : null}
         </div>
       ) : null}
       {operation === "sweep" && tool === "select" ? (() => {

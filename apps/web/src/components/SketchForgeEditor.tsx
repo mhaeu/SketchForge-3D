@@ -175,6 +175,7 @@ import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
 import { curveThroughPoints } from "@/lib/sketchCurveThroughPoints";
+import { alignSketchSelection } from "@/lib/sketchAlign";
 import { arcBulgeAlong, arcCubics, arcThroughThreePoints, isArcSegment, retargetSketchArcs, stepsEncloseArea } from "@/lib/sketchArcs";
 import { buildSweepMesh } from "@/lib/sweepMesh";
 import { splitSweepDrawing, sweepPathPoint } from "@/lib/sketchSweep";
@@ -13800,6 +13801,12 @@ export function SketchForgeEditor({
             onInsertPoint={insertSketchPoint}
             onSetPointMode={setSketchPointMode}
             onRoundPoint={roundSketchPoint}
+            onAlignSketch={(pointIds, mode) => {
+              const moved = alignSketchSelection(sketchProfile, pointIds, mode);
+              if (!moved) return;
+              const byId = new Map(moved.map((point) => [point.id, point]));
+              commitSketchProfile({ ...sketchProfile, points: sketchProfile.points.map((point) => byId.get(point.id) ?? point) }, t("sketch.aligned"));
+            }}
             onCurveThroughPoints={(pointIds) => {
               const result = curveThroughPoints(sketchProfile, pointIds);
               if (!result) {
