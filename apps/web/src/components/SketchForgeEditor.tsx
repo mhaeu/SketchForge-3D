@@ -26,6 +26,9 @@ import { createRingGearGeometry } from "@/lib/ringGearGeometry";
 import { groupedContentScale, scaleGroupedVertices } from "@/lib/groupScale";
 import { manifoldFromOperand, manifoldUnionOfOperands, runManifoldJob, type ManifoldJob, type ManifoldJobResult, type ManifoldOperand } from "@/lib/manifoldJobs";
 import { manifoldJobOffThread } from "@/lib/manifoldWorkerClient";
+import { toggleCadFace, type CadFacePick } from "@/lib/cadFacePick";
+import { DELETE_FACES_UNCHANGED_MESSAGE } from "@/lib/cadDeleteFaces";
+import { DeleteFacePanel } from "@/components/workplane/DeleteFacePanel";
 import { modelSplitPlane, snapSplitPositionToVertices, splitAxisLabel, splitOrientationForNormal, splitPlaneIntersectsPoints, splitShapeFromWorldPositions, NO_SPLIT_ROTATION, type ModelSplitPlane, type SplitRotation } from "@/lib/modelSplit";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
@@ -73,6 +76,7 @@ import {
   ToolbarIntersectionIcon,
   ToolbarHullIcon,
   ToolbarOffsetIcon,
+  ToolbarDeleteFaceIcon,
   ToolbarCutOutIcon,
   ToolbarCookieCutterIcon,
   ToolbarTrimIcon,
@@ -353,6 +357,12 @@ type EdgeModifierSession = {
      */
     offset?: { shrink: boolean; keepOriginal: boolean; cutInto?: string };
   } | null;
+  /*
+   * Gesetzt bei "Flaeche loeschen": Nach dem Vorbereiten liefert der Arbeiter
+   * das Netz mit der Flaeche je Dreieck (`pick`), jeder Klick auf eine Flaeche
+   * schickt einen neuen Auftrag, und die Antwort kommt wie beim Aushoehlen.
+   */
+  faceDelete: { faceIds: number[]; pick: CadFacePick | null } | null;
 };
 
 type EdgeModifierComponentPreview = {
@@ -6983,12 +6993,20 @@ export function SketchForgeEditor({
           prepared: true,
           preview: null,
           componentPreviews: [],
-          error: current.hollow || message.selectableEdgeIds.length || rescuedAngle ? null : t("status.noManifoldEdges"),
+          error: current.hollow || current.faceDelete || message.selectableEdgeIds.length || rescuedAngle ? null : t("status.noManifoldEdges"),
         } : current);
         if (seed) {
           if (!resumed?.edgeIds.length) setNotice(t("status.edgeEditLost"));
           else if (resumed.missing > 0) setNotice(t("status.edgeEditPartly", { count: resumed.edgeIds.length, total: seed.edgeIds.length }));
           else setNotice(t("status.edgeEditResumed", { count: resumed.edgeIds.length }));
+          return;
+        }
+        if (edgeModifierRef.current?.faceDelete) {
+          // Flaeche loeschen braucht zuerst das Netz, auf dem gewaehlt wird.
+          if (postCadModifierRequest({ type: "faces" }) === null) {
+            const failure = cadModifierWorkerFailureMessage();
+            setEdgeModifier((current) => current ? { ...current, error: failure } : current);
+          }
           return;
         }
         const hollowRequest = edgeModifierRef.current?.hollow;
@@ -6999,6 +7017,19 @@ export function SketchForgeEditor({
         }
         if (message.selectableEdgeIds.length) setNotice(t("status.selectHighlightedEdges"));
         else if (rescuedAngle) setNotice(t("status.sharpAngleLowered", { angle: rescuedAngle }));
+        return;
+      }
+      if (message.type === "faces") {
+        const base = cadModifierBaseShapeRef.current;
+        if (!base) return;
+        setEdgeModifier((current) => current?.faceDelete ? {
+          ...current,
+          faceDelete: {
+            faceIds: [],
+            pick: { shapeId: base.id, positions: message.positions, indices: message.indices, triangleFaces: message.triangleFaces, selectedFaceIds: [] },
+          },
+        } : current);
+        setNotice(t("deleteFace.pick"));
         return;
       }
       if (message.type === "preview") {
@@ -7088,13 +7119,13 @@ export function SketchForgeEditor({
           busy: false,
           preview: null,
           failedEdgeIds: blamedByHistory ?? [],
-          error: message.message,
+          error: message.message === DELETE_FACES_UNCHANGED_MESSAGE ? t("deleteFace.cannot") : message.message,
         } : current);
         // Ein zu grosser Halbmesser scheitert - der inzwischen gewaehlte
         // kleinere darf es trotzdem versuchen.
         if (cadPreviewQueueRef.current.settle(message.requestId).status !== "sent") {
           setNotice(t("status.edgeNeedsAdjustment"));
-          if (!blamedByHistory && session && session.selectedEdgeIds.length > 1 && !session.hollow) {
+          if (!blamedByHistory && session && session.selectedEdgeIds.length > 1 && !session.hollow && !session.faceDelete) {
             postCadModifierRequest({
               type: "blame",
               kind: session.kind,
@@ -10284,6 +10315,7 @@ export function SketchForgeEditor({
     hollow: EdgeModifierSession["hollow"] = null,
     // Ein anderer Koerper als die Auswahl, etwa das Teil beim Ausschneiden.
     baseOverride?: WorkplaneShape,
+    faceDelete = false,
   ) => {
     const selectedShape = baseOverride ?? selectedShapes.at(-1) ?? null;
     if ((!baseOverride && selectedShapes.length !== 1) || !selectedShape || selectedShape.locked || selectedShape.hole) {
@@ -10326,6 +10358,11 @@ export function SketchForgeEditor({
       setNotice(t("status.noPrintableSurface"));
       return;
     }
+    // Ein Netz hat keine Flaechen, nur Dreiecke; geloescht wuerde je eines.
+    if (faceDelete && partInputs.some((part) => !part.brep && !part.stepText && !part.primitive)) {
+      setNotice(t("deleteFace.needsExact"));
+      return;
+    }
     if (triangleCount > 180_000) {
       setNotice(t("status.meshTooDenseSimple"));
       return;
@@ -10358,8 +10395,11 @@ export function SketchForgeEditor({
       preview: null,
       componentPreviews: [],
       hollow,
+      faceDelete: faceDelete ? { faceIds: [], pick: null } : null,
     });
-    setNotice(hollow?.offset ? t("status.preparingOffset") : hollow ? t("status.preparingHollow") : t("status.preparingEdges", { kind }));
+    setNotice(faceDelete
+      ? t("deleteFace.preparing", { name: selectedShape.name })
+      : hollow?.offset ? t("status.preparingOffset") : hollow ? t("status.preparingHollow") : t("status.preparingEdges", { kind }));
     const parts: CadModifierMeshPart[] = partInputs.map((part) => {
       if (part.brep) return { brep: part.brep, brepTransform: part.brepTransform, hole: Boolean(part.shape.hole) };
       if (part.stepText) {
@@ -10550,6 +10590,7 @@ export function SketchForgeEditor({
       preview,
       componentPreviews: cadModifierComponentPreviews(sourceParts, previewResponse.components, previewResponse.deflection),
       hollow: null,
+      faceDelete: null,
     };
     const createdAt = Date.now();
     const groupedModifiedShape = groupedShapeWithComponentEdgeTreatment(shape, preview, sourceParts, session, feature, createdAt);
@@ -10665,6 +10706,56 @@ export function SketchForgeEditor({
     });
   }, [selectedShape, startEdgeModifier]);
 
+  /**
+   * Flaeche loeschen anfangen: dieselbe Vorbereitung wie bei einer
+   * Kantenbearbeitung, danach das Netz zum Waehlen. Nach layerling 1.86.0 (#451).
+   */
+  const startDeleteFace = useCallback(() => {
+    if (!selectedShape) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    startEdgeModifier("fillet", null, undefined, true);
+  }, [selectedShape, startEdgeModifier]);
+
+  /** Die gewaehlten Flaechen an den Arbeiter; die Antwort kommt als Vorschau wie beim Aushoehlen. */
+  const sendDeleteFaces = useCallback((faceIds: number[]) => {
+    if (!cadModifierBaseShapeRef.current) return;
+    if (faceIds.length === 0) {
+      // Ohne Flaeche gibt es nichts zu zeigen; eine spaete Antwort zaehlt nicht mehr.
+      cadModifierLatestPreviewRef.current = cadModifierRequestRef.current + 1;
+      setEdgeModifier((current) => current ? { ...current, busy: false, preview: null, error: null } : current);
+      return;
+    }
+    const quality = edgeModifierRef.current?.quality ?? "standard";
+    const requestId = postCadModifierRequest({ type: "deleteFaces", faceIds, quality });
+    if (requestId === null) {
+      const message = cadModifierWorkerFailureMessage();
+      setEdgeModifier((current) => current ? { ...current, busy: false, preview: null, error: message } : current);
+      setNotice(message);
+      return;
+    }
+    cadModifierLatestPreviewRef.current = requestId;
+    armCadModifierWatchdog(requestId, "preview");
+    setEdgeModifier((current) => current ? { ...current, busy: true, preview: null, error: null } : current);
+    setNotice(t("deleteFace.running"));
+  }, [armCadModifierWatchdog, postCadModifierRequest]);
+
+  const setDeleteFaceSelection = useCallback((change: (faceIds: number[]) => number[]) => {
+    const session = edgeModifierRef.current?.faceDelete;
+    if (!session?.pick) return;
+    const faceIds = change(session.faceIds);
+    setEdgeModifier((current) => current?.faceDelete?.pick ? {
+      ...current,
+      faceDelete: { faceIds, pick: { ...current.faceDelete.pick, selectedFaceIds: faceIds } },
+    } : current);
+    sendDeleteFaces(faceIds);
+  }, [sendDeleteFaces]);
+
+  const toggleDeleteFace = useCallback((faceId: number) => {
+    setDeleteFaceSelection((faceIds) => toggleCadFace(faceIds, faceId));
+  }, [setDeleteFaceSelection]);
+
   /*
    * Ausschneiden mit Spiel: Zwei Koerper sind gewaehlt; der kleinere ist das
    * Teil, das an seinem Platz bleibt, aus dem anderen wird eine um das Spiel
@@ -10731,6 +10822,22 @@ export function SketchForgeEditor({
      * *einer Kante*, die man einzeln zuruecknehmen koennte, sondern eine neue
      * Form. Zurueck geht es ueber den Verlauf wie bei jedem anderen Schritt.
      */
+    if (edgeModifier.faceDelete) {
+      const count = edgeModifier.faceDelete.faceIds.length;
+      const trimmed = canonicalizeShape({
+        ...bakedEdgeTreatmentPreview(edgeModifier.preview, base),
+        name: base.name,
+        color: base.color,
+        cadDisplayEdgesVersion: 2 as const,
+      });
+      commitShapes(
+        shapes.map((shape) => (shape.id === base.id ? trimmed : shape)),
+        base.id,
+        t("deleteFace.done", { count }),
+      );
+      invalidateCadModifierSession();
+      return;
+    }
     if (edgeModifier.hollow?.offset) {
       const offset = edgeModifier.hollow.offset;
       const distance = Number(edgeModifier.hollow.thickness.toFixed(2));
@@ -10847,7 +10954,7 @@ export function SketchForgeEditor({
       if (event.key === "Escape") {
         event.preventDefault();
         cancelEdgeModifier();
-      } else if (event.key === "Enter" && edgeModifier.preview && (edgeModifier.hollow || edgeModifier.selectedEdgeIds.length > 0) && !edgeModifier.busy && !edgeModifier.error) {
+      } else if (event.key === "Enter" && edgeModifier.preview && (edgeModifier.hollow || edgeModifier.faceDelete?.faceIds.length || edgeModifier.selectedEdgeIds.length > 0) && !edgeModifier.busy && !edgeModifier.error) {
         const target = event.target instanceof HTMLElement ? event.target : null;
         if (target?.closest("input, select, textarea, button, [contenteditable='true']")) return;
         event.preventDefault();
@@ -13627,6 +13734,8 @@ export function SketchForgeEditor({
         hollowActive={Boolean(edgeModifier?.hollow && !edgeModifier.hollow.offset)}
         onOffset={startOffset}
         offsetActive={Boolean(edgeModifier?.hollow?.offset && !edgeModifier.hollow.offset.cutInto)}
+        onDeleteFace={startDeleteFace}
+        deleteFaceActive={Boolean(edgeModifier?.faceDelete)}
         onCutOut={() => startCutOut()}
         canCutOut={Boolean(cutOutPair())}
         cutOutActive={Boolean(edgeModifier?.hollow?.offset?.cutInto)}
@@ -13800,7 +13909,9 @@ export function SketchForgeEditor({
           onWorkplaneModeChange={closeViewportWorkplaneMode}
           modifierActive={Boolean(edgeModifier)}
           modifierPreviewActive={Boolean(edgeModifier?.preview)}
-          modifierEdges={edgeModifier?.edges.filter((edge) => modifierCandidateEdgeIds.includes(edge.id)) ?? []}
+          modifierEdges={edgeModifier?.faceDelete ? [] : edgeModifier?.edges.filter((edge) => modifierCandidateEdgeIds.includes(edge.id)) ?? []}
+          cadFacePick={edgeModifier?.faceDelete?.pick ?? null}
+          onCadFaceToggle={toggleDeleteFace}
           modifierOnlyVisibleEdges={Boolean(edgeModifier?.onlyVisibleEdges)}
           modifierFailedEdgeIds={edgeModifier?.failedEdgeIds ?? []}
           modifierHighlightedEdgeIds={modifierAvailableEdgeIds}
@@ -13997,8 +14108,20 @@ export function SketchForgeEditor({
           onApply={applyEdgeModifier}
           onCancel={cancelEdgeModifier}
         />
+      ) : edgeModifier?.faceDelete ? (
+        <DeleteFacePanel
+          targetName={cadModifierBaseShapeRef.current?.name ?? ""}
+          faceCount={edgeModifier.faceDelete.faceIds.length}
+          preparing={!edgeModifier.faceDelete.pick && !edgeModifier.error}
+          busy={edgeModifier.busy}
+          error={edgeModifier.error}
+          ready={Boolean(edgeModifier.preview) && !edgeModifier.busy && !edgeModifier.error}
+          onClear={() => setDeleteFaceSelection(() => [])}
+          onApply={applyEdgeModifier}
+          onCancel={cancelEdgeModifier}
+        />
       ) : null}
-      {edgeModifier && !edgeModifier.hollow ? (
+      {edgeModifier && !edgeModifier.hollow && !edgeModifier.faceDelete ? (
         <EdgeModifierPanel
           kind={edgeModifier.kind}
           amount={edgeModifier.amount}
@@ -14338,6 +14461,8 @@ function SecondaryToolbar({
   hollowActive,
   onOffset,
   offsetActive,
+  onDeleteFace,
+  deleteFaceActive,
   onCutOut,
   canCutOut,
   cutOutActive,
@@ -14471,6 +14596,8 @@ function SecondaryToolbar({
   hollowActive: boolean;
   onOffset: () => void;
   offsetActive: boolean;
+  onDeleteFace: () => void;
+  deleteFaceActive: boolean;
   onCutOut: () => void;
   canCutOut: boolean;
   cutOutActive: boolean;
@@ -14788,6 +14915,7 @@ function SecondaryToolbar({
     // Aushoehlen braucht denselben exakten Koerper wie die Kantenwerkzeuge.
     { label: t("editor.tool.hollow"), icon: ToolbarHollowIcon, action: onHollow, enabled: canEdgeModify, active: hollowActive },
     { label: t("editor.tool.offset"), icon: ToolbarOffsetIcon, action: onOffset, enabled: canEdgeModify, active: offsetActive },
+    { label: t("editor.tool.deleteFace"), icon: ToolbarDeleteFaceIcon, action: onDeleteFace, enabled: canEdgeModify, active: deleteFaceActive },
     { label: t("editor.tool.split"), icon: ToolbarSplitIcon, action: onSplit, enabled: hasSelection, active: splitActive },
     // Neben dem Teilen, weil es dieselbe Frage stellt: welche Flaeche?
     { label: t("editor.tool.holePattern"), icon: ToolbarHolePatternIcon, action: onHolePattern, enabled: hasSelection, active: holePatternActive },

@@ -126,6 +126,7 @@ import { OriginDimensionOverlay } from "@/components/workplane/OriginDimensionOv
 import { computeOriginAxisDistance, createOriginDimensionOverlay, type OriginDimensionOverlayData } from "@/lib/originDimensionLines";
 import { REFERENCE_POINT_ARM_MM, REFERENCE_POINT_MARKER_MM, referencePointPosition, isReferencePoint } from "@/lib/referencePoint";
 import type { CadModifierEdge } from "@/lib/cadModifierTypes";
+import { cadFaceHighlightPositions, type CadFacePick } from "@/lib/cadFacePick";
 
 const WORKPLANE_WIDTH = 200;
 const WORKPLANE_DEPTH = 140;
@@ -434,6 +435,9 @@ type WorkplaneViewportProps = {
   modifierHighlightedEdgeIds?: number[];
   selectedModifierEdgeIds?: number[];
   onModifierEdgeToggle?: (id: number, singleEdge: boolean) => void;
+  /** Gesetzt bei "Flaeche loeschen": Dann waehlt ein Klick eine Flaeche statt einer Kante. */
+  cadFacePick?: CadFacePick | null;
+  onCadFaceToggle?: (faceId: number) => void;
   challengeTutorial?: ChallengeTutorialId | null;
   onChallengeTutorialFinish?: () => void;
   themePreference?: AppThemePreference;
@@ -534,6 +538,11 @@ type ThreeState = {
   moveDimensionLayer: THREE.Group;
   originDimensionLayer: THREE.Group;
   modifierLayer: THREE.Group;
+  /** Die hervorgehobenen Flaechen bei "Flaeche loeschen". */
+  cadFaceLayer: THREE.Group;
+  /** Das Netz, auf dem Flaechen gewaehlt werden; nicht in der Szene. */
+  cadFacePickMesh: THREE.Mesh | null;
+  cadFacePickSource: Float32Array | null;
   shapeRecords: Map<string, ShapeRenderRecord>;
   officialShapeLayerActive: boolean;
   raycaster: THREE.Raycaster;
@@ -2147,6 +2156,92 @@ function syncLayFlatHover(
   layer.add(highlight);
   layer.userData.key = key;
   state.needsRender = true;
+}
+
+const CAD_FACE_SELECTED_COLOR = 0xff7a1a;
+const CAD_FACE_HOVER_COLOR = 0xffc061;
+
+/**
+ * Das Netz zum Waehlen von Flaechen (cadFacePick.ts). Der Baum zum schnellen
+ * Treffen wird "indirect" gebaut: Ein gewoehnlicher sortiert den Index um, und
+ * dann stimmte die Dreiecksnummer eines Treffers nicht mehr mit der des Kerns
+ * ueberein, an der die Flaeche haengt.
+ */
+function cadFacePickMeshFor(state: ThreeState, pick: CadFacePick) {
+  if (state.cadFacePickMesh && state.cadFacePickSource === pick.positions) return state.cadFacePickMesh;
+  disposeCadFacePickMesh(state);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(pick.positions, 3));
+  geometry.setIndex(new THREE.BufferAttribute(pick.indices.slice(), 1));
+  computeBoundsTree.call(geometry, { targetLeafSize: 12, indirect: true });
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  mesh.raycast = acceleratedRaycast;
+  mesh.layers.set(RENDER_LAYER_SHAPES);
+  mesh.updateMatrixWorld(true);
+  state.cadFacePickMesh = mesh;
+  state.cadFacePickSource = pick.positions;
+  return mesh;
+}
+
+function disposeCadFacePickMesh(state: ThreeState) {
+  const mesh = state.cadFacePickMesh;
+  if (!mesh) return;
+  disposeBoundsTree.call(mesh.geometry);
+  mesh.geometry.dispose();
+  (mesh.material as THREE.Material).dispose();
+  state.cadFacePickMesh = null;
+  state.cadFacePickSource = null;
+}
+
+/** Die Flaeche unter dem Zeiger, oder null; liegt ein anderer Koerper davor, auch null. */
+function pickCadFace(state: ThreeState, pick: CadFacePick, clientX: number, clientY: number) {
+  const mesh = cadFacePickMeshFor(state, pick);
+  const rect = state.renderer.domElement.getBoundingClientRect();
+  state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  state.raycaster.setFromCamera(state.pointer, state.camera);
+  state.raycaster.layers.set(RENDER_LAYER_SHAPES);
+  const hit = state.raycaster.intersectObject(mesh, false)[0];
+  if (!hit || hit.faceIndex === undefined || hit.faceIndex === null) return null;
+  // Das eigene Anzeigenetz liegt auf derselben Flaeche und bleibt aus dem Test.
+  const blocker = state.raycaster
+    .intersectObjects(state.shapeLayer.children.filter((child) => child.userData.shapeId !== pick.shapeId), true)
+    .find((entry) => entry.object instanceof THREE.Mesh && typeof entry.object.userData.shapeId === "string" && entry.object.userData.shapeId !== pick.shapeId);
+  if (blocker && blocker.distance < hit.distance - 1e-3) return null;
+  const faceId = pick.triangleFaces[hit.faceIndex];
+  return faceId === undefined || faceId < 0 ? null : faceId;
+}
+
+/** Die gewaehlten Flaechen kraeftig, die unter dem Zeiger heller; ohne pick wird alles abgebaut. */
+function syncCadFaceLayer(state: ThreeState, pick: CadFacePick | null, hoverId: number | null) {
+  disposeChildren(state.cadFaceLayer);
+  if (!pick) {
+    disposeCadFacePickMesh(state);
+    return;
+  }
+  const addFaces = (faceIds: number[], color: number, opacity: number) => {
+    if (faceIds.length === 0) return;
+    const corners = cadFaceHighlightPositions(pick.positions, pick.indices, pick.triangleFaces, faceIds);
+    if (corners.length === 0) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(corners, 3));
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    const highlight = new THREE.Mesh(geometry, material);
+    highlight.renderOrder = 20;
+    highlight.layers.set(RENDER_LAYER_MODIFIERS);
+    state.cadFaceLayer.add(highlight);
+  };
+  addFaces(pick.selectedFaceIds, CAD_FACE_SELECTED_COLOR, 0.6);
+  if (hoverId !== null && !pick.selectedFaceIds.includes(hoverId)) addFaces([hoverId], CAD_FACE_HOVER_COLOR, 0.45);
 }
 
 function pickModifierEdgeFromScreen(state: ThreeState, edges: CadModifierEdge[], clientX: number, clientY: number) {
@@ -3805,6 +3900,8 @@ export function WorkplaneViewport({
   modifierHighlightedEdgeIds = [],
   selectedModifierEdgeIds = [],
   onModifierEdgeToggle,
+  cadFacePick = null,
+  onCadFaceToggle,
   challengeTutorial = null,
   onChallengeTutorialFinish,
   themePreference = "system",
@@ -3982,6 +4079,9 @@ export function WorkplaneViewport({
   const modifierOnlyVisibleEdgesRef = useRef(modifierOnlyVisibleEdges);
   modifierOnlyVisibleEdgesRef.current = modifierOnlyVisibleEdges;
   const modifierEdgesRef = useRef(modifierEdges);
+  const cadFacePickRef = useRef(cadFacePick);
+  cadFacePickRef.current = cadFacePick;
+  const cadFaceHoverRef = useRef<number | null>(null);
   const [hoverModifierEdgeId, setHoverModifierEdgeId] = useState<number | null>(null);
   const selectedIdsKeyRef = useRef(selectedIds.join("|"));
   const placementWorkplaneRef = useRef(placementWorkplane);
@@ -4745,6 +4845,7 @@ export function WorkplaneViewport({
       disposeChildren(state.moveDimensionLayer);
       disposeChildren(state.originDimensionLayer);
       disposeChildren(state.modifierLayer);
+      syncCadFaceLayer(state, null, null);
       state.renderer.dispose();
       host.replaceChildren();
       if (window.sketchforgeCaptureCanvas) {
@@ -6703,6 +6804,14 @@ export function WorkplaneViewport({
     onNoteUpdate?.(noteId, { collapsed: !note.collapsed });
   }, [onNoteUpdate]);
 
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    if (!cadFacePick) cadFaceHoverRef.current = null;
+    syncCadFaceLayer(state, cadFacePick, cadFaceHoverRef.current);
+    state.needsRender = true;
+  }, [cadFacePick]);
+
   const pickModifierEdge = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
     if (!state) return null;
@@ -6872,6 +6981,13 @@ export function WorkplaneViewport({
       }
       clearMoveDimensions();
       const rect = state.renderer.domElement.getBoundingClientRect();
+
+      if (modifierActive && cadFacePickRef.current) {
+        event.preventDefault();
+        const faceId = pickCadFace(state, cadFacePickRef.current, event.clientX, event.clientY);
+        if (faceId !== null) onCadFaceToggle?.(faceId);
+        return;
+      }
 
       if (modifierActive) {
         event.preventDefault();
@@ -7316,6 +7432,15 @@ export function WorkplaneViewport({
           workspaceRef.current,
           resolvedThemeRef.current,
         );
+        return;
+      }
+      if (modifierActiveRef.current && cadFacePickRef.current && threeRef.current) {
+        const hovered = pickCadFace(threeRef.current, cadFacePickRef.current, event.clientX, event.clientY);
+        if (hovered !== cadFaceHoverRef.current) {
+          cadFaceHoverRef.current = hovered;
+          syncCadFaceLayer(threeRef.current, cadFacePickRef.current, hovered);
+          threeRef.current.needsRender = true;
+        }
         return;
       }
       if (modifierActiveRef.current) {
@@ -8543,7 +8668,10 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   const modifierLayer = new THREE.Group();
   modifierLayer.name = "EdgeModifier";
   modifierLayer.layers.set(RENDER_LAYER_MODIFIERS);
-  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, splitPreviewLayer, holePatternPreviewLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer);
+  const cadFaceLayer = new THREE.Group();
+  cadFaceLayer.name = "CadFacePick";
+  cadFaceLayer.layers.set(RENDER_LAYER_MODIFIERS);
+  scene.add(workplaneLayer, workplanePreviewLayer, shapeLayer, helperLayer, transformGuideLayer, pivotLayer, snapLayer, layFlatHoverLayer, splitPreviewLayer, holePatternPreviewLayer, sectionLayer, moveDimensionLayer, originDimensionLayer, modifierLayer, cadFaceLayer);
 
   const raycaster = new THREE.Raycaster();
   raycaster.params.Line = { threshold: 1.15 };
@@ -8589,6 +8717,9 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
     moveDimensionLayer,
     originDimensionLayer,
     modifierLayer,
+    cadFaceLayer,
+    cadFacePickMesh: null,
+    cadFacePickSource: null,
     shapeRecords: new Map<string, ShapeRenderRecord>(),
     officialShapeLayerActive: false,
     raycaster,

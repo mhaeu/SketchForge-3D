@@ -165,6 +165,17 @@ export function ToolbarOffsetIcon(props: IconProps) {
   );
 }
 
+/** Flaeche loeschen: ein Block mit einem Zapfen, dessen Flaeche gestrichelt und durchgestrichen ist. */
+export function ToolbarDeleteFaceIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" {...props}>
+      <path d="M6 26h36v14H6Z" fill="currentColor" fillOpacity="0.22" />
+      <path d="M17 26V12h14v14" strokeDasharray="4 3" />
+      <path d="M13 9l22 20" />
+    </svg>
+  );
+}
+
 /** Ausschneiden: ein Block mit einer Kerbe oben und daneben gestrichelt das Teil, das hineinpasst. */
 export function ToolbarCutOutIcon(props: IconProps) {
   return (

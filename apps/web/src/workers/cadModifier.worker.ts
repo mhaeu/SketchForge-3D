@@ -3,6 +3,7 @@
 import * as THREE from "three";
 import { JoinType, OcctKernel, type ShapeHandle } from "occt-wasm";
 import { CANNOT_OFFSET_MESSAGE, offsetSolid } from "@/lib/cadOffset";
+import { cadFaceTessellation, DELETE_FACES_UNCHANGED_MESSAGE, deleteFacesFromSolids } from "@/lib/cadDeleteFaces";
 import { describeHollowFaces, hollowSidesWithoutFace, openingFaceIndexes, type CadHollowOpening } from "@/lib/cadHollow";
 import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
@@ -744,21 +745,33 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
       });
       return;
     }
-    // Der Versatz laeuft dieselbe Strecke wie das Aushoehlen; nur die
-    // Rechnung je Koerper ist eine andere.
-    if (request.type === "hollow" || request.type === "offset") {
+    if (request.type === "faces") {
+      if (baseShape === null) throw new Error("Prepare an object before picking faces");
+      const pick = cadFaceTessellation(activeCad, baseSolids, { linearDeflection: 0.05, angularDeflection: 0.3 });
+      post({ type: "faces", requestId: request.requestId, ...pick }, [pick.positions.buffer, pick.indices.buffer, pick.triangleFaces.buffer]);
+      return;
+    }
+    // Der Versatz und Flaeche loeschen laufen dieselbe Strecke wie das
+    // Aushoehlen; nur die Rechnung je Koerper ist eine andere.
+    if (request.type === "hollow" || request.type === "offset" || request.type === "deleteFaces") {
       if (baseShape === null) throw new Error("Prepare an object before hollowing");
       const shells: ShapeHandle[] = [];
       let hollowed: ShapeHandle | null = null;
-      const size = request.type === "hollow" ? request.thickness : request.distance;
+      const size = request.type === "hollow" ? request.thickness : request.type === "offset" ? request.distance : 1;
       try {
-        for (const solid of baseSolids) {
-          shells.push(request.type === "hollow"
-            ? hollowSolid(activeCad, solid, request.thickness, request.opening, request.join)
-            : offsetSolid(activeCad, solid, request.distance, request.shrink, request.join));
+        if (request.type === "deleteFaces") {
+          shells.push(...deleteFacesFromSolids(activeCad, baseSolids, request.faceIds));
+        } else {
+          for (const solid of baseSolids) {
+            shells.push(request.type === "hollow"
+              ? hollowSolid(activeCad, solid, request.thickness, request.opening, request.join)
+              : offsetSolid(activeCad, solid, request.distance, request.shrink, request.join));
+          }
         }
         hollowed = shells.length === 1 ? shells[0] : activeCad.makeCompound(shells);
-        if (!cadShapeIsUsableSolid(activeCad, hollowed)) throw new Error(request.type === "hollow" ? "The chosen wall leaves no hollow body" : CANNOT_OFFSET_MESSAGE);
+        if (!cadShapeIsUsableSolid(activeCad, hollowed)) {
+          throw new Error(request.type === "hollow" ? "The chosen wall leaves no hollow body" : request.type === "offset" ? CANNOT_OFFSET_MESSAGE : DELETE_FACES_UNCHANGED_MESSAGE);
+        }
         const requested = cadModifierTessellationDeflection(request.quality, size, request.minDeflection);
         const meshed = meshTreatedBody(activeCad, [...shells], hollowed, requested);
         shells.splice(0, shells.length, ...meshed.components);

@@ -155,6 +155,20 @@ export type CadModifierWorkerRequest =
       quality: CadModifierQuality;
       minDeflection?: CadModifierDeflection;
     }
+  /** Das Netz des vorbereiteten Koerpers zum Waehlen von Flaechen (cadDeleteFaces.ts). */
+  | { type: "faces"; requestId: number }
+  | {
+      /**
+       * Flaeche loeschen: die gewaehlten Flaechen (Nummern wie im Netz von
+       * "faces") verschwinden, die Flaechen rundherum schliessen die Luecke.
+       * Die Antwort ist dieselbe wie beim Aushoehlen.
+       */
+      type: "deleteFaces";
+      requestId: number;
+      faceIds: number[];
+      quality: CadModifierQuality;
+      minDeflection?: CadModifierDeflection;
+    }
   | { type: "dispose"; requestId: number };
 
 export type CadModifierWorkerResponse =
@@ -174,6 +188,7 @@ export type CadModifierWorkerResponse =
       deflection: CadModifierDeflection;
     }
   | { type: "disposed"; requestId: number }
+  | { type: "faces"; requestId: number; positions: Float32Array; indices: Uint32Array; triangleFaces: Int32Array }
   | {
       /**
        * Welche der gewaehlten Kanten die Behandlung bricht. Antwort auf
