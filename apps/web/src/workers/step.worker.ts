@@ -2,7 +2,8 @@
 
 import { OcctKernel } from "occt-wasm";
 import { CAD_MODIFIER_RUNTIME_BASE } from "@/lib/cadModifierRuntime";
-import { StepReadError, stepMeshFromBuffer, type StepWorkerRequest, type StepWorkerResponse } from "@/lib/stepMesh";
+import { exportShapesWithBrep, StepExportEmptyError } from "@/lib/stepExportCore";
+import { StepReadError, stepMeshFromBuffer, type StepWorkerFailure, type StepWorkerRequest, type StepWorkerResponse } from "@/lib/stepMesh";
 
 type Brep = typeof import("brepjs");
 
@@ -35,12 +36,24 @@ function post(message: StepWorkerResponse, transfer: Transferable[] = []) {
   self.postMessage(message, { transfer });
 }
 
+function failureOf(error: unknown): StepWorkerFailure {
+  if (error instanceof StepReadError) return "read";
+  if (error instanceof StepExportEmptyError) return "empty";
+  return "kernel";
+}
+
 self.onmessage = async (event: MessageEvent<StepWorkerRequest>) => {
-  const { requestId, buffer } = event.data;
+  const request = event.data;
+  const { requestId } = request;
   try {
-    const mesh = await stepMeshFromBuffer(await brep(), buffer);
-    post({ requestId, ok: true, mesh }, [mesh.positions.buffer, ...(mesh.normals ? [mesh.normals.buffer] : [])]);
+    const brepjs = await brep();
+    if (request.type === "import") {
+      const mesh = await stepMeshFromBuffer(brepjs, request.buffer);
+      post({ requestId, ok: true, mesh }, [mesh.positions.buffer, ...(mesh.normals ? [mesh.normals.buffer] : [])]);
+    } else {
+      post({ requestId, ok: true, exported: await exportShapesWithBrep(brepjs, request.shapes) });
+    }
   } catch (error) {
-    post({ requestId, ok: false, readError: error instanceof StepReadError, message: error instanceof Error ? error.message : String(error) });
+    post({ requestId, ok: false, failure: failureOf(error), message: error instanceof Error ? error.message : String(error) });
   }
 };

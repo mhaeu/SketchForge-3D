@@ -1,13 +1,16 @@
-import type { StepMesh, StepWorkerRequest, StepWorkerResponse } from "@/lib/stepMesh";
-import { StepReadError } from "@/lib/stepMesh";
+import type { WorkplaneShape } from "@/types/sketchforge";
+import { StepExportEmptyError, type StepExportResult } from "@/lib/stepExportCore";
+import { StepReadError, type StepMesh, type StepWorkerRequest, type StepWorkerResponse } from "@/lib/stepMesh";
 
 /**
  * Der STEP-Worker (workers/step.worker.ts) laedt den CAD-Kern fuer sich. Nach
- * dem letzten Import bleibt er eine Weile stehen, damit mehrere Dateien
+ * dem letzten Auftrag bleibt er eine Weile stehen, damit mehrere Dateien
  * nacheinander den Kern nur einmal laden, und wird dann beendet - so gibt er
  * den Speicher des Kerns wieder frei.
  */
 const STEP_WORKER_IDLE_MS = 30_000;
+
+type StepWorkerTask = StepWorkerRequest extends infer Request ? Request extends unknown ? Omit<Request, "requestId"> : never : never;
 
 let worker: Worker | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,17 +38,18 @@ function ensureWorker() {
       idleTimer = setTimeout(stopWorker, STEP_WORKER_IDLE_MS);
     }
   };
-  // Ein abgestuerzter Worker (Speicher, Laden) laesst die Seite selbst lesen.
+  // Ein abgestuerzter Worker (Speicher, Laden) laesst die Seite selbst rechnen.
   next.onerror = () => stopWorker();
   worker = next;
   return next;
 }
 
 /**
- * Das Netz aus dem Worker. null heisst: Der Worker lief nicht, die Seite soll
- * selbst lesen. Taugt die Datei nicht, kommt der StepReadError des Workers.
+ * Die Antwort des Workers. null heisst: Der Worker lief nicht, die Seite soll
+ * selbst rechnen. Taugt die Datei nicht oder ist nichts zu schreiben, kommt
+ * derselbe Fehler wie auf der Seite.
  */
-export async function stepMeshOffThread(buffer: ArrayBuffer): Promise<StepMesh | null> {
+async function runInStepWorker(task: StepWorkerTask): Promise<StepWorkerResponse & { ok: true } | null> {
   if (typeof Worker === "undefined" || typeof window === "undefined") return null;
   let target: Worker;
   try {
@@ -58,14 +62,32 @@ export async function stepMeshOffThread(buffer: ArrayBuffer): Promise<StepMesh |
   const id = ++requestId;
   const response = await new Promise<StepWorkerResponse | null>((resolve) => {
     pending.set(id, resolve);
-    // Kopiert, nicht uebergeben: die Seite braucht die Bytes noch, falls sie selbst lesen muss.
-    const request: StepWorkerRequest = { requestId: id, buffer: buffer.slice(0) };
-    target.postMessage(request);
+    try {
+      target.postMessage({ ...task, requestId: id } as StepWorkerRequest);
+    } catch {
+      // Laesst sich der Auftrag nicht uebergeben, rechnet die Seite.
+      pending.delete(id);
+      resolve(null);
+    }
   });
   if (!response) return null;
-  if (response.ok) return response.mesh;
-  if (response.readError) throw new StepReadError(response.message);
-  // Der Kern im Worker ist vielleicht nicht mehr heil; der naechste Import bekommt einen neuen.
+  if (response.ok) return response;
+  if (response.failure === "read") throw new StepReadError(response.message);
+  if (response.failure === "empty") throw new StepExportEmptyError();
+  // Der Kern im Worker ist vielleicht nicht mehr heil; der naechste Auftrag bekommt einen neuen.
   stopWorker();
   return null;
+}
+
+/** Das Netz einer STEP-Datei aus dem Worker, oder null: dann liest die Seite selbst. */
+export async function stepMeshOffThread(buffer: ArrayBuffer): Promise<StepMesh | null> {
+  // Kopiert, nicht uebergeben: die Seite braucht die Bytes noch, falls sie selbst lesen muss.
+  const response = await runInStepWorker({ type: "import", buffer: buffer.slice(0) });
+  return response && "mesh" in response ? response.mesh : null;
+}
+
+/** Die STEP-Datei der Formen aus dem Worker, oder null: dann schreibt die Seite selbst. */
+export async function stepExportOffThread(shapes: WorkplaneShape[]): Promise<StepExportResult | null> {
+  const response = await runInStepWorker({ type: "export", shapes });
+  return response && "exported" in response ? response.exported : null;
 }

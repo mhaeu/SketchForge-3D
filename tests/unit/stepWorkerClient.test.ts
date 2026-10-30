@@ -36,7 +36,7 @@ describe("STEP worker client", () => {
 
   it("hands back the worker's mesh and keeps the worker for the next file", async () => {
     const { stepMeshOffThread } = await import("@/lib/stepWorkerClient");
-    reply = ({ requestId, buffer }) => ({ requestId, ok: true, mesh: { positions: new Float32Array([buffer.byteLength, 0, 0]), stepText: "ISO-10303-21;" } });
+    reply = (request) => ({ requestId: request.requestId, ok: true, mesh: { positions: new Float32Array([request.type === "import" ? request.buffer.byteLength : 0, 0, 0]), stepText: "ISO-10303-21;" } });
     const first = await stepMeshOffThread(new ArrayBuffer(4));
     const second = await stepMeshOffThread(new ArrayBuffer(8));
     expect(Array.from(first!.positions)).toEqual([4, 0, 0]);
@@ -47,9 +47,9 @@ describe("STEP worker client", () => {
   it("keeps the page's bytes, which it needs if it has to read the file itself", async () => {
     const { stepMeshOffThread } = await import("@/lib/stepWorkerClient");
     let sent: ArrayBuffer | null = null;
-    reply = ({ requestId, buffer }) => {
-      sent = buffer;
-      return { requestId, ok: true, mesh: { positions: new Float32Array(9) } };
+    reply = (request) => {
+      if (request.type === "import") sent = request.buffer;
+      return { requestId: request.requestId, ok: true, mesh: { positions: new Float32Array(9) } };
     };
     const buffer = new Uint8Array([1, 2, 3]).buffer;
     await stepMeshOffThread(buffer);
@@ -60,18 +60,28 @@ describe("STEP worker client", () => {
   it("passes a file that is no good straight on, without reading it again on the page", async () => {
     const { stepMeshOffThread } = await import("@/lib/stepWorkerClient");
     const { StepReadError } = await import("@/lib/stepMesh");
-    reply = ({ requestId }) => ({ requestId, ok: false, readError: true, message: "STEP file has no solid geometry to import" });
+    reply = ({ requestId }) => ({ requestId, ok: false, failure: "read", message: "STEP file has no solid geometry to import" });
     await expect(stepMeshOffThread(new ArrayBuffer(4))).rejects.toBeInstanceOf(StepReadError);
   });
 
   it("lets the page read when the worker's kernel fails or the worker crashes, and starts a new one next time", async () => {
     const { stepMeshOffThread } = await import("@/lib/stepWorkerClient");
-    reply = ({ requestId }) => ({ requestId, ok: false, readError: false, message: "RuntimeError: memory access out of bounds" });
+    reply = ({ requestId }) => ({ requestId, ok: false, failure: "kernel", message: "RuntimeError: memory access out of bounds" });
     expect(await stepMeshOffThread(new ArrayBuffer(4))).toBeNull();
     expect(terminated).toBe(1);
     reply = () => "crash";
     expect(await stepMeshOffThread(new ArrayBuffer(4))).toBeNull();
     expect(created).toBe(2);
+  });
+
+  it("hands back the written file, and says when there is nothing to write", async () => {
+    const { stepExportOffThread } = await import("@/lib/stepWorkerClient");
+    const { StepExportEmptyError } = await import("@/lib/stepExportCore");
+    const blob = new Blob(["ISO-10303-21;"]);
+    reply = ({ requestId }) => ({ requestId, ok: true, exported: { blob, exportedCount: 1, skipped: [] } });
+    expect(await stepExportOffThread([])).toEqual({ blob, exportedCount: 1, skipped: [] });
+    reply = ({ requestId }) => ({ requestId, ok: false, failure: "empty", message: "No exportable B-Rep solids in this project" });
+    await expect(stepExportOffThread([])).rejects.toBeInstanceOf(StepExportEmptyError);
   });
 
   it("reads on the page where there are no workers", async () => {

@@ -1,4 +1,6 @@
+import type { WorkplaneShape } from "@/types/sketchforge";
 import type { Brep } from "@/lib/brepKernel";
+import type { StepExportResult } from "@/lib/stepExportCore";
 
 /** Was der CAD-Kern aus einer STEP-Datei macht: das Netz und der ausgerichtete Koerper als STEP-Text. */
 export type StepMesh = {
@@ -14,12 +16,22 @@ export type StepMesh = {
  */
 export class StepReadError extends Error {}
 
-export type StepWorkerRequest = { requestId: number; buffer: ArrayBuffer };
+export type StepWorkerRequest =
+  | { requestId: number; type: "import"; buffer: ArrayBuffer }
+  | { requestId: number; type: "export"; shapes: WorkplaneShape[] };
+
+/**
+ * Warum der Worker nichts liefert. "read": die Datei taugt nicht; "empty":
+ * nichts laesst sich als STEP schreiben. Beides gilt auch auf der Seite und
+ * kommt deshalb so zum Aufrufer. "kernel": der Kern lief nicht, die Seite
+ * macht es selbst.
+ */
+export type StepWorkerFailure = "read" | "empty" | "kernel";
 
 export type StepWorkerResponse =
   | { requestId: number; ok: true; mesh: StepMesh }
-  /** readError: die Datei taugt nicht; sonst lief der Kern nicht, und die Seite liest selbst. */
-  | { requestId: number; ok: false; readError: boolean; message: string };
+  | { requestId: number; ok: true; exported: StepExportResult }
+  | { requestId: number; ok: false; failure: StepWorkerFailure; message: string };
 
 /**
  * Der Teil, der den CAD-Kern braucht. Er laeuft im STEP-Worker
