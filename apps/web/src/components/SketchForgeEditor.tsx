@@ -24,7 +24,8 @@ import { createGearGeometry } from "@/lib/gearGeometry";
 import { createRackGeometry } from "@/lib/rackGeometry";
 import { createRingGearGeometry } from "@/lib/ringGearGeometry";
 import { groupedContentScale, scaleGroupedVertices } from "@/lib/groupScale";
-import { dropSplitSlivers, unionSplitManifoldComponents } from "@/lib/manifoldSplit";
+import { manifoldFromOperand, manifoldUnionOfOperands, runManifoldJob, type ManifoldJob, type ManifoldJobResult, type ManifoldOperand } from "@/lib/manifoldJobs";
+import { manifoldJobOffThread } from "@/lib/manifoldWorkerClient";
 import { modelSplitPlane, snapSplitPositionToVertices, splitAxisLabel, splitOrientationForNormal, splitPlaneIntersectsPoints, splitShapeFromWorldPositions, NO_SPLIT_ROTATION, type ModelSplitPlane, type SplitRotation } from "@/lib/modelSplit";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
@@ -4729,7 +4730,7 @@ function mergedSolidMeshData(solids: WorkplaneShape[]) {
   return mergedSolidMesh;
 }
 
-function meshDataToManifoldMesh(runtime: ManifoldToplevel, mesh: MeshData) {
+function meshOperandFromMeshData(mesh: MeshData): ManifoldOperand {
   const vertProperties = new Float32Array(mesh.vertices.length * 3);
   mesh.vertices.forEach(([x, y, z], index) => {
     vertProperties[index * 3] = x;
@@ -4743,43 +4744,7 @@ function meshDataToManifoldMesh(runtime: ManifoldToplevel, mesh: MeshData) {
     triVerts[index * 3 + 1] = b;
     triVerts[index * 3 + 2] = c;
   });
-
-  const manifoldMesh = new runtime.Mesh({
-    numProp: 3,
-    vertProperties,
-    triVerts,
-    tolerance: 0.0001,
-  });
-  manifoldMesh.merge();
-  return manifoldMesh;
-}
-
-function boxBoundsToManifold(runtime: ManifoldToplevel, bounds: Cuboid, created: ManifoldSolid[]) {
-  const width = bounds.maxX - bounds.minX;
-  const height = bounds.maxY - bounds.minY;
-  const depth = bounds.maxZ - bounds.minZ;
-  if (width <= 0.0001 || height <= 0.0001 || depth <= 0.0001) {
-    return null;
-  }
-
-  const box = runtime.Manifold.cube([width, height, depth]);
-  created.push(box);
-  const moved = box.translate([bounds.minX, bounds.minY, bounds.minZ]);
-  if (moved !== box && moved) {
-    created.push(moved);
-  }
-  return moved;
-}
-
-function trackManifold<T extends ManifoldSolid | null>(created: ManifoldSolid[], value: T): T {
-  if (value) {
-    created.push(value);
-  }
-  return value;
-}
-
-function manifoldTransformFromMatrix(matrix: THREE.Matrix4) {
-  return matrix.elements as unknown as Parameters<ManifoldSolid["transform"]>[0];
+  return { kind: "mesh", vertProperties, triVerts };
 }
 
 function shapeRotationQuaternion(shape: WorkplaneShape) {
@@ -4808,12 +4773,7 @@ function primitiveTransformMatrix(shape: WorkplaneShape, scale: THREE.Vector3, a
   return matrix;
 }
 
-function transformedPrimitiveManifold(runtime: ManifoldToplevel, primitive: ManifoldSolid, matrix: THREE.Matrix4, created: ManifoldSolid[]) {
-  trackManifold(created, primitive);
-  return trackManifold(created, primitive.transform(manifoldTransformFromMatrix(matrix)));
-}
-
-function primitiveManifoldForShape(runtime: ManifoldToplevel, shape: WorkplaneShape, created: ManifoldSolid[]) {
+function primitiveOperandForShape(shape: WorkplaneShape): ManifoldOperand | null {
   // Verjuengung, Drall, Neigung und ungleiche Seitenhoehen stecken nur im
   // Netz - ein Grundkoerper kennt sie nicht und wuerde sie wegwerfen.
   if (shapeHasShapeDeform(shape)) return null;
@@ -4825,17 +4785,12 @@ function primitiveManifoldForShape(runtime: ManifoldToplevel, shape: WorkplaneSh
   }
 
   if (shape.kind === "box") {
-    return transformedPrimitiveManifold(runtime, runtime.Manifold.cube(1, true), primitiveTransformMatrix(shape, new THREE.Vector3(width, height, depth)), created);
+    return { kind: "cube", matrix: primitiveTransformMatrix(shape, new THREE.Vector3(width, height, depth)).toArray() };
   }
 
   if (shape.kind === "sphere") {
     const { widthSegments } = sphereTessellation(shape.steps);
-    return transformedPrimitiveManifold(
-      runtime,
-      runtime.Manifold.sphere(1, widthSegments),
-      primitiveTransformMatrix(shape, new THREE.Vector3(width / 2, height / 2, depth / 2)),
-      created,
-    );
+    return { kind: "sphere", segments: widthSegments, matrix: primitiveTransformMatrix(shape, new THREE.Vector3(width / 2, height / 2, depth / 2)).toArray() };
   }
 
   if (shape.kind === "cylinder" || shape.kind === "cone") {
@@ -4861,58 +4816,36 @@ function primitiveManifoldForShape(runtime: ManifoldToplevel, shape: WorkplaneSh
     const cylinderAlignMatrix = new THREE.Matrix4()
       .makeRotationY(-Math.PI / 2)
       .multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
-    return transformedPrimitiveManifold(
-      runtime,
-      runtime.Manifold.cylinder(1, 1, topRadiusScale, sides, true),
-      primitiveTransformMatrix(shape, new THREE.Vector3(width / 2, height, depth / 2), cylinderAlignMatrix),
-      created,
-    );
+    return {
+      kind: "cylinder",
+      topRadiusScale,
+      sides,
+      matrix: primitiveTransformMatrix(shape, new THREE.Vector3(width / 2, height, depth / 2), cylinderAlignMatrix).toArray(),
+    };
   }
 
   return null;
 }
 
-function shapeToManifoldSolid(runtime: ManifoldToplevel, shape: WorkplaneShape, created: ManifoldSolid[], useBoxPrimitive = false) {
+/**
+ * Die Form als Beschreibung fuer den Manifold-Kern (manifoldJobs.ts), die
+ * auch an den Geometrie-Worker gehen kann.
+ */
+function shapeManifoldOperand(shape: WorkplaneShape, useBoxPrimitive = false): ManifoldOperand | null {
   if (useBoxPrimitive && isAxisAlignedBoxCutter(shape)) {
-    return primitiveManifoldForShape(runtime, shape, created) ?? boxBoundsToManifold(runtime, meshAabb(shape), created);
+    const bounds = meshAabb(shape);
+    return primitiveOperandForShape(shape) ?? { kind: "box", min: [bounds.minX, bounds.minY, bounds.minZ], max: [bounds.maxX, bounds.maxY, bounds.maxZ] };
   }
+  return primitiveOperandForShape(shape) ?? meshOperandFromMeshData(meshForShape(shape));
+}
 
-  const primitive = primitiveManifoldForShape(runtime, shape, created);
-  if (primitive) {
-    return primitive;
-  }
-
-  const mesh = meshDataToManifoldMesh(runtime, meshForShape(shape));
-  try {
-    return runtime.Manifold.ofMesh(mesh);
-  } finally {
-    disposeManifold(mesh);
-  }
+function shapeToManifoldSolid(runtime: ManifoldToplevel, shape: WorkplaneShape, created: ManifoldSolid[], useBoxPrimitive = false) {
+  const operand = shapeManifoldOperand(shape, useBoxPrimitive);
+  return operand ? manifoldFromOperand(runtime, operand, created) : null;
 }
 
 function shapesToManifoldUnion(runtime: ManifoldToplevel, shapes: WorkplaneShape[], created: ManifoldSolid[], useBoxPrimitive = false) {
-  const parts: ManifoldSolid[] = [];
-  for (const shape of shapes) {
-    const part = shapeToManifoldSolid(runtime, shape, created, useBoxPrimitive);
-    if (!part || part.status() !== "NoError" || part.numTri() < 1) {
-      disposeManifold(part);
-      return null;
-    }
-    parts.push(part);
-    created.push(part);
-  }
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  if (parts.length === 1) {
-    return parts[0];
-  }
-
-  const union = runtime.Manifold.union(parts);
-  created.push(union);
-  return union.status() === "NoError" && union.numTri() > 0 ? union : null;
+  return manifoldUnionOfOperands(runtime, shapes.map((shape) => shapeManifoldOperand(shape, useBoxPrimitive)), created);
 }
 
 function manifoldMeshToPositions(mesh: InstanceType<ManifoldToplevel["Mesh"]>) {
@@ -5195,63 +5128,38 @@ async function unionOverlappingExportMeshes(shapes: WorkplaneShape[], meshes: Me
  * zurueck: Was die Form einmal war, laesst sich nicht halbieren.
  */
 async function splitShapeByPlane(shape: WorkplaneShape, plane: Pick<ModelSplitPlane, "axis" | "normal" | "position">) {
-  const created: ManifoldSolid[] = [];
   try {
-    const runtime = await getManifoldRuntime();
-    let solid = shapeToManifoldSolid(runtime, shape, created);
-    if (!solid || solid.status() !== "NoError" || solid.numTri() < 1) {
-      return { parts: null, error: t("split.error.notClosed", { status: solid?.status() ?? "empty" }) };
+    const operand = shapeManifoldOperand(shape);
+    if (!operand) {
+      return { parts: null, error: t("split.error.notClosed", { status: "empty" }) };
     }
-    created.push(solid);
-    const normalized = unionSplitManifoldComponents(runtime, solid);
-    created.push(...normalized.created);
-    if (!normalized.solid) {
-      return { parts: null, error: t("split.error.overlapping") };
-    }
-    solid = normalized.solid;
-    const [rawPositive, rawNegative] = solid.splitByPlane(plane.normal, plane.position);
-    created.push(rawPositive, rawNegative);
-    const trimmedPositive = dropSplitSlivers(runtime, rawPositive);
-    const trimmedNegative = dropSplitSlivers(runtime, rawNegative);
-    created.push(...trimmedPositive.created, ...trimmedNegative.created);
-    const positive = trimmedPositive.solid;
-    const negative = trimmedNegative.solid;
-    if (
-      !positive || !negative
-      || positive.status() !== "NoError" || negative.status() !== "NoError"
-      || positive.numTri() < 1 || negative.numTri() < 1
-    ) {
+    const result = await runManifoldJobOffPage({ op: "split", solid: operand, normal: plane.normal, position: plane.position });
+    if (!result.ok) {
+      if (result.reason === "notClosed") return { parts: null, error: t("split.error.notClosed", { status: result.status ?? "empty" }) };
+      if (result.reason === "overlapping") return { parts: null, error: t("split.error.overlapping") };
+      if (result.reason === "error") return { parts: null, error: result.message ? t("split.error.kernel", { message: result.message }) : t("split.error.kernelUnknown") };
       return { parts: null, error: t("split.error.emptyHalf") };
     }
-
-    const positiveMesh = positive.getMesh();
-    const negativeMesh = negative.getMesh();
-    try {
-      const label = splitAxisLabel(plane.axis);
-      const positiveShape = splitShapeFromWorldPositions(
-        shape,
-        manifoldMeshToPositions(positiveMesh),
-        createLocalId(`${shape.id}-split-positive`),
-        `${shape.name} (${label}+)`,
-      );
-      const negativeShape = splitShapeFromWorldPositions(
-        shape,
-        manifoldMeshToPositions(negativeMesh),
-        createLocalId(`${shape.id}-split-negative`),
-        `${shape.name} (${label}-)`,
-      );
-      return positiveShape && negativeShape
-        ? { parts: [canonicalizeShape(positiveShape), canonicalizeShape(negativeShape)] as [WorkplaneShape, WorkplaneShape] }
-        : { parts: null, error: t("split.error.store") };
-    } finally {
-      disposeManifold(positiveMesh);
-      disposeManifold(negativeMesh);
-    }
+    const [positivePositions, negativePositions] = result.positions;
+    const label = splitAxisLabel(plane.axis);
+    const positiveShape = splitShapeFromWorldPositions(
+      shape,
+      positivePositions,
+      createLocalId(`${shape.id}-split-positive`),
+      `${shape.name} (${label}+)`,
+    );
+    const negativeShape = splitShapeFromWorldPositions(
+      shape,
+      negativePositions,
+      createLocalId(`${shape.id}-split-negative`),
+      `${shape.name} (${label}-)`,
+    );
+    return positiveShape && negativeShape
+      ? { parts: [canonicalizeShape(positiveShape), canonicalizeShape(negativeShape)] as [WorkplaneShape, WorkplaneShape] }
+      : { parts: null, error: t("split.error.store") };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error ?? "");
     return { parts: null, error: message ? t("split.error.kernel", { message }) : t("split.error.kernelUnknown") };
-  } finally {
-    Array.from(new Set(created)).forEach(disposeManifold);
   }
 }
 
@@ -5263,8 +5171,8 @@ type SplitShapesOutcome =
 /**
  * Teilt jeden Koerper, den die Ebene kreuzt.
  *
- * `stillCurrent` wird nach jedem gefragt: Der Kern rechnet im Vordergrund,
- * und wer waehrenddessen die Ebene verschiebt oder das Werkzeug schliesst,
+ * `stillCurrent` wird nach jedem gefragt: Der Kern rechnet meist im
+ * Geometrie-Worker, und wer waehrenddessen die Ebene verschiebt oder das Werkzeug schliesst,
  * soll kein Ergebnis von vorhin bekommen.
  */
 async function splitShapesByPlane(
@@ -5283,6 +5191,16 @@ async function splitShapesByPlane(
     splitCount += 1;
   }
   return { status: "done", replacements, splitCount };
+}
+
+/**
+ * Ein Auftrag fuer den Manifold-Kern (manifoldJobs.ts), wenn moeglich im
+ * Geometrie-Worker, damit der Editor beim Verschneiden, Vereinigen und Teilen
+ * grosser Netze nicht steht; sonst wie bisher auf der Seite.
+ */
+async function runManifoldJobOffPage(job: ManifoldJob): Promise<ManifoldJobResult> {
+  const offThread = await manifoldJobOffThread(job, new URL(".", window.location.href).href).catch(() => null);
+  return offThread ?? runManifoldJob(await getManifoldRuntime(), job);
 }
 
 function disposeManifold(value: unknown) {
@@ -5310,25 +5228,18 @@ async function manifoldBooleanMeshShape(selection: WorkplaneShape[], options: { 
   const sourceTouchedTriangles = cutterTouchedTriangleCount(sourceMesh, cutterShapes);
   const sourceCutTriangles = Math.max(sourceInteriorTriangles, sourceTouchedTriangles);
 
-  const created: ManifoldSolid[] = [];
-  let result: ManifoldSolid | null = null;
-
   try {
-    const runtime = await getManifoldRuntime();
-    const solid = shapesToManifoldUnion(runtime, solids, created, true);
-    const cutterSolid = shapesToManifoldUnion(runtime, holes.map(paddedCutterShape), created, true);
-    if (!solid || !cutterSolid) {
+    const solidOperands = solids.map((shape) => shapeManifoldOperand(shape, true));
+    const cutterOperands = cutterShapes.map((shape) => shapeManifoldOperand(shape, true));
+    if (solidOperands.some((operand) => !operand) || cutterOperands.some((operand) => !operand)) {
+      return null;
+    }
+    const result = await runManifoldJobOffPage({ op: "subtract", solids: solidOperands as ManifoldOperand[], cutters: cutterOperands as ManifoldOperand[] });
+    if (!result.ok) {
       return null;
     }
 
-    result = solid.subtract(cutterSolid);
-    created.push(result);
-    if (result.status() !== "NoError" || result.numTri() < 1) {
-      return null;
-    }
-
-    const outputMesh = result.getMesh();
-    const positions = manifoldMeshToPositions(outputMesh);
+    const positions = Array.from(result.positions[0]);
     const resultChanged = positionsDifferFromMeshData(positions, sourceMesh);
     if (!resultChanged) {
       return null;
@@ -5352,8 +5263,6 @@ async function manifoldBooleanMeshShape(selection: WorkplaneShape[], options: { 
     return group;
   } catch {
     return null;
-  } finally {
-    Array.from(new Set(created)).forEach(disposeManifold);
   }
 }
 
@@ -5368,26 +5277,21 @@ async function manifoldUnionMeshShape(selection: WorkplaneShape[], groupChildren
     return null;
   }
 
-  const created: ManifoldSolid[] = [];
-  let result: ManifoldSolid | null = null;
   try {
-    const runtime = await getManifoldRuntime();
-    result = shapesToManifoldUnion(runtime, solids, created, true);
-    if (!result) {
+    const operands = solids.map((shape) => shapeManifoldOperand(shape, true));
+    if (operands.some((operand) => !operand)) {
       return null;
     }
-    if (result.status() !== "NoError" || result.numTri() < 1) {
+    const result = await runManifoldJobOffPage({ op: "union", solids: operands as ManifoldOperand[] });
+    if (!result.ok) {
       return null;
     }
 
-    const outputMesh = result.getMesh();
-    const positions = manifoldMeshToPositions(outputMesh);
+    const positions = Array.from(result.positions[0]);
     const group = meshPositionsToGroupShape(selection, solids, positions, "grouped-manifold-union", groupChildren);
     return isUsableBooleanGroup(group, mergedSourceMesh.faces.length, false) ? group : null;
   } catch {
     return null;
-  } finally {
-    Array.from(new Set(created)).forEach(disposeManifold);
   }
 }
 

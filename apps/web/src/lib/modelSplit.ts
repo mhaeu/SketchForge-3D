@@ -243,7 +243,8 @@ export function splitPlaneIntersectsPoints(points: readonly Point3[], normal: Po
  */
 export function splitShapeFromWorldPositions(
   source: WorkplaneShape,
-  positions: readonly number[],
+  // Auch die Float32Array, die der Geometrie-Worker liefert: gelesen wird nur.
+  positions: readonly number[] | Float32Array,
   id: string,
   name: string,
 ): WorkplaneShape | null {
