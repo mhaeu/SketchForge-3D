@@ -454,6 +454,8 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "status.viewSaved": "Ansicht unter {key} gespeichert — {key} holt sie zurück",
   "status.viewNotSaved": "Die Ansicht ließ sich in diesem Browser nicht speichern",
   "status.viewEmpty": "Unter {key} ist keine Ansicht gespeichert — Umschalt+{key} speichert die jetzige",
+  "selectOther.title": "Anderes wählen",
+  "selectOther.hole": "Loch",
   "editor.tool.align": "Ausrichten",
   "editor.tool.mirror": "Spiegeln",
   "editor.tool.snapToGrid": "Am Raster ausrichten",

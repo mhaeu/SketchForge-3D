@@ -455,6 +455,8 @@ export const MESSAGES_EN = {
   "status.viewSaved": "View saved under {key} — {key} brings it back",
   "status.viewNotSaved": "Could not save the view in this browser",
   "status.viewEmpty": "No view saved under {key} — Shift+{key} saves the current one",
+  "selectOther.title": "Select other",
+  "selectOther.hole": "hole",
   "editor.tool.align": "Align",
   "editor.tool.mirror": "Mirror",
   "editor.tool.snapToGrid": "Snap to grid",

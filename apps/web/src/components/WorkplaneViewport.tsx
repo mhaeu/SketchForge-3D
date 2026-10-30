@@ -6169,6 +6169,75 @@ export function WorkplaneViewport({
     return nearestId;
   }, [isCutAwayPoint]);
 
+  /*
+   * Anderes waehlen: alle Formen, durch die der Strahl unter dem Zeiger geht,
+   * von vorn nach hinten, jede einmal - nach denselben Regeln wie ein Klick
+   * (vor der Schnittebene, kein Referenzbild). Nach layerling 1.108.0 (#804).
+   */
+  const shapesUnderPointer = useCallback((clientX: number, clientY: number) => {
+    const state = threeRef.current;
+    if (!state) return [];
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    state.raycaster.setFromCamera(state.pointer, state.camera);
+    state.raycaster.layers.set(RENDER_LAYER_SHAPES);
+    const ids: string[] = [];
+    for (const entry of state.raycaster.intersectObjects(state.shapeLayer.children, true)) {
+      const shapeId = entry.object.userData.shapeId;
+      if (typeof shapeId !== "string" || ids.includes(shapeId) || isCutAwayPoint(entry.point)) continue;
+      const shape = shapesRef.current.find((candidate) => candidate.id === shapeId);
+      if (shape && !shape.imagePlate) ids.push(shapeId);
+    }
+    return ids;
+  }, [isCutAwayPoint]);
+
+  const [selectOther, setSelectOther] = useState<{ x: number; y: number; ids: string[] } | null>(null);
+
+  /*
+   * Ein Rechtsklick ohne Ziehen oeffnet die Liste, wenn mehr als eine Form
+   * unter dem Zeiger liegt. Ein Rechtsziehen bleibt, was es war: die Ansicht
+   * verschieben. Die Lauscher haengen in der Fangphase am Rahmen, damit sie
+   * keinen der anderen Zeigerwege stoeren.
+   */
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let start: { x: number; y: number } | null = null;
+    const down = (event: PointerEvent) => {
+      start = event.button === 2 ? { x: event.clientX, y: event.clientY } : null;
+      if (event.button !== 2) setSelectOther(null);
+    };
+    const up = (event: PointerEvent) => {
+      if (event.button !== 2 || !start) return;
+      const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+      start = null;
+      if (moved > 5) return;
+      const ids = shapesUnderPointer(event.clientX, event.clientY);
+      if (ids.length < 2) {
+        setSelectOther(null);
+        return;
+      }
+      const rect = host.getBoundingClientRect();
+      setSelectOther({ x: event.clientX - rect.left, y: event.clientY - rect.top, ids });
+    };
+    host.addEventListener("pointerdown", down, true);
+    host.addEventListener("pointerup", up, true);
+    return () => {
+      host.removeEventListener("pointerdown", down, true);
+      host.removeEventListener("pointerup", up, true);
+    };
+  }, [shapesUnderPointer]);
+
+  useEffect(() => {
+    if (!selectOther) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectOther(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [selectOther]);
+
   const pickPlacementSurface = useCallback((clientX: number, clientY: number, reverse: boolean) => {
     const state = threeRef.current;
     if (!state) return null;
@@ -8121,6 +8190,36 @@ export function WorkplaneViewport({
             onPointerLeave={handlePointerLeave}
           />
           {!workplaneMode && marqueeRect ? <div className="selection-marquee" style={marqueeRect} /> : null}
+          {selectOther ? (
+            <div
+              className="select-other-menu"
+              role="menu"
+              aria-label={t("selectOther.title")}
+              style={{ left: selectOther.x, top: selectOther.y }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <strong>{t("selectOther.title")}</strong>
+              {selectOther.ids.map((id) => {
+                const shape = shapesRef.current.find((candidate) => candidate.id === id);
+                if (!shape) return null;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="menuitem"
+                    className={selectedIdsRef.current.includes(id) ? "active" : ""}
+                    onClick={(event) => {
+                      onSelectShape(id, event.shiftKey ? "toggle" : "replace");
+                      setSelectOther(null);
+                    }}
+                  >
+                    {shape.name}{shape.hole ? ` (${t("selectOther.hole")})` : ""}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           {!workplaneMode && originDimensionsEnabled && originDimensionOverlay ? (
             <OriginDimensionOverlay overlay={originDimensionOverlay} />
           ) : null}
