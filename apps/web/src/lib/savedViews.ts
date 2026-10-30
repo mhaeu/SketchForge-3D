@@ -80,3 +80,54 @@ export function writeSavedView(key: string | null | undefined, slot: SavedViewSl
     return false;
   }
 }
+
+/**
+ * Eigene Startansicht (nach layerling #853): Neue Entwuerfe oeffnen darin, und
+ * die Ausgangsansicht (Pos1, Haus am Wuerfel) kehrt dorthin zurueck. Gilt fuer
+ * alle Entwuerfe in diesem Browser. Gespeichert wird sie so, wie die
+ * perspektivische Kamera sie zeigt; die flache Ansicht rechnet ihren Zoom in den
+ * Abstand um, der gleich viel zeigt. So sieht sie in beiden Projektionen gleich aus.
+ */
+export type StartView = Pick<SavedView, "position" | "target" | "up">;
+
+const START_VIEW_STORAGE_KEY = "sketchforge.editor.startView";
+
+/** Eine Startansicht, wenn die Kamera damit irgendwohin schauen kann; sonst null. */
+export function normalizeStartView(value: unknown): StartView | null {
+  const view = normalizeSavedView(value);
+  if (!view) return null;
+  const [px, py, pz] = view.position;
+  const [tx, ty, tz] = view.target;
+  if (Math.hypot(px - tx, py - ty, pz - tz) < 1e-6 || Math.hypot(...view.up) < 1e-6) return null;
+  return { position: view.position, target: view.target, up: view.up };
+}
+
+/**
+ * Der Abstand, in dem die perspektivische Kamera (Oeffnungswinkel fovDegrees)
+ * so viel zeigt wie die flache Ansicht mit dieser halben Hoehe und diesem Zoom.
+ */
+export function perspectiveDistanceForFlatView(halfHeight: number, zoom: number, fovDegrees: number) {
+  return halfHeight / Math.max(zoom, 1e-6) / Math.tan((fovDegrees * Math.PI) / 360);
+}
+
+export function readStartView(): StartView | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return normalizeStartView(JSON.parse(window.localStorage.getItem(START_VIEW_STORAGE_KEY) ?? "null"));
+  } catch {
+    return null;
+  }
+}
+
+/** null nimmt wieder die Standardansicht. Gibt zurueck, ob gespeichert wurde. */
+export function writeStartView(view: StartView | null) {
+  if (typeof window === "undefined") return false;
+  try {
+    const kept = normalizeStartView(view);
+    if (kept) window.localStorage.setItem(START_VIEW_STORAGE_KEY, JSON.stringify(kept));
+    else window.localStorage.removeItem(START_VIEW_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}

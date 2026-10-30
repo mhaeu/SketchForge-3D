@@ -311,6 +311,9 @@ export function WorkspaceSettingsModal({
   onOriginDimensionsEnabledChange,
   onShowProjectNameInToolbarChange,
   onMakeDefault,
+  hasStartView,
+  onSaveStartView,
+  onResetStartView,
   onClose,
 }: {
   workspace: WorkspaceSettings;
@@ -326,6 +329,9 @@ export function WorkspaceSettingsModal({
   onOriginDimensionsEnabledChange: (enabled: boolean) => void;
   onShowProjectNameInToolbarChange?: (show: boolean) => void;
   onMakeDefault: () => void;
+  hasStartView: boolean;
+  onSaveStartView: () => void;
+  onResetStartView: () => void;
   onClose: () => void;
 }) {
   // Redraws the window when the language changes.
@@ -570,6 +576,20 @@ export function WorkspaceSettingsModal({
                     checked={originDimensionsEnabled}
                     onChange={onOriginDimensionsEnabledChange}
                   />
+                  {/* Startansicht (savedViews.ts): steht bei den Ansichtsschaltern, weil
+                      sie dort gesucht wird. */}
+                  <div className="workspace-reset-row" title={t("workspace.startViewHint")}>
+                    <span>{t("workspace.startView")}</span>
+                    <div>
+                      <button type="button" title={t("workspace.startViewHint")} onClick={onSaveStartView}>
+                        {t("workspace.startViewUseCurrent")}
+                      </button>
+                      <button type="button" disabled={!hasStartView} onClick={onResetStartView}>
+                        <RotateCcw size={14} />
+                        <span>{t("workspace.startViewStandard")}</span>
+                      </button>
+                    </div>
+                  </div>
                   <WorkspaceToggle
                     label={t("workspace.selectBeforeMoving")}
                     checked={workspace.selectBeforeMove}

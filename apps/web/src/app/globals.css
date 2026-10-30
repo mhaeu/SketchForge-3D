@@ -7564,6 +7564,46 @@ html[data-theme="dark"] .workspace-custom-snap-add {
   font-weight: 800;
 }
 
+.workspace-reset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  padding-top: 14px;
+  color: #3d5d72;
+  border-top: 1px solid #e3eaef;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.workspace-reset-row > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-reset-row button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: #3d5d72;
+  background: #fff;
+  border: 1px solid #cfdae2;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.workspace-reset-row button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .workspace-shape-card-heading button:disabled {
   cursor: default;
   opacity: 0.48;
@@ -8925,6 +8965,17 @@ html[data-theme="dark"] .workspace-shape-special-fields label,
 html[data-theme="dark"] .workspace-shape-specials small,
 html[data-theme="dark"] .workspace-shape-note {
   color: #91a7b7;
+}
+
+html[data-theme="dark"] .workspace-reset-row {
+  color: #c8dbe7;
+  border-top-color: #344854;
+}
+
+html[data-theme="dark"] .workspace-reset-row button {
+  color: #c8dbe7;
+  background: #1b2a35;
+  border-color: #3c505d;
 }
 
 html[data-theme="dark"] .workspace-shape-card-heading button {

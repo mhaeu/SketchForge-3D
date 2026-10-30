@@ -34,7 +34,7 @@ import { createKnurlGeometry } from "@/lib/knurlGeometry";
 import { createGridfinityGeometry } from "@/lib/gridfinityGeometry";
 import { pickGridfinityFields } from "@/lib/gridfinityFields";
 import { manifoldRevision, onManifoldReady } from "@/lib/manifoldHandle";
-import { readSavedViews, savedViewSlotForEvent, writeSavedView, type SavedView, type SavedViewSlot } from "@/lib/savedViews";
+import { perspectiveDistanceForFlatView, readSavedViews, readStartView, savedViewSlotForEvent, writeSavedView, writeStartView, type SavedView, type SavedViewSlot, type StartView } from "@/lib/savedViews";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { createLoftGeometry } from "@/lib/loftGeometry";
@@ -3864,6 +3864,7 @@ export function WorkplaneViewport({
   const onResizeRegionChangeRef = useRef(onResizeRegionChange);
   onResizeRegionChangeRef.current = onResizeRegionChange;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hasStartView, setHasStartView] = useState(() => readStartView() !== null);
   const [workspace, setWorkspace] = useState<WorkspaceSettings>(() => normalizeWorkspaceSettings(initialWorkspace));
   const [transformOverlay, setTransformOverlay] = useState<TransformOverlayState | null>(null);
   const [alignOverlay, setAlignOverlay] = useState<AlignOverlayState | null>(null);
@@ -7744,6 +7745,19 @@ export function WorkplaneViewport({
     state.needsRender = true;
   }, [onNotice]);
 
+  const saveStartView = useCallback(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    const saved = writeStartView(startViewOf(state));
+    setHasStartView(readStartView() !== null);
+    onNotice?.(saved ? t("workspace.startViewSaved") : t("status.viewNotSaved"));
+  }, [onNotice]);
+
+  const resetStartView = useCallback(() => {
+    writeStartView(null);
+    setHasStartView(readStartView() !== null);
+  }, []);
+
   const toggleProjection = useCallback(() => {
     const state = threeRef.current;
     if (!state) {
@@ -8384,6 +8398,9 @@ export function WorkplaneViewport({
           onOriginDimensionsEnabledChange={changeOriginDimensionsEnabled}
           onShowProjectNameInToolbarChange={onShowProjectNameInToolbarChange}
           onMakeDefault={makeWorkspaceDefault}
+          hasStartView={hasStartView}
+          onSaveStartView={saveStartView}
+          onResetStartView={resetStartView}
           onClose={() => setSettingsOpen(false)}
         />
       ) : null}
@@ -8638,20 +8655,46 @@ function createThreeScene(host: HTMLDivElement): ThreeState {
   return state;
 }
 
+/**
+ * Die Ansicht, wie sie gerade ist, als Startansicht (savedViews.ts). Bei der
+ * flachen Ansicht wird aus Zoom und sichtbarer Hoehe der Abstand, in dem die
+ * perspektivische Kamera gleich viel zeigt.
+ */
+function startViewOf(state: ThreeState): StartView {
+  const camera = state.camera;
+  const target = state.controls.target.clone();
+  const offset = camera.position.clone().sub(target);
+  const direction = offset.lengthSq() > 0 ? offset.normalize() : CAMERA_HOME.clone().sub(CAMERA_TARGET).normalize();
+  const distance = camera instanceof THREE.OrthographicCamera
+    ? perspectiveDistanceForFlatView((camera.top - camera.bottom) / 2, camera.zoom, CAMERA_FOV)
+    : camera.position.distanceTo(target);
+  const reach = THREE.MathUtils.clamp(distance, state.controls.minDistance, state.controls.maxDistance);
+  return {
+    position: target.clone().add(direction.multiplyScalar(reach)).toArray() as [number, number, number],
+    target: target.toArray() as [number, number, number],
+    up: camera.up.toArray() as [number, number, number],
+  };
+}
+
+/** Ausgangsansicht: die eigene Startansicht, wenn eine gesetzt ist, sonst die Standardansicht. */
 function resetCamera(state: ThreeState) {
-  state.camera.up.set(0, 1, 0);
-  state.camera.position.copy(CAMERA_HOME);
-  state.controls.target.copy(CAMERA_TARGET);
+  const start = readStartView();
+  const home = start ? new THREE.Vector3().fromArray(start.position) : CAMERA_HOME;
+  const target = start ? new THREE.Vector3().fromArray(start.target) : CAMERA_TARGET;
+  if (start) state.camera.up.fromArray(start.up);
+  else state.camera.up.set(0, 1, 0);
+  state.camera.position.copy(home);
+  state.controls.target.copy(target);
   if (state.camera instanceof THREE.OrthographicCamera) {
     state.camera.zoom = 1;
-    const distance = CAMERA_HOME.distanceTo(CAMERA_TARGET);
+    const distance = home.distanceTo(target);
     const halfHeight = distance * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2));
     const canvas = state.renderer.domElement;
     updateOrthographicFrustum(state.camera, canvas.clientWidth / Math.max(1, canvas.clientHeight), halfHeight);
   } else {
     state.camera.zoom = 1;
   }
-  state.camera.lookAt(CAMERA_TARGET);
+  state.camera.lookAt(target);
   state.camera.updateProjectionMatrix();
   state.controls.update();
 }
