@@ -198,6 +198,34 @@ describe("SketchForge .skf project packages", () => {
     expect(restored.shapes[0].importedMesh?.positions).toEqual(revolve.importedMesh?.positions);
   });
 
+  it("keeps a hull's operation and its parts", async () => {
+    const left = shape("sphere", "left", { x: -10 });
+    const right = shape("sphere", "right", { x: 10 });
+    const hull = shape("mesh", "hull", {
+      name: "Hull",
+      groupOperation: "hull",
+      groupedBaseWidth: 40,
+      groupedBaseDepth: 20,
+      groupedBaseHeight: 20,
+      groupedShapes: [left, right],
+      importedMesh: {
+        positions: [0, 0, 0, 2, 0, 0, 0, 2, 0],
+        baseWidth: 2,
+        baseDepth: 1,
+        baseHeight: 2,
+        triangleCount: 1,
+        sourceFormat: "json",
+      },
+    });
+    const exported = await exportSkfProject(input([hull]));
+    const { document } = packageDocument(exported);
+    expect(document.groups[0].operation).toBe("group");
+
+    const restored = await importSkfProject(exported);
+    expect(restored.shapes[0].groupOperation).toBe("hull");
+    expect(restored.shapes[0].groupedShapes).toEqual([left, right]);
+  });
+
   it("preserves nested groups, holes, intersection metadata, edge history, B-Rep, and undo/redo", async () => {
     const solid = shape("box", "solid", { x: 0 });
     const hole = shape("cylinder", "hole", { hole: true, color: "#b8c2cc", x: 4 });

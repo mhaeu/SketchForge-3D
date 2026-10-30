@@ -166,6 +166,18 @@ const tools = [
     },
   },
   {
+    name: "sketchforge_hull_objects",
+    description: "Wrap the objects with these ids in their convex hull, the smallest body without dents round all of them. Holes among them are cut out afterwards. The parts stay inside, so the hull can be ungrouped again.",
+    inputSchema: {
+      ...editorTargetSchema,
+      required: ["ids"],
+      properties: {
+        ...editorTargetSchema.properties,
+        ids: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
     name: "sketchforge_ungroup_objects",
     description: "Ungroup one or more grouped objects by id and preserve their edited geometry.",
     inputSchema: {
@@ -325,6 +337,8 @@ async function callTool(name, args) {
       return bridgeCommand("align_objects", args);
     case "sketchforge_group_objects":
       return bridgeCommand("group_objects", args, 30000);
+    case "sketchforge_hull_objects":
+      return bridgeCommand("hull_objects", args, 30000);
     case "sketchforge_ungroup_objects":
       return bridgeCommand("ungroup_objects", args);
     case "sketchforge_boolean_cut":

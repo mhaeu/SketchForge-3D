@@ -643,7 +643,7 @@ export type WorkplaneShape = {
   groupedBaseWidth?: number;
   groupedBaseDepth?: number;
   groupedBaseHeight?: number;
-  groupOperation?: "group" | "intersection";
+  groupOperation?: "group" | "intersection" | "hull";
   locked?: boolean;
   hidden?: boolean;
 };

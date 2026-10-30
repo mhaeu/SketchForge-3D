@@ -61,6 +61,7 @@ Useful tools:
 - `sketchforge_align_objects`: align two or more ids using the same logic as the editor Alignment button.
 - `sketchforge_group_objects`: group selected ids using the normal SketchForge group/boolean path.
 - `sketchforge_boolean_cut`: pass `solidIds` and `holeIds`; the result replaces the operands.
+- `sketchforge_hull_objects`: wrap the given ids in their convex hull; holes among them are cut out, and the parts stay inside.
 - `sketchforge_ungroup_objects`: restore grouped children while preserving edited child geometry.
 - `sketchforge_separate_parts`: split disconnected parts in one object.
 - `sketchforge_inspect_errors`: read the editor notice, edge modifier error, and last MCP error.

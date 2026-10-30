@@ -82,6 +82,7 @@ export type SketchForgeMcpCommandName =
   | "align_objects"
   | "group_objects"
   | "ungroup_objects"
+  | "hull_objects"
   | "boolean_cut"
   | "separate_parts"
   | "list_edges"

@@ -140,6 +140,17 @@ export function ToolbarIntersectionIcon(props: IconProps) {
   );
 }
 
+/** Huelle: zwei verschieden grosse Teile, von einem Umriss umschlossen, der beide beruehrt. */
+export function ToolbarHullIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" {...props}>
+      <path d="M13.4 19.2L29.4 11.1A12 12 0 1 1 29.4 34.9L13.4 30.8A6 6 0 0 1 13.4 19.2Z" fill="currentColor" opacity="0.22" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" />
+      <circle cx="14" cy="25" r="6" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="3 2.5" />
+      <circle cx="32" cy="23" r="12" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="3 2.5" />
+    </svg>
+  );
+}
+
 /** Abschneiden: ein Koerper, durch den eine Ebene geht, und darueber faellt es weg. */
 export function ToolbarTrimIcon({ side = "above", ...props }: IconProps & { side?: "above" | "below" }) {
   return (

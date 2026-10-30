@@ -685,6 +685,8 @@ async function serializeState(
 
 function nodeGroupOperation(node: SkfShapeNodeV1, nodeById: Map<string, SkfShapeNodeV1>) {
   if (node.definition.groupOperation === "intersection") return "boolean-intersection";
+  // Eine Huelle haelt ihre Teile wie eine Gruppe; die Rechenart steht in der Definition.
+  if (node.definition.groupOperation === "hull") return "group";
   const children = (node.groupedShapeNodeIds ?? []).map((id) => nodeById.get(id)).filter(Boolean) as SkfShapeNodeV1[];
   const hasHole = children.some((child) => child.definition.hole === true);
   const hasSolid = children.some((child) => child.definition.hole !== true);

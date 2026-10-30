@@ -70,6 +70,7 @@ import {
   ToolbarHomeIcon,
   ToolbarImportIcon,
   ToolbarIntersectionIcon,
+  ToolbarHullIcon,
   ToolbarTrimIcon,
   ToolbarTrimBelowIcon,
   ToolbarBoreIcon,
@@ -5580,6 +5581,58 @@ async function buildIntersectionShapeFromSelection(groupable: WorkplaneShape[]):
   };
 }
 
+/** Eine Huelle braucht zwei Formen, davon mindestens einen Koerper. */
+function canHullShapes(shapes: WorkplaneShape[]) {
+  const usable = shapes.filter((shape) => !shape.locked && isSolidShape(shape));
+  return usable.length >= 2 && usable.some((shape) => !shape.hole);
+}
+
+/**
+ * Die konvexe Huelle der gewaehlten Koerper: der kleinste Koerper ohne
+ * Dellen um alle herum, wie eingeschweisst. Eine Halbkugel auf einem
+ * Zylinder wird eine Kuppel ohne Stufe, vier Eckpfosten ein Quader mit
+ * runden Ecken. Loecher in der Auswahl werden danach herausgeschnitten.
+ * Die Teile bleiben in der Gruppe; "Gruppe bearbeiten" oeffnet sie und
+ * "Fertig" baut die Huelle neu. Die Huelle ist ein Netz (Manifold.hull),
+ * runde Flaechen zeigen also Facetten wie die Netze der Teile.
+ * Nach layerling 1.110.0 (#863).
+ */
+async function buildHullShapeFromSelection(groupable: WorkplaneShape[]): Promise<{ group: WorkplaneShape | null; failureNotice: string }> {
+  const shapes = groupable.filter((shape) => !shape.locked && isSolidShape(shape));
+  if (!canHullShapes(shapes)) return { group: null, failureNotice: t("status.hullNeedsShapes") };
+  const solids = shapes.filter((shape) => !shape.hole);
+  const holes = shapes.filter((shape) => shape.hole);
+  const created: ManifoldSolid[] = [];
+  try {
+    const runtime = await getManifoldRuntime();
+    const parts: ManifoldSolid[] = [];
+    for (const solid of solids) {
+      const part = shapeToManifoldSolid(runtime, solid, created);
+      if (!part || part.status() !== "NoError" || part.numTri() < 1) return { group: null, failureNotice: t("status.hullFailed") };
+      created.push(part);
+      parts.push(part);
+    }
+    let result = runtime.Manifold.hull(parts);
+    created.push(result);
+    if (holes.length) {
+      const cutter = shapesToManifoldUnion(runtime, holes, created);
+      if (!cutter) return { group: null, failureNotice: t("status.hullFailed") };
+      result = result.subtract(cutter);
+      created.push(result);
+    }
+    if (result.status() !== "NoError" || result.numTri() < 1) return { group: null, failureNotice: t("status.hullFailed") };
+    const mesh = result.getMesh();
+    const group = meshPositionsToGroupShape(shapes, solids, manifoldMeshToPositions(mesh), "grouped-hull");
+    return group
+      ? { group: { ...group, name: t("shape.hull"), hole: false, groupOperation: "hull" }, failureNotice: "" }
+      : { group: null, failureNotice: t("status.hullFailed") };
+  } catch {
+    return { group: null, failureNotice: t("status.hullFailed") };
+  } finally {
+    Array.from(new Set(created)).forEach(disposeManifold);
+  }
+}
+
 function cutterInteriorTriangleCount(mesh: MeshData, cutters: WorkplaneShape[]) {
   const tester = createHoleTester(meshAabb);
   return mesh.faces.reduce((total, [ai, bi, ci]) => {
@@ -6211,6 +6264,9 @@ function cleanShapePatch(patch: ShapeUpdatePatch): Partial<WorkplaneShape> {
  * zu. Nach Layerling 1.79.0 (#394).
  */
 function restoreGroupedChildrenForEdges(group: WorkplaneShape): WorkplaneShape[] {
+  // Eine Huelle ist ein eigener Koerper, nicht die Summe ihrer Teile:
+  // geoeffnet wuerden die Teile einzeln verrundet und die Huelle waere weg.
+  if (group.groupOperation === "hull") return [group];
   return restoreGroupedChildren(group).flatMap((child) => {
     const grandChildren = child.groupedShapes ?? [];
     const opensCleanly = grandChildren.length > 0
@@ -6282,7 +6338,9 @@ function expandGroupsForBoolean(selection: WorkplaneShape[]): WorkplaneShape[] {
 }
 
 function expandGroupsForBoxBoolean(selection: WorkplaneShape[]): WorkplaneShape[] {
-  return selection.flatMap((shape) => (shape.groupedShapes?.length ? restoreGroupedChildren(shape) : [shape]));
+  // Eine Huelle geht als ihr Netz ein; geoeffnet wuerden vier Eckpfosten
+  // statt des Quaders um sie geschnitten.
+  return selection.flatMap((shape) => (shape.groupedShapes?.length && shape.groupOperation !== "hull" ? restoreGroupedChildren(shape) : [shape]));
 }
 
 function canUseBoxBoolean(selection: WorkplaneShape[]) {
@@ -11431,6 +11489,28 @@ export function SketchForgeEditor({
     commitShapes([...remainingShapes, intersection], intersection.id, t("status.intersectedMany", { count: groupable.length }));
   }, [commitShapes, selectedShapes]);
 
+  const hullSelected = useCallback(async () => {
+    const groupable = selectedShapes.filter((shape) => !shape.locked);
+    if (!canHullShapes(groupable)) {
+      setNotice(t("status.hullNeedsShapes"));
+      return;
+    }
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    const sourceProjectId = projectInfoRef.current.projectId;
+    const result = await buildHullShapeFromSelection(groupable);
+    if (projectInfoRef.current.projectId !== sourceProjectId || projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setNotice(t("status.hullChanged"));
+      return;
+    }
+    if (!result.group) {
+      setNotice(result.failureNotice);
+      return;
+    }
+    const operandIds = new Set(groupable.map((shape) => shape.id));
+    const hull = canonicalizeShape(result.group);
+    commitShapes([...shapesRef.current.filter((shape) => !operandIds.has(shape.id)), hull], hull.id, t("status.hulledMany", { count: groupable.length }));
+  }, [commitShapes, selectedShapes]);
+
   /**
    * Eine Gruppe oeffnen, um ihre Teile zu aendern.
    *
@@ -11489,7 +11569,10 @@ export function SketchForgeEditor({
       commitShapes(shapesRef.current, [parts[0].id], t("status.groupClosedSingle"));
       return;
     }
-    const result = await buildGroupedShapeFromSelection(parts);
+    // Eine Huelle wird aus ihren Teilen neu gehuellt, nicht gruppiert.
+    const result = open.shape.groupOperation === "hull"
+      ? await buildHullShapeFromSelection(parts)
+      : await buildGroupedShapeFromSelection(parts);
     if (!result.group) {
       setNotice(result.failureNotice);
       return;
@@ -12047,6 +12130,23 @@ export function SketchForgeEditor({
         const editableGroup = canonicalizeShape({ ...result.group, groupOperation: "group" });
         commitShapes([...currentShapes().filter((shape) => !ids.has(shape.id)), editableGroup], editableGroup.id, t("status.mcpGrouped", { count: groupable.length }));
         return { object: mcpShapeSummary(editableGroup) };
+      }
+
+      if (command.action === "hull_objects") {
+        const ids = new Set(mcpStringArray(params.ids));
+        const groupable = currentShapes().filter((shape) => ids.has(shape.id));
+        if (groupable.some((shape) => shape.locked)) throw new Error(t("status.mcpUnlockBeforeGroup"));
+        if (!canHullShapes(groupable)) throw new Error(t("status.hullNeedsShapes"));
+        const sourceFingerprint = projectShapesFingerprint(currentShapes());
+        const sourceProjectId = projectInfoRef.current.projectId;
+        const result = await buildHullShapeFromSelection(groupable);
+        if (projectInfoRef.current.projectId !== sourceProjectId || projectShapesFingerprint(currentShapes()) !== sourceFingerprint) {
+          throw new Error("The scene changed while building the hull; run the command again");
+        }
+        if (!result.group) throw new Error(result.failureNotice);
+        const hull = canonicalizeShape(result.group);
+        commitShapes([...currentShapes().filter((shape) => !ids.has(shape.id)), hull], hull.id, t("status.hulledMany", { count: groupable.length }));
+        return { object: mcpShapeSummary(hull) };
       }
 
       if (command.action === "ungroup_objects") {
@@ -13292,6 +13392,8 @@ export function SketchForgeEditor({
         onAlignToWorkplane={alignSelectionToWorkplane}
         onGroup={groupSelected}
         onIntersect={intersectSelected}
+        canHull={canHullShapes(selectedShapes)}
+        onHull={hullSelected}
         onTrim={trimAtWorkplane}
         onSubtractBore={subtractBoreFromSelection}
         onTrimFlush={trimFlushToBody}
@@ -13894,6 +13996,7 @@ function SecondaryToolbar({
   onToggleObjectList,
   objectListOpen,
   canIntersect,
+  canHull,
   canRedo,
   canUngroup,
   canUndo,
@@ -13952,6 +14055,7 @@ function SecondaryToolbar({
   onAlignToWorkplane,
   onGroup,
   onIntersect,
+  onHull,
   onTrim,
   onSubtractBore,
   canSubtractBore,
@@ -14017,6 +14121,7 @@ function SecondaryToolbar({
   onToggleObjectList: () => void;
   objectListOpen: boolean;
   canIntersect: boolean;
+  canHull: boolean;
   canRedo: boolean;
   canUngroup: boolean;
   canUndo: boolean;
@@ -14075,6 +14180,7 @@ function SecondaryToolbar({
   onAlignToWorkplane: () => void;
   onGroup: () => void;
   onIntersect: () => void;
+  onHull: () => void;
   onTrim: (side: CutSide) => void;
   onSubtractBore: () => void;
   canSubtractBore: boolean;
@@ -14387,6 +14493,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.ungroup"), icon: ToolbarUngroupIcon, action: onUngroup, enabled: canUngroup },
     { label: t("editor.tool.openGroup"), icon: ToolbarOpenGroupIcon, action: onOpenGroup, enabled: canUngroup, active: groupOpen },
     { label: t("editor.tool.intersect"), icon: ToolbarIntersectionIcon, action: onIntersect, enabled: canIntersect },
+    { label: t("editor.tool.hull"), icon: ToolbarHullIcon, action: onHull, enabled: canHull },
     { label: t("editor.tool.trimAbove"), icon: ToolbarTrimIcon, action: () => onTrim("above"), enabled: hasSelection },
     { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },
     { label: t("editor.tool.trimFlushAbove"), icon: ToolbarTrimFlushIcon, action: () => onTrimFlush("above"), enabled: canTrimFlush },
