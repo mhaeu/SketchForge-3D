@@ -9154,16 +9154,24 @@ export function SketchForgeEditor({
    * des Ziehens stand der Koerper selbst fuer seine Kopie ein, sonst haette
    * jede Zeigerbewegung eine neue Form in den Verlauf geschrieben.
    */
-  const duplicateShapesMoved = useCallback((ids: string[], delta: { dx: number; dz: number; delevation: number }) => {
+  const duplicateShapesMoved = useCallback((ids: string[], delta: { dx: number; dz: number; delevation: number }, originals?: WorkplaneShape[]) => {
+    /*
+     * Mit `originals` (Alt am Hebepfeil) stehen die Formen schon am neuen
+     * Platz: Sie kommen zurueck an den alten, und die Kopie entsteht von
+     * dort aus. Gelesen wird aus shapesRef, weil das Ziehen sie eben erst
+     * bewegt hat.
+     */
+    const original = new Map((originals ?? []).map((shape) => [shape.id, shape]));
+    const base = originals ? shapesRef.current.map((shape) => original.get(shape.id) ?? shape) : shapes;
     const duplicates = ids.flatMap((id) => {
-      const shape = shapes.find((entry) => entry.id === id);
+      const shape = base.find((entry) => entry.id === id);
       if (!shape || isReferencePoint(shape)) return [];
       return [applyShapeMoveDelta(cloneWorkplaneShapeTreeWithFreshIds(shape, "copy"), { ...ZERO_MOVE_DELTA, ...delta })];
     });
     if (duplicates.length === 0) return;
     smartDuplicateRef.current = null;
     commitShapes(
-      [...shapes, ...duplicates],
+      [...base, ...duplicates],
       duplicates.map((shape) => shape.id),
       duplicates.length === 1 ? t("status.duplicatedOne") : t("status.duplicatedMany", { count: duplicates.length }),
     );

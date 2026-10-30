@@ -413,7 +413,7 @@ type WorkplaneViewportProps = {
   onUpdateShape: (id: string, patch: ShapeUpdatePatch) => void;
   notes?: WorkplaneNote[];
   /** Mit Alt gezogen: Kopien der Koerper an der neuen Stelle. */
-  onDuplicateShapesMoved?: (ids: string[], delta: { dx: number; dz: number; delevation: number }) => void;
+  onDuplicateShapesMoved?: (ids: string[], delta: { dx: number; dz: number; delevation: number }, originals?: WorkplaneShape[]) => void;
   notesVisible?: boolean;
   /** Ueberhaenge schraffieren, nach `workspace.overhangAngle`. */
   showOverhangs?: boolean;
@@ -749,6 +749,8 @@ type TransformDragState = {
   liftStartPoint?: THREE.Vector3;
   liftHandlePoint?: THREE.Vector3;
   liftStartValue?: number;
+  /** Mit Alt am Hebepfeil begonnen: Beim Loslassen bleibt das Original, und eine Kopie steht am neuen Platz. */
+  duplicate?: boolean;
   rotationAxisVector?: THREE.Vector3;
   rotationPivot?: THREE.Vector3;
   rotationPlaneCenter?: THREE.Vector3;
@@ -5298,6 +5300,7 @@ export function WorkplaneViewport({
         liftStartPoint,
         liftHandlePoint,
         liftStartValue,
+        duplicate: kind === "lift" && event.altKey && Boolean(onDuplicateShapesMoved),
         rotationAxisVector: kind === "rotate" ? axisVector : undefined,
         rotationPivot: kind === "rotate" ? chosenPivot ?? undefined : undefined,
         rotationPlaneCenter: kind === "rotate" ? rotationPlaneCenter : undefined,
@@ -5680,6 +5683,27 @@ export function WorkplaneViewport({
     if (transform.kind === "lift" && transform.hasMoved) {
       suppressLiftEditAfterDrag();
     }
+    /*
+     * Alt am Hebepfeil: Die Form stand waehrend des Ziehens fuer ihre Kopie
+     * ein. Jetzt kommt sie an ihren Platz zurueck, und die Kopie entsteht um
+     * denselben Hub versetzt - so lassen sich Kopien gerade nach oben
+     * stapeln, wie Alt und Ziehen es zur Seite schon tat. Nach layerling
+     * 1.110.0 (#865).
+     */
+    if (transform.kind === "lift" && transform.duplicate && transform.hasMoved) {
+      const first = transform.items[0];
+      const moved = first ? shapesRef.current.find((entry) => entry.id === first.id) : undefined;
+      if (first && moved) {
+        const delta = {
+          dx: moved.x - first.startShape.x,
+          dz: moved.z - first.startShape.z,
+          delevation: (moved.elevation ?? 0) - (first.startShape.elevation ?? 0),
+        };
+        if (delta.dx !== 0 || delta.dz !== 0 || delta.delevation !== 0) {
+          onDuplicateShapesMoved?.(transform.items.map((item) => item.id), delta, transform.items.map((item) => item.startShape));
+        }
+      }
+    }
     if (transform.kind === "scale" && transform.hasMoved) {
       suppressCornerEditAfterDrag();
     }
@@ -5710,7 +5734,7 @@ export function WorkplaneViewport({
     }
     onInteractionActiveChange?.(false);
     bakeRotatedShapes.forEach((id) => onUpdateShape(id, { bakeTransform: true }));
-  }, [onInteractionActiveChange, onUpdateShape, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag]);
+  }, [onDuplicateShapesMoved, onInteractionActiveChange, onUpdateShape, suppressCornerEditAfterDrag, suppressLiftEditAfterDrag]);
 
   /**
    * Die gemerkte Rechnung dieses Masses, wenn sie noch gilt - sonst `null`.
