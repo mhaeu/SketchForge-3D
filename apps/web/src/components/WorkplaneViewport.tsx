@@ -34,6 +34,7 @@ import { createKnurlGeometry } from "@/lib/knurlGeometry";
 import { createGridfinityGeometry } from "@/lib/gridfinityGeometry";
 import { pickGridfinityFields } from "@/lib/gridfinityFields";
 import { manifoldRevision, onManifoldReady } from "@/lib/manifoldHandle";
+import { readSavedViews, savedViewSlotForEvent, writeSavedView, type SavedView, type SavedViewSlot } from "@/lib/savedViews";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { createLoftGeometry } from "@/lib/loftGeometry";
@@ -384,6 +385,8 @@ type WorkplaneViewportProps = {
   initialSnap?: GridSize;
   initialWorkspace?: WorkplaneWorkspaceSettings;
   workspaceSettingsKey?: string | null;
+  /** Fuer kurze Meldungen der Ansicht, etwa beim Speichern einer Ansicht. */
+  onNotice?: (message: string) => void;
   showProjectNameInToolbar?: boolean;
   onShowProjectNameInToolbarChange?: (show: boolean) => void;
   /**
@@ -3761,6 +3764,7 @@ export function WorkplaneViewport({
   initialSnap,
   initialWorkspace,
   workspaceSettingsKey,
+  onNotice,
   showProjectNameInToolbar = true,
   onShowProjectNameInToolbarChange,
   onAddShape,
@@ -7599,6 +7603,54 @@ export function WorkplaneViewport({
   // Mirrors the camera's projection for the toolbar button; the camera object
   // itself is swapped inside toggleCameraProjection.
   const [orthographic, setOrthographic] = useState(false);
+  /*
+   * Gespeicherte Ansichten (savedViews.ts): Umschalt+7/8/9/0 merkt sich die
+   * Kamera, die Ziffer allein holt sie zurueck - auch flach oder perspektivisch.
+   */
+  const saveView = useCallback((slot: SavedViewSlot) => {
+    const state = threeRef.current;
+    if (!state) return;
+    const camera = state.camera;
+    const view: SavedView = {
+      position: camera.position.toArray() as [number, number, number],
+      target: state.controls.target.toArray() as [number, number, number],
+      up: camera.up.toArray() as [number, number, number],
+      orthographic: camera instanceof THREE.OrthographicCamera,
+      zoom: camera.zoom,
+      ...(camera instanceof THREE.OrthographicCamera ? { halfHeight: (camera.top - camera.bottom) / 2 } : {}),
+    };
+    onNotice?.(writeSavedView(workspaceSettingsKeyRef.current, slot, view)
+      ? t("status.viewSaved", { key: slot })
+      : t("status.viewNotSaved"));
+  }, [onNotice]);
+
+  const showSavedView = useCallback((slot: SavedViewSlot) => {
+    const state = threeRef.current;
+    if (!state) return;
+    const view = readSavedViews(workspaceSettingsKeyRef.current)[slot];
+    if (!view) {
+      onNotice?.(t("status.viewEmpty", { key: slot }));
+      return;
+    }
+    if (view.orthographic !== state.camera instanceof THREE.OrthographicCamera) {
+      toggleCameraProjection(state);
+      setOrthographic(state.camera instanceof THREE.OrthographicCamera);
+    }
+    const camera = state.camera;
+    camera.up.fromArray(view.up);
+    camera.position.fromArray(view.position);
+    state.controls.target.fromArray(view.target);
+    camera.zoom = view.zoom;
+    if (camera instanceof THREE.OrthographicCamera && view.halfHeight) {
+      const canvas = state.renderer.domElement;
+      updateOrthographicFrustum(camera, canvas.clientWidth / Math.max(1, canvas.clientHeight), view.halfHeight);
+    }
+    camera.lookAt(state.controls.target);
+    camera.updateProjectionMatrix();
+    state.controls.update();
+    state.needsRender = true;
+  }, [onNotice]);
+
   const toggleProjection = useCallback(() => {
     const state = threeRef.current;
     if (!state) {
@@ -7816,6 +7868,11 @@ export function WorkplaneViewport({
         setRulerMoveMode(false);
         rulerPointDragRef.current = null;
         setRulerToolsOpen(false);
+      } else if (savedViewSlotForEvent(event)) {
+        event.preventDefault();
+        const slot = savedViewSlotForEvent(event)!;
+        if (event.shiftKey) saveView(slot);
+        else showSavedView(slot);
       } else if (shortcutView) {
         event.preventDefault();
         setViewCubeFace(shortcutView);
@@ -7844,7 +7901,7 @@ export function WorkplaneViewport({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [frameSelection, onWorkplaneModeChange, resetView, rulerToolsOpen, setPlacementWorkplaneAtSelection, setRulerActive, setViewCubeFace, togglePlacementWorkplane, toggleProjection, zoomCamera]);
+  }, [frameSelection, onWorkplaneModeChange, resetView, rulerToolsOpen, saveView, setPlacementWorkplaneAtSelection, setRulerActive, setViewCubeFace, showSavedView, togglePlacementWorkplane, toggleProjection, zoomCamera]);
 
   return (
     <main className={`workplane-stage ${challengeTutorial ? `key-tag-tutorial-active ${challengeTutorialCollapsed ? "key-tag-tutorial-collapsed" : ""}` : ""}`}>

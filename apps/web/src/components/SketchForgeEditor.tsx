@@ -13766,6 +13766,7 @@ export function SketchForgeEditor({
           initialSnap={snapGrid}
           initialWorkspace={workspaceSettings}
           workspaceSettingsKey={projectId ?? "local-workplane"}
+          onNotice={setNotice}
           showProjectNameInToolbar={showProjectNameInToolbar}
           onShowProjectNameInToolbarChange={onShowProjectNameInToolbarChange}
           onAddShape={addShape}
