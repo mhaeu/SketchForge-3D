@@ -15,6 +15,9 @@ import { SURFACE_TEXT_FONTS, surfaceTextOutline } from "@/lib/surfaceTextOutline
 import {
   normalizeSurfaceTexture,
   normalizeSurfaceTextureFaces,
+  surfaceTextureFacePick,
+  surfaceTexturePickedFaceIds,
+  toggleSurfaceTexturePickedFace,
   SURFACE_TEXTURE_AXES,
   SURFACE_TEXTURE_BARK_TYPES,
   SURFACE_TEXTURE_BRICK_BONDS,
@@ -34,6 +37,8 @@ import {
   SURFACE_TEXTURE_TILINGS,
   SURFACE_TEXTURE_WOOD_CUTS,
   SURFACE_TEXTURE_WOOD_TYPES,
+  type SurfaceTextureFace,
+  type SurfaceTextureFacePick,
   type SurfaceTextureMask,
   type SurfaceTextureSettings,
 } from "@/lib/surfaceTexture";
@@ -11936,6 +11941,53 @@ export function SketchForgeEditor({
     commitShapes(sceneWithSurfaceBody(shapesRef.current, selectedShape.id, under, null), [under.id], t("status.surfaceRemoved", { pattern }));
   }, [commitShapes, selectedShape, selectedShapes.length]);
 
+  /*
+   * Flaechen fuer die Struktur anklicken: auf dem Koerper, auf den sie kommt -
+   * unter einer vorhandenen Struktur der darunter -, dort wo der gewaehlte
+   * steht. Die Klicks gehen ueber dieselbe Flaechenebene wie "Fläche löschen".
+   */
+  const [surfaceFacePick, setSurfaceFacePick] = useState<{ shapeId: string; shape: WorkplaneShape; edgeAngle: number; pick: SurfaceTextureFacePick; faces: SurfaceTextureFace[] } | null>(null);
+  const surfaceFacePickRef = useRef(surfaceFacePick);
+  surfaceFacePickRef.current = surfaceFacePick;
+  const pickSurfaceFaces = useCallback((faces: SurfaceTextureFace[] | null, edgeAngle: number) => {
+    if (!faces) {
+      setSurfaceFacePick(null);
+      return;
+    }
+    if (selectedShapes.length !== 1 || !selectedShape) return;
+    const current = selectedShape;
+    // Neu begonnen auf demselben Koerper (oder alle Flaechen wieder): Das Netz zum Waehlen bleibt.
+    if (surfaceFacePick?.shapeId === current.id && surfaceFacePick.edgeAngle === edgeAngle) {
+      setSurfaceFacePick({ ...surfaceFacePick, faces });
+      return;
+    }
+    const source = canChangeSurfaceTexture(current) ? shapeUnderSurfaceTexture(current) : canTextureSurface(current) ? current : null;
+    if (!source) {
+      setNotice(t(current.locked ? "status.selectionLocked" : current.surfaceTexture ? "status.alreadyTextured" : "status.selectOneToTexture"));
+      return;
+    }
+    setSurfaceFacePick({ shapeId: current.id, shape: current, edgeAngle, pick: surfaceTextureFacePick(surfaceTextureInput(meshForShape(source)), edgeAngle), faces });
+    setNotice(t("status.surfaceFacesPick"));
+  }, [selectedShape, selectedShapes.length, surfaceFacePick]);
+  const toggleSurfaceFace = useCallback((faceId: number) => {
+    setSurfaceFacePick((current) => current && { ...current, faces: toggleSurfaceTexturePickedFace(current.pick, current.faces, faceId) });
+  }, []);
+  // Eine andere Auswahl, ein geaenderter Koerper oder die zugeklappte Karte beenden das Waehlen.
+  useEffect(() => {
+    if (!surfaceFacePick) return;
+    const body = shapes.find((shape) => shape.id === surfaceFacePick.shapeId);
+    if (!surfaceTextureOpen || selectedIds.length !== 1 || selectedIds[0] !== surfaceFacePick.shapeId || body !== surfaceFacePick.shape) setSurfaceFacePick(null);
+  }, [selectedIds, shapes, surfaceFacePick, surfaceTextureOpen]);
+  const surfaceCadFacePick = useMemo<CadFacePick | null>(() => surfaceFacePick
+    ? {
+      shapeId: surfaceFacePick.shapeId,
+      positions: surfaceFacePick.pick.positions,
+      indices: surfaceFacePick.pick.indices,
+      triangleFaces: surfaceFacePick.pick.triangleFaces,
+      selectedFaceIds: surfaceTexturePickedFaceIds(surfaceFacePick.pick, surfaceFacePick.faces).filter((id) => id >= 0),
+    }
+    : null, [surfaceFacePick]);
+
   const surfaceTextureCard = useMemo<SurfaceTextureCardProps | undefined>(() => (
     selectedShapes.length === 1 && offersSurfaceTexture(selectedShape)
       ? {
@@ -11943,9 +11995,12 @@ export function SketchForgeEditor({
         onRemove: surfaceTextureEntry(selectedShape) ? removeSelectedSurfaceTexture : undefined,
         open: surfaceTextureOpen,
         onOpenChange: setSurfaceTextureOpen,
+        facePicking: Boolean(surfaceFacePick),
+        pickedFaces: surfaceFacePick?.faces ?? null,
+        onFacePick: pickSurfaceFaces,
       }
       : undefined
-  ), [removeSelectedSurfaceTexture, selectedShape, selectedShapes.length, surfaceTextureOpen, textureSelectedSurface]);
+  ), [pickSurfaceFaces, removeSelectedSurfaceTexture, selectedShape, selectedShapes.length, surfaceFacePick, surfaceTextureOpen, textureSelectedSurface]);
 
   /**
    * Eine Gruppe oeffnen, um ihre Teile zu aendern.
@@ -13553,6 +13608,12 @@ export function SketchForgeEditor({
       if (event.key === "Escape") {
         // Erst das Werkzeug ablegen, dann die Auswahl - wer ein Werkzeug in
         // der Hand hat, meint mit Escape das Werkzeug.
+        // Die bis dahin angeklickten Flaechen bleiben in der Karte.
+        if (surfaceFacePickRef.current) {
+          setSurfaceFacePick(null);
+          setNotice("");
+          return;
+        }
         if (noteMode) {
           setNoteMode(false);
           setNotice("");
@@ -14133,8 +14194,8 @@ export function SketchForgeEditor({
           modifierActive={Boolean(edgeModifier)}
           modifierPreviewActive={Boolean(edgeModifier?.preview)}
           modifierEdges={edgeModifier?.faceDelete ? [] : edgeModifier?.edges.filter((edge) => modifierCandidateEdgeIds.includes(edge.id)) ?? []}
-          cadFacePick={edgeModifier?.faceDelete?.pick ?? null}
-          onCadFaceToggle={toggleDeleteFace}
+          cadFacePick={edgeModifier?.faceDelete?.pick ?? (edgeModifier ? null : surfaceCadFacePick)}
+          onCadFaceToggle={edgeModifier?.faceDelete ? toggleDeleteFace : toggleSurfaceFace}
           modifierOnlyVisibleEdges={Boolean(edgeModifier?.onlyVisibleEdges)}
           modifierFailedEdgeIds={edgeModifier?.failedEdgeIds ?? []}
           modifierHighlightedEdgeIds={modifierAvailableEdgeIds}

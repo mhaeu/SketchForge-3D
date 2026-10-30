@@ -2125,6 +2125,13 @@ export const MESSAGES_EN = {
   "inspector.surfaceMore": "More settings",
   "inspector.surfaceLess": "Fewer settings",
   "inspector.surfaceTextVertical": "Letters one below the other",
+  "status.surfaceFacesPick": "Click the faces that should get the pattern.",
+  "inspector.surfaceFacesAll": "The pattern goes on every face.",
+  "inspector.surfaceFacesSome": "Picked faces: {count}. Only they get the pattern.",
+  "inspector.surfaceFacesPick": "Pick faces",
+  "inspector.surfaceFacesDone": "Done picking",
+  "inspector.surfaceFacesClear": "Every face again",
+  "inspector.surfaceFacesPickHint": "Click the faces in the view that should get the pattern: the top, the bottom or a side. A second click takes a face out again. On a round body the mantle is one face.",
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_EN;

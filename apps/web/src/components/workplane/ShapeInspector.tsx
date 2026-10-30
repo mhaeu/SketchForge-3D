@@ -18,7 +18,7 @@ import {
   gridfinityWallThickness,
   normalizeGridfinityType,
 } from "@/lib/gridfinityGeometry";
-import { ChevronDown, ChevronUp, Eraser, ImageUp, Link2, LockKeyhole, LockKeyholeOpen, Split, Unlink2, Waves } from "lucide-react";
+import { ChevronDown, ChevronUp, Eraser, ImageUp, Link2, LockKeyhole, LockKeyholeOpen, MousePointerClick, RotateCcw, Split, Unlink2, Waves } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { ToolbarHideSelectedIcon } from "@/components/icons";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -47,6 +47,7 @@ import {
   SURFACE_TEXTURE_WOOD_CUTS,
   SURFACE_TEXTURE_WOOD_TYPES,
   surfaceTextureImageTile,
+  type SurfaceTextureFace,
   type SurfaceTextureMaskMode,
   type SurfaceTexturePattern,
   type SurfaceTextureSettings,
@@ -2968,6 +2969,10 @@ export type SurfaceTextureCardProps = {
   /** Auf oder zu, wie der Editor es haelt, damit der Knopf in der Werkzeugleiste dasselbe zeigt. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Flaechen per Klick in der Ansicht waehlen (die Klicks haelt der Editor): solange sind sie die Flaechen der Karte. */
+  facePicking?: boolean;
+  pickedFaces?: SurfaceTextureFace[] | null;
+  onFacePick?: (faces: SurfaceTextureFace[] | null, edgeAngle: number) => void;
 };
 
 function ToggleProperty({ label, value, disabled, onChange }: { label: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
@@ -3072,7 +3077,7 @@ function SurfaceTextureCard({
   card: SurfaceTextureCardProps;
   onInteractionActiveChange?: (active: boolean) => void;
 }) {
-  const { open, onOpenChange: setOpen, onApply, onRemove } = card;
+  const { open, onOpenChange: setOpen, onApply, onRemove, facePicking = false, pickedFaces = null, onFacePick } = card;
   // Geoeffnet, waehrend die Karte zu sehen ist (aus der Werkzeugleiste), kommt sie ins Bild.
   const cardRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(open);
@@ -3095,6 +3100,10 @@ function SurfaceTextureCard({
     setShownKey(appliedKey);
     if (applied) setSettings(normalizeSurfaceTexture(applied));
   }
+  // Jeder Klick in der Ansicht kommt als die bisher gewaehlten Flaechen zurueck.
+  useEffect(() => {
+    if (pickedFaces) setSettings((current) => normalizeSurfaceTexture({ ...current, faces: pickedFaces }));
+  }, [pickedFaces]);
   // Eine Struktur mit dem Koerper darunter zeigt ihre Einstellungen zum Aendern; eine ohne sagt nur, was sie ist.
   const changeable = Boolean(applied && onRemove && surfaceTextureEntry(shape));
   const off = disabled || busy;
@@ -3145,7 +3154,10 @@ function SurfaceTextureCard({
     }
   };
   const percent = (id: string, label: string, value: number, onChange: (value: number) => void) => range(id, label, Math.round(value * 100), [0, 100], 1, (share) => onChange(share / 100));
+  const picked = settings.faces.length > 0;
   const apply = async () => {
+    // Die gewaehlten Flaechen stehen schon in den Einstellungen; mit der Struktur endet das Waehlen.
+    if (facePicking) onFacePick?.(null, settings.edgeAngle);
     setBusy(true);
     try {
       await onApply(settings);
@@ -3314,6 +3326,37 @@ function SurfaceTextureCard({
               {!grain && !(wood && settings.woodCut !== "log") && (cracks || text || wood || settings.projection !== "allRound")
                 ? select("surfaceAxis", t("inspector.surfaceAxis"), settings.axis, SURFACE_TEXTURE_AXES, (value) => value.toUpperCase(), (axis) => set({ axis }))
                 : null}
+              {/* Wohin es kommt: auf jede Flaeche, oder nur auf die in der Ansicht angeklickten (eine Schrift geht, wohin sie gesetzt wird). */}
+              {text || !onFacePick ? null : (
+                <>
+                  {hint(picked ? t("inspector.surfaceFacesSome", { count: settings.faces.length }) : t("inspector.surfaceFacesAll"))}
+                  <button
+                    className={`inspector-action-button ${facePicking ? "active" : ""}`}
+                    type="button"
+                    aria-pressed={facePicking}
+                    disabled={off}
+                    onClick={() => onFacePick(facePicking ? null : settings.faces, settings.edgeAngle)}
+                  >
+                    <MousePointerClick size={17} strokeWidth={2.5} />
+                    <span>{t(facePicking ? "inspector.surfaceFacesDone" : "inspector.surfaceFacesPick")}</span>
+                  </button>
+                  {picked ? (
+                    <button
+                      className="inspector-action-button"
+                      type="button"
+                      disabled={off}
+                      onClick={() => {
+                        set({ faces: [] });
+                        if (facePicking) onFacePick([], settings.edgeAngle);
+                      }}
+                    >
+                      <RotateCcw size={17} strokeWidth={2.5} />
+                      <span>{t("inspector.surfaceFacesClear")}</span>
+                    </button>
+                  ) : null}
+                  {facePicking ? hint(t("inspector.surfaceFacesPickHint")) : null}
+                </>
+              )}
               <button className="surface-texture-more" type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((current) => !current)}>
                 <ChevronDown className={moreOpen ? "open" : ""} size={15} strokeWidth={2.6} />
                 <span>{t(moreOpen ? "inspector.surfaceLess" : "inspector.surfaceMore")}</span>
@@ -3388,12 +3431,17 @@ function SurfaceTextureCard({
                           {hint(t("inspector.surfaceFaceTurnHint"))}
                         </>
                       )}
-                      <ToggleProperty label={t("inspector.surfaceOutside")} value={settings.outside} disabled={off} onChange={(outside) => set({ outside })} />
-                      <ToggleProperty label={t("inspector.surfaceInside")} value={settings.inside} disabled={off} onChange={(inside) => set({ inside })} />
-                      {range("surfaceBottomFree", t("inspector.surfaceBottomFree"), settings.bottomFree, SURFACE_TEXTURE_LIMITS.bottomFree, 1, (bottomFree) => set({ bottomFree }))}
-                      {range("surfaceTopFree", t("inspector.surfaceTopFree"), settings.topFree, SURFACE_TEXTURE_LIMITS.topFree, 1, (topFree) => set({ topFree }))}
-                      {range("surfaceZoneFrom", t("inspector.surfaceZoneFrom"), settings.zoneFrom, SURFACE_TEXTURE_LIMITS.zoneFrom, 1, (zoneFrom) => set({ zoneFrom }))}
-                      {range("surfaceZoneTo", t("inspector.surfaceZoneTo"), settings.zoneTo, SURFACE_TEXTURE_LIMITS.zoneTo, 1, (zoneTo) => set({ zoneTo }))}
+                      {/* Gewaehlte Flaechen sagen, wohin es kommt: Waende, Ober- und Unterseite und der Hoehenbereich zaehlen dann nicht. */}
+                      {picked ? null : (
+                        <>
+                        <ToggleProperty label={t("inspector.surfaceOutside")} value={settings.outside} disabled={off} onChange={(outside) => set({ outside })} />
+                        <ToggleProperty label={t("inspector.surfaceInside")} value={settings.inside} disabled={off} onChange={(inside) => set({ inside })} />
+                        {range("surfaceBottomFree", t("inspector.surfaceBottomFree"), settings.bottomFree, SURFACE_TEXTURE_LIMITS.bottomFree, 1, (bottomFree) => set({ bottomFree }))}
+                        {range("surfaceTopFree", t("inspector.surfaceTopFree"), settings.topFree, SURFACE_TEXTURE_LIMITS.topFree, 1, (topFree) => set({ topFree }))}
+                        {range("surfaceZoneFrom", t("inspector.surfaceZoneFrom"), settings.zoneFrom, SURFACE_TEXTURE_LIMITS.zoneFrom, 1, (zoneFrom) => set({ zoneFrom }))}
+                        {range("surfaceZoneTo", t("inspector.surfaceZoneTo"), settings.zoneTo, SURFACE_TEXTURE_LIMITS.zoneTo, 1, (zoneTo) => set({ zoneTo }))}
+                        </>
+                      )}
                       <ToggleProperty label={t("inspector.surfaceKeepEdges")} value={settings.keepEdges} disabled={off} onChange={(keepEdges) => set({ keepEdges })} />
                     </>
                   )}

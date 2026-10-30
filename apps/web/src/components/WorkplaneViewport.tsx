@@ -6971,7 +6971,8 @@ export function WorkplaneViewport({
       clearMoveDimensions();
       const rect = state.renderer.domElement.getBoundingClientRect();
 
-      if (modifierActive && cadFacePickRef.current) {
+      // Flaechen waehlen: fuer "Fläche löschen" und fuer die Flaechen einer Oberflaechenstruktur.
+      if (cadFacePickRef.current) {
         event.preventDefault();
         const faceId = pickCadFace(state, cadFacePickRef.current, event.clientX, event.clientY);
         if (faceId !== null) onCadFaceToggle?.(faceId);
@@ -7423,7 +7424,7 @@ export function WorkplaneViewport({
         );
         return;
       }
-      if (modifierActiveRef.current && cadFacePickRef.current && threeRef.current) {
+      if (cadFacePickRef.current && threeRef.current) {
         const hovered = pickCadFace(threeRef.current, cadFacePickRef.current, event.clientX, event.clientY);
         if (hovered !== cadFaceHoverRef.current) {
           cadFaceHoverRef.current = hovered;

@@ -2124,4 +2124,11 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "inspector.surfaceMore": "Mehr Einstellungen",
   "inspector.surfaceLess": "Weniger Einstellungen",
   "inspector.surfaceTextVertical": "Buchstaben untereinander",
+  "status.surfaceFacesPick": "Klicke auf die Flächen, die das Muster bekommen sollen.",
+  "inspector.surfaceFacesAll": "Das Muster geht auf alle Flächen.",
+  "inspector.surfaceFacesSome": "Gewählte Flächen: {count}. Nur sie bekommen das Muster.",
+  "inspector.surfaceFacesPick": "Flächen anklicken",
+  "inspector.surfaceFacesDone": "Fertig mit Anklicken",
+  "inspector.surfaceFacesClear": "Wieder alle Flächen",
+  "inspector.surfaceFacesPickHint": "Klicke im Bild auf die Flächen, die das Muster bekommen sollen: Oberseite, Unterseite oder eine Seite. Ein zweiter Klick nimmt eine Fläche wieder heraus. Bei runden Körpern ist der Mantel eine Fläche.",
 };

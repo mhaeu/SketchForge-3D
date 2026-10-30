@@ -6681,12 +6681,25 @@ html[data-theme="dark"] .region-card-hint {
   margin: 0;
 }
 
+/* Waehrend Flaechen angeklickt werden, bleibt der Knopf gedrueckt. */
+.shape-inspector .surface-texture-body .inspector-action-button.active {
+  color: #0d7198;
+  background: #eaf7fb;
+  border-color: #0098c7;
+}
+
 html[data-theme="dark"] .check-property {
   color: #afc3d0;
 }
 
 html[data-theme="dark"] .surface-texture-hint {
   color: #8fa3b2;
+}
+
+html[data-theme="dark"] .shape-inspector .surface-texture-body .inspector-action-button.active {
+  color: #e0f2fa;
+  background: #1d303b;
+  border-color: #5cc6ea;
 }
 
 html[data-theme="dark"] .surface-texture-more {
