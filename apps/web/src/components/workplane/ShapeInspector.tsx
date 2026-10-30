@@ -18,11 +18,43 @@ import {
   gridfinityWallThickness,
   normalizeGridfinityType,
 } from "@/lib/gridfinityGeometry";
-import { ChevronDown, ChevronUp, Link2, LockKeyhole, LockKeyholeOpen, Split, Unlink2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Eraser, ImageUp, Link2, LockKeyhole, LockKeyholeOpen, Split, Unlink2, Waves } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { ToolbarHideSelectedIcon } from "@/components/icons";
 import { t, type MessageKey } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import {
+  normalizeSurfaceTexture,
+  SURFACE_TEXTURE_AXES,
+  SURFACE_TEXTURE_BARK_TYPES,
+  SURFACE_TEXTURE_BRICK_BONDS,
+  SURFACE_TEXTURE_CAP_EDGES,
+  SURFACE_TEXTURE_CAP_STYLES,
+  SURFACE_TEXTURE_CARBON_WEAVES,
+  SURFACE_TEXTURE_CRACK_STARTS,
+  SURFACE_TEXTURE_CRACK_STYLES,
+  SURFACE_TEXTURE_DEFAULTS,
+  SURFACE_TEXTURE_DETAILS,
+  SURFACE_TEXTURE_DIRECTIONS,
+  SURFACE_TEXTURE_IMAGES,
+  SURFACE_TEXTURE_LIMITS,
+  SURFACE_TEXTURE_MASK_MODES,
+  SURFACE_TEXTURE_PATTERNS,
+  SURFACE_TEXTURE_PROFILES,
+  SURFACE_TEXTURE_PROJECTIONS,
+  SURFACE_TEXTURE_STARTERS,
+  SURFACE_TEXTURE_TILINGS,
+  SURFACE_TEXTURE_WOOD_CUTS,
+  SURFACE_TEXTURE_WOOD_TYPES,
+  surfaceTextureImageTile,
+  type SurfaceTextureMaskMode,
+  type SurfaceTexturePattern,
+  type SurfaceTextureSettings,
+} from "@/lib/surfaceTexture";
+import { SURFACE_TEXTURE_OWN_IMAGE_SIZE, surfaceTextureOwnImage } from "@/lib/surfaceTextureImages";
+import { offersSurfaceTextureMask, SURFACE_TEXTURE_LABELS, surfacePatternLabel, surfaceTextureEntry } from "@/lib/surfaceTextureShape";
+import { BARK_STARTS, WOOD_RINGS } from "@/lib/surfaceTextureWood";
+import { SURFACE_TEXT_FONTS } from "@/lib/surfaceTextOutline";
 import {
   DEFAULT_GEAR_HELIX_ANGLE,
   DEFAULT_GEAR_HELIX_QUALITY,
@@ -1825,6 +1857,7 @@ export function ShapeInspector({
   onEditSketch,
   canSeparateParts = false,
   onSeparateParts,
+  surfaceTexture,
   onInteractionActiveChange,
   onSnapGridAwayChange,
   linkedAxes = NO_LINKED_RESIZE_AXES,
@@ -1859,6 +1892,8 @@ export function ShapeInspector({
   onEditSketch?: () => void;
   canSeparateParts?: boolean;
   onSeparateParts?: () => void;
+  /** Die Karte der Oberflaechenstruktur; nur fuer einen einzelnen Koerper gegeben. */
+  surfaceTexture?: SurfaceTextureCardProps;
   onInteractionActiveChange?: (active: boolean) => void;
   /**
    * Meldet, dass der Fangregler hier gerade nicht zu erreichen ist - dann
@@ -2514,6 +2549,37 @@ export function ShapeInspector({
           ) : null}
         </div>
       ) : null}
+      {/* Ein Schritt, den man nimmt: unter den Massen, nicht davor. */}
+      {surfaceTexture ? (
+        <SurfaceTextureCard
+          key={`surface-${shape.id}`}
+          shape={shape}
+          workspace={workspace}
+          disabled={locked}
+          card={surfaceTexture}
+          onInteractionActiveChange={onInteractionActiveChange}
+        />
+      ) : null}
+
+      {offersSurfaceTextureMask(shape) ? (
+        <div className="property-card">
+          <div className="property-list surface-texture-body">
+            <SelectProperty
+              type="select"
+              id="surfaceTextureMask"
+              label={t("inspector.surfaceMask")}
+              value={shape.surfaceTextureMask ?? "none"}
+              options={(["none", ...SURFACE_TEXTURE_MASK_MODES] as const).map((value) => ({ value, label: t(SURFACE_TEXTURE_LABELS.mask[value]) }))}
+              disabled={locked}
+              // Eine Maske ist eine Hilfe, durch die man hindurchschaut: Sie wird dabei durchsichtig.
+              onChange={(value) => onUpdate(value === "none"
+                ? { surfaceTextureMask: undefined }
+                : { surfaceTextureMask: value as SurfaceTextureMaskMode, opacity: Math.min(shape.opacity ?? 1, 0.4) })}
+            />
+            {shape.surfaceTextureMask ? <p className="surface-texture-hint">{t("inspector.surfaceMaskHint")}</p> : null}
+          </div>
+        </div>
+      ) : null}
       <div className="inspector-snap-dock">
         <SnapGridControl snap={snap} snapOpen={snapOpen} customGrids={workspace.customSnapGrids} onSnapChange={onSnapChange} onSnapOpenChange={onSnapOpenChange} />
       </div>
@@ -2891,6 +2957,468 @@ function SelectProperty({ label, value, options, disabled, onChange }: SelectPro
         ))}
       </select>
     </label>
+  );
+}
+
+/** Was die Karte der Oberflaechenstruktur vom Editor bekommt. */
+export type SurfaceTextureCardProps = {
+  onApply: (settings: SurfaceTextureSettings) => Promise<void> | void;
+  /** Nimmt die Struktur ab; da, solange der Koerper den darunter behaelt. */
+  onRemove?: () => void;
+  /** Auf oder zu, wie der Editor es haelt, damit der Knopf in der Werkzeugleiste dasselbe zeigt. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+function ToggleProperty({ label, value, disabled, onChange }: { label: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="check-property">
+      <input type="checkbox" checked={value} disabled={disabled} onChange={(event) => onChange(event.currentTarget.checked)} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+/** Eine Auswahl mit einer Zeile darunter, die die gewaehlte Moeglichkeit erklaert. */
+function HintedSelect({ hint, ...props }: SelectPropertyConfig & { disabled?: boolean; hint?: string }) {
+  return (
+    <>
+      <SelectProperty {...props} />
+      {hint ? <p className="surface-texture-hint">{hint}</p> : null}
+    </>
+  );
+}
+
+/** Die Formen einer Noppe, die halbe Kugel zuerst. */
+const BUMP_SHAPES = ["dome", "pointed", "round", "flat"] as const;
+
+/** Wie Abstand und Breite heissen, wo sie etwas anderes meinen als bei einer Rille. */
+const SURFACE_SPACING_LABEL: Partial<Record<SurfaceTexturePattern, MessageKey>> = {
+  cells: "inspector.surfaceSpacingCells",
+  bricks: "inspector.surfaceSpacingBricks",
+  knit: "inspector.surfaceSpacingKnit",
+  rope: "inspector.surfaceSpacingRope",
+  weave: "inspector.surfaceSpacingWeave",
+  carbon: "inspector.surfaceSpacingCarbon",
+  bark: "inspector.surfaceSpacingBark",
+  grain: "inspector.surfaceSpacingGrain",
+  image: "inspector.surfaceSpacingImage",
+};
+const SURFACE_COVERAGE_LABEL: Partial<Record<SurfaceTexturePattern, MessageKey>> = {
+  cells: "inspector.surfaceCoverageCells",
+  knit: "inspector.surfaceCoverageKnit",
+  rope: "inspector.surfaceCoverageRope",
+  weave: "inspector.surfaceCoverageWeave",
+  carbon: "inspector.surfaceCoverageCarbon",
+};
+
+/**
+ * Die Einstellungen, wenn ein anderes Muster gewaehlt wird. Ein Muster mit
+ * eigenen Startwerten bekommt sie, und wer es verlaesst, gibt dem naechsten
+ * die einfachen Vorgaben zurueck - die 5 mm einer Masche werden so nicht zum
+ * Abstand einer Raendelung. Noppen beginnen als halbe Kugeln.
+ */
+function surfaceSettingsForPattern(current: SurfaceTextureSettings, pattern: SurfaceTexturePattern): Partial<SurfaceTextureSettings> {
+  const leaving = current.pattern === "bumps" ? null : SURFACE_TEXTURE_STARTERS[current.pattern];
+  // Eine Rinde bringt Groesse und Tiefe mit: Wer sie verlaesst, gibt auch die zurueck.
+  const leavingKeys = [...Object.keys(leaving ?? {}), ...(current.pattern === "bark" ? ["spacing", "depth"] : [])];
+  const reset = Object.fromEntries(leavingKeys.map((key) => [key, SURFACE_TEXTURE_DEFAULTS[key as keyof SurfaceTextureSettings]]));
+  const starter = pattern === "bumps" ? (current.profile === "pointed" ? { profile: "dome" as const } : {}) : SURFACE_TEXTURE_STARTERS[pattern] ?? {};
+  const tile = pattern === "image" ? { spacing: surfaceTextureImageTile(current.image), tileHeight: 0 } : {};
+  const own = pattern === "bark" ? { spacing: BARK_STARTS[current.barkType].spacing, depth: BARK_STARTS[current.barkType].depth } : pattern === "wood" ? { ringWidth: WOOD_RINGS[current.woodType] } : {};
+  return { ...reset, ...starter, ...tile, ...own, pattern };
+}
+
+/** Eine Bilddatei als eigenes Bild fuer die Struktur: klein gezeichnet (SURFACE_TEXTURE_OWN_IMAGE_SIZE) und grau. */
+async function surfaceImageFromFile(file: File) {
+  const url = URL.createObjectURL(file);
+  try {
+    const picture = new Image();
+    picture.src = url;
+    await picture.decode();
+    // Eine Zeichnung ohne eigene Groesse (ein SVG) wird so gross gezeichnet, wie das Bild sein darf.
+    const width = picture.naturalWidth || SURFACE_TEXTURE_OWN_IMAGE_SIZE, height = picture.naturalHeight || SURFACE_TEXTURE_OWN_IMAGE_SIZE;
+    const scale = Math.min(1, SURFACE_TEXTURE_OWN_IMAGE_SIZE / Math.max(width, height));
+    const w = Math.max(2, Math.round(width * scale)), h = Math.max(2, Math.round(height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("no canvas");
+    context.drawImage(picture, 0, 0, w, h);
+    return surfaceTextureOwnImage(context.getImageData(0, 0, w, h).data, w, h);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Eine Oberflaechenstruktur auf diesem Koerper: das Muster, wohin es kommt,
+ * und der Knopf. Zugeklappt, bis man sie braucht. Die Karte behaelt ihre
+ * Einstellungen ueber ein Zuruecknehmen hinweg, damit der naechste Versuch
+ * vom letzten ausgeht. Nach layerling 1.121.1, ohne das Waehlen einzelner
+ * Flaechen per Klick.
+ */
+function SurfaceTextureCard({
+  shape,
+  workspace,
+  disabled,
+  card,
+  onInteractionActiveChange,
+}: {
+  shape: WorkplaneShape;
+  workspace: WorkplaneWorkspaceSettings;
+  disabled: boolean;
+  card: SurfaceTextureCardProps;
+  onInteractionActiveChange?: (active: boolean) => void;
+}) {
+  const { open, onOpenChange: setOpen, onApply, onRemove } = card;
+  // Geoeffnet, waehrend die Karte zu sehen ist (aus der Werkzeugleiste), kommt sie ins Bild.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (open && !wasOpen.current) cardRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    wasOpen.current = open;
+  }, [open]);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [settings, setSettings] = useState(() => normalizeSurfaceTexture(shape.surfaceTexture ?? {}));
+  const set = (patch: Partial<SurfaceTextureSettings>) => setSettings((current) => normalizeSurfaceTexture({ ...current, ...patch }));
+  const applied = shape.surfaceTexture;
+  // Eine anderswo gemachte oder geaenderte Struktur (vom Assistenten, durch Wiederholen, in einem wieder
+  // geoeffneten Projekt) zeigt ihre eigenen Einstellungen; eine abgenommene laesst die Karte, wie sie war.
+  const appliedKey = applied
+    ? JSON.stringify({ ...applied, masks: applied.masks.length, textOutline: applied.textOutline.length, imageOwn: applied.imageOwn ? applied.imageOwn.data.length : 0 })
+    : "";
+  const [shownKey, setShownKey] = useState(appliedKey);
+  if (appliedKey !== shownKey) {
+    setShownKey(appliedKey);
+    if (applied) setSettings(normalizeSurfaceTexture(applied));
+  }
+  // Eine Struktur mit dem Koerper darunter zeigt ihre Einstellungen zum Aendern; eine ohne sagt nur, was sie ist.
+  const changeable = Boolean(applied && onRemove && surfaceTextureEntry(shape));
+  const off = disabled || busy;
+  const options = <T extends string>(values: readonly T[], label: (value: T) => string) => values.map((value) => ({ value, label: label(value) }));
+  const range = (id: string, label: string, value: number, [min, max]: readonly [number, number], step: number, onChange: (value: number) => void) => (
+    <RangeProperty
+      id={id}
+      label={label}
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      workspace={workspace}
+      disabled={off}
+      onChange={onChange}
+      onInteractionActiveChange={onInteractionActiveChange}
+    />
+  );
+  const select = <T extends string>(id: string, label: string, value: T, values: readonly T[], labelOf: (value: T) => string, onChange: (value: T) => void, hint?: string) => (
+    <HintedSelect type="select" id={id} label={label} value={value} options={options(values, labelOf)} hint={hint} disabled={off} onChange={(next) => onChange(next as T)} />
+  );
+  const hint = (text: string) => <p className="surface-texture-hint">{text}</p>;
+  const L = SURFACE_TEXTURE_LABELS;
+  const striped = settings.pattern === "grooves" || settings.pattern === "knurl";
+  const cracks = settings.pattern === "cracks";
+  const carbon = settings.pattern === "carbon";
+  const bricks = settings.pattern === "bricks";
+  const bark = settings.pattern === "bark";
+  const wood = settings.pattern === "wood";
+  const endRings = settings.topFree === 0 && settings.bottomFree === 0;
+  // Rillen, Seil und Strick koennen oben in Ringen liegen (siehe SurfaceTextureSettings.capStyle).
+  const ringPattern = settings.pattern === "grooves" || settings.pattern === "rope" || settings.pattern === "knit";
+  // Ueber den Rand laufen oder umschlagen geht nur mit denen: bei den anderen zeigt die Wahl "automatisch".
+  const capEdgeShown = !ringPattern && (settings.capEdge === "over" || settings.capEdge === "fold") ? "auto" : settings.capEdge;
+  const grain = settings.pattern === "grain";
+  const image = settings.pattern === "image";
+  const text = settings.pattern === "text";
+  const imageInput = useRef<HTMLInputElement>(null);
+  const [imageError, setImageError] = useState("");
+  const loadImage = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const imageOwn = await surfaceImageFromFile(file);
+      setImageError("");
+      set({ image: "own", imageOwn, tileHeight: 0 });
+    } catch (error) {
+      setImageError(t("status.surfaceImageFailed", { error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+  const percent = (id: string, label: string, value: number, onChange: (value: number) => void) => range(id, label, Math.round(value * 100), [0, 100], 1, (share) => onChange(share / 100));
+  const apply = async () => {
+    setBusy(true);
+    try {
+      await onApply(settings);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={`property-card ${open ? "" : "collapsed"}`} ref={cardRef}>
+      <button
+        className="property-card-header"
+        type="button"
+        aria-expanded={open}
+        aria-controls={`surface-texture-${shape.id}`}
+        onClick={() => setOpen(!open)}
+      >
+        <span>{t("inspector.surfaceTexture")}</span>
+        <ChevronUp className={open ? "" : "collapsed"} size={25} strokeWidth={2.8} />
+      </button>
+      {open ? (
+        <div className="property-list surface-texture-body" id={`surface-texture-${shape.id}`}>
+          {applied && !changeable ? (
+            hint(t("inspector.surfaceApplied", { pattern: surfacePatternLabel(applied.pattern) }))
+          ) : (
+            <>
+              {select("surfacePattern", t("inspector.surfacePattern"), settings.pattern, SURFACE_TEXTURE_PATTERNS, (value) => t(L.pattern[value]), (value) => set(surfaceSettingsForPattern(settings, value)))}
+              {cracks ? (
+                <>
+                  {select("surfaceCrackStyle", t("inspector.surfaceCrackStyle"), settings.crackStyle, SURFACE_TEXTURE_CRACK_STYLES, (value) => t(L.crackStyle[value]), (crackStyle) => set({ crackStyle }))}
+                  {select("surfaceCrackStart", t("inspector.surfaceCrackStart"), settings.crackStart, SURFACE_TEXTURE_CRACK_STARTS, (value) => t(L.crackStart[value]), (crackStart) => set({ crackStart }))}
+                  {range("surfaceCrackCount", t("inspector.surfaceCrackCount"), settings.crackCount, [1, SURFACE_TEXTURE_LIMITS.crackCount[1]], 1, (crackCount) => set({ crackCount }))}
+                  {range("surfaceCrackLength", t("inspector.surfaceCrackLength"), settings.crackLength, [SURFACE_TEXTURE_LIMITS.crackLength[0], 150], 1, (crackLength) => set({ crackLength }))}
+                  {range("surfaceCrackWidth", t("inspector.surfaceCrackWidth"), settings.crackWidth, SURFACE_TEXTURE_LIMITS.crackWidth, 0.1, (crackWidth) => set({ crackWidth }))}
+                </>
+              ) : text ? (
+                <>
+                  <label className="text-property">
+                    <span>{t("inspector.surfaceTextContent")}</span>
+                    <input
+                      type="text"
+                      value={settings.textContent}
+                      maxLength={200}
+                      disabled={off}
+                      spellCheck={false}
+                      onFocus={() => onInteractionActiveChange?.(true)}
+                      onBlur={() => onInteractionActiveChange?.(false)}
+                      onChange={(event) => set({ textContent: event.currentTarget.value })}
+                    />
+                  </label>
+                  {select("surfaceTextFont", t("prop.font"), settings.textFont, SURFACE_TEXT_FONTS, (value) => value, (textFont) => set({ textFont }))}
+                  <ToggleProperty label={t("inspector.surfaceTextVertical")} value={settings.textVertical} disabled={off} onChange={(textVertical) => set({ textVertical })} />
+                  {range("surfaceTextSize", t("inspector.surfaceTextSize"), settings.textSize, [SURFACE_TEXTURE_LIMITS.textSize[0], 60], 0.5, (textSize) => set({ textSize }))}
+                  {range("surfaceTextAround", t("inspector.surfaceTextAround"), settings.textAround, SURFACE_TEXTURE_LIMITS.textAround, 1, (textAround) => set({ textAround }))}
+                  {range("surfaceTextHeight", t("inspector.surfaceTextHeight"), settings.textHeight, SURFACE_TEXTURE_LIMITS.textHeight, 1, (textHeight) => set({ textHeight }))}
+                  {range("surfaceTextTurn", t("inspector.surfaceTextTurn"), settings.textTurn, SURFACE_TEXTURE_LIMITS.textTurn, 1, (textTurn) => set({ textTurn }))}
+                  {hint(t("inspector.surfaceTextHint"))}
+                </>
+              ) : (
+                <>
+                  {image ? (
+                    <>
+                      {select(
+                        "surfaceImage",
+                        t("inspector.surfaceImage"),
+                        settings.image,
+                        // Das eigene Bild steht zur Wahl, sobald eines geladen ist.
+                        SURFACE_TEXTURE_IMAGES.filter((value) => value !== "own" || settings.imageOwn),
+                        (value) => t(L.image[value]),
+                        (next) => set({ image: next, spacing: surfaceTextureImageTile(next), tileHeight: 0 }),
+                      )}
+                      <input
+                        ref={imageInput}
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        onChange={(event) => {
+                          void loadImage(event.target.files?.[0]);
+                          event.target.value = "";
+                        }}
+                      />
+                      <button className="inspector-action-button" type="button" disabled={off} onClick={() => imageInput.current?.click()}>
+                        <ImageUp size={17} strokeWidth={2.5} />
+                        <span>{t("inspector.surfaceImageLoad")}</span>
+                      </button>
+                      {imageError ? hint(imageError) : null}
+                    </>
+                  ) : null}
+                  {carbon ? select("surfaceCarbonWeave", t("inspector.surfaceCarbonWeave"), settings.carbonWeave, SURFACE_TEXTURE_CARBON_WEAVES, (value) => t(L.carbonWeave[value]), (carbonWeave) => set({ carbonWeave }), t(L.carbonWeaveHint[settings.carbonWeave])) : null}
+                  {bricks ? select("surfaceBrickBond", t("inspector.surfaceBrickBond"), settings.brickBond, SURFACE_TEXTURE_BRICK_BONDS, (value) => t(L.brickBond[value]), (brickBond) => set({ brickBond }), t(L.brickBondHint[settings.brickBond])) : null}
+                  {bark
+                    ? select("surfaceBarkType", t("inspector.surfaceBarkType"), settings.barkType, SURFACE_TEXTURE_BARK_TYPES, (value) => t(L.barkType[value]), (barkType) => set({ barkType, spacing: BARK_STARTS[barkType].spacing, depth: BARK_STARTS[barkType].depth }), t(L.barkTypeHint[settings.barkType]))
+                    : null}
+                  {wood ? (
+                    <>
+                      {select("surfaceWoodType", t("inspector.surfaceWoodType"), settings.woodType, SURFACE_TEXTURE_WOOD_TYPES, (value) => t(L.woodType[value]), (woodType) => set({ woodType, ringWidth: WOOD_RINGS[woodType] }))}
+                      {select("surfaceWoodCut", t("inspector.surfaceWoodCut"), settings.woodCut, SURFACE_TEXTURE_WOOD_CUTS, (value) => t(L.woodCut[value]), (woodCut) => set({ woodCut }), t(L.woodCutHint[settings.woodCut]))}
+                    </>
+                  ) : (
+                    range(
+                      "surfaceSpacing",
+                      t(SURFACE_SPACING_LABEL[settings.pattern] ?? "inspector.surfaceSpacing"),
+                      settings.spacing,
+                      [SURFACE_TEXTURE_LIMITS.spacing[0], image ? SURFACE_TEXTURE_LIMITS.spacing[1] : 50],
+                      0.1,
+                      (spacing) => set({ spacing }),
+                    )
+                  )}
+                  {bark || wood ? (
+                    <>
+                      <ToggleProperty
+                        label={t("inspector.surfaceEndRings")}
+                        value={endRings}
+                        disabled={off}
+                        onChange={(on) => set({ topFree: on ? 0 : SURFACE_TEXTURE_DEFAULTS.topFree, bottomFree: on ? 0 : SURFACE_TEXTURE_DEFAULTS.bottomFree })}
+                      />
+                      {wood || endRings ? range("surfaceRingWidth", t("inspector.surfaceRingWidth"), settings.ringWidth, [SURFACE_TEXTURE_LIMITS.ringWidth[0], 10], 0.1, (ringWidth) => set({ ringWidth })) : null}
+                    </>
+                  ) : null}
+                  {image ? (
+                    <>
+                      {range("surfaceTileHeight", t("inspector.surfaceTileHeight"), settings.tileHeight, SURFACE_TEXTURE_LIMITS.tileHeight, 0.5, (tileHeight) => set({ tileHeight }))}
+                      {select("surfaceImageTiling", t("inspector.surfaceImageTiling"), settings.imageTiling, SURFACE_TEXTURE_TILINGS, (value) => t(L.tiling[value]), (imageTiling) => set({ imageTiling }))}
+                      <ToggleProperty label={t("inspector.surfaceImageInvert")} value={settings.imageInvert} disabled={off} onChange={(imageInvert) => set({ imageInvert })} />
+                      {hint(t("inspector.surfaceImageHint"))}
+                    </>
+                  ) : null}
+                  {carbon ? (
+                    <>
+                      {range("surfaceCarbonCross", t("inspector.surfaceCarbonCross"), settings.carbonCross, [SURFACE_TEXTURE_LIMITS.carbonCross[0], 10], 0.1, (carbonCross) => set({ carbonCross }))}
+                      {hint(t("inspector.surfaceCarbonHint"))}
+                    </>
+                  ) : null}
+                  {bricks ? (
+                    <>
+                      {range("surfaceBrickHeight", t("inspector.surfaceBrickHeight"), settings.brickHeight, [SURFACE_TEXTURE_LIMITS.brickHeight[0], 30], 0.1, (brickHeight) => set({ brickHeight }))}
+                      {range("surfaceBrickJoint", t("inspector.surfaceBrickJoint"), settings.brickJoint, [SURFACE_TEXTURE_LIMITS.brickJoint[0], 5], 0.05, (brickJoint) => set({ brickJoint }))}
+                      {hint(t("inspector.surfaceBrickHint"))}
+                    </>
+                  ) : null}
+                  {settings.pattern === "cells" || grain ? (
+                    <>
+                      {range("surfaceSeed", t("inspector.surfaceSeed"), settings.seed, [1, 999], 1, (seed) => set({ seed }))}
+                      {hint(t("inspector.surfaceSeedHint"))}
+                    </>
+                  ) : null}
+                </>
+              )}
+              {settings.pattern === "bumps" ? select("surfaceBumpShape", t("inspector.surfaceBumpShape"), settings.profile, BUMP_SHAPES, (value) => t(L.bumpShape[value]), (profile) => set({ profile })) : null}
+              {range("surfaceDepth", t("inspector.surfaceDepth"), settings.depth, SURFACE_TEXTURE_LIMITS.depth, 0.05, (depth) => set({ depth }))}
+              {select("surfaceDirection", t("inspector.surfaceDirection"), settings.direction, SURFACE_TEXTURE_DIRECTIONS, (value) => t(L.direction[value]), (direction) => set({ direction }))}
+              {cracks ? (
+                <>
+                  {/* Das Gold: ein eigenes Teil in der Kerbe, fuer ein zweites Filament. */}
+                  <ToggleProperty label={t("inspector.surfaceCrackGold")} value={settings.crackGold} disabled={off} onChange={(crackGold) => set({ crackGold, ...(crackGold ? { direction: "inward" as const } : {}) })} />
+                  {settings.crackGold ? range("surfaceCrackRecess", t("inspector.surfaceCrackRecess"), settings.crackRecess, SURFACE_TEXTURE_LIMITS.crackRecess, 0.05, (crackRecess) => set({ crackRecess })) : null}
+                  {settings.crackGold ? hint(t("inspector.surfaceCrackGoldHint")) : null}
+                </>
+              ) : text ? null : grain ? (
+                hint(t("inspector.surfaceGrainHint"))
+              ) : wood ? (
+                hint(t("inspector.surfaceWoodHint"))
+              ) : (
+                select("surfaceProjection", t("inspector.surfaceProjection"), settings.projection, SURFACE_TEXTURE_PROJECTIONS, (value) => t(L.projection[value]), (projection) => set({ projection }), t(L.projectionHint[settings.projection]))
+              )}
+              {/* Die Markroehre eines Bretts laeuft an seiner laengsten Seite: Nur ein Stamm fragt nach seiner Achse. */}
+              {!grain && !(wood && settings.woodCut !== "log") && (cracks || text || wood || settings.projection !== "allRound")
+                ? select("surfaceAxis", t("inspector.surfaceAxis"), settings.axis, SURFACE_TEXTURE_AXES, (value) => value.toUpperCase(), (axis) => set({ axis }))
+                : null}
+              <button className="surface-texture-more" type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((current) => !current)}>
+                <ChevronDown className={moreOpen ? "open" : ""} size={15} strokeWidth={2.6} />
+                <span>{t(moreOpen ? "inspector.surfaceLess" : "inspector.surfaceMore")}</span>
+              </button>
+              {moreOpen ? (
+                <>
+                  {cracks ? (
+                    <>
+                      {percent("surfaceCrackBranch", t("inspector.surfaceCrackBranch"), settings.crackBranch, (crackBranch) => set({ crackBranch }))}
+                      {percent("surfaceCrackJag", t("inspector.surfaceCrackJag"), settings.crackJag, (crackJag) => set({ crackJag }))}
+                      {percent("surfaceCrackRough", t("inspector.surfaceCrackRough"), settings.crackRough, (crackRough) => set({ crackRough }))}
+                      {range("surfaceCrackSeed", t("inspector.surfaceCrackSeed"), settings.crackSeed, [0, 999], 1, (crackSeed) => set({ crackSeed }))}
+                      {hint(t("inspector.surfaceCrackSeedHint"))}
+                    </>
+                  ) : bark || wood ? (
+                    <>
+                      {wood ? range("surfaceWoodKnots", t("inspector.surfaceWoodKnots"), settings.woodKnots, SURFACE_TEXTURE_LIMITS.woodKnots, 1, (woodKnots) => set({ woodKnots })) : null}
+                      {wood ? percent("surfaceWoodWobble", t("inspector.surfaceWoodWobble"), settings.woodWobble, (woodWobble) => set({ woodWobble })) : null}
+                      {range("surfaceSeed", t("inspector.surfaceSeed"), settings.seed, [1, 999], 1, (seed) => set({ seed }))}
+                      {hint(t(wood ? "inspector.surfaceWoodSeedHint" : "inspector.surfaceBarkSeedHint"))}
+                    </>
+                  ) : text || grain ? null : image ? (
+                    <>
+                      {range("surfaceImageTurn", t("inspector.surfaceImageTurn"), settings.imageTurn, SURFACE_TEXTURE_LIMITS.imageTurn, 1, (imageTurn) => set({ imageTurn }))}
+                      {range("surfaceImageBlur", t("inspector.surfaceImageBlur"), settings.imageBlur, SURFACE_TEXTURE_LIMITS.imageBlur, 1, (imageBlur) => set({ imageBlur }))}
+                    </>
+                  ) : bricks ? (
+                    <>
+                      {percent("surfaceBrickVary", t("inspector.surfaceBrickVary"), settings.brickVary, (brickVary) => set({ brickVary }))}
+                      {settings.brickVary > 0 ? (
+                        <>
+                          {range("surfaceSeed", t("inspector.surfaceSeed"), settings.seed, [1, 999], 1, (seed) => set({ seed }))}
+                          {hint(t("inspector.surfaceBrickVaryHint"))}
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    range(
+                      "surfaceCoverage",
+                      t(SURFACE_COVERAGE_LABEL[settings.pattern] ?? "inspector.surfaceCoverage"),
+                      Math.round(settings.width * 100),
+                      [SURFACE_TEXTURE_LIMITS.width[0] * 100, 100],
+                      1,
+                      (share) => set({ width: share / 100 }),
+                    )
+                  )}
+                  {text ? null : (
+                    <>
+                      {settings.pattern === "bumps" || grain || image || bark || wood
+                        ? null
+                        : select("surfaceProfile", t("inspector.surfaceProfile"), settings.profile, SURFACE_TEXTURE_PROFILES, (value) => t(L.profile[value]), (profile) => set({ profile }))}
+                      {striped ? range("surfaceAngle", t("inspector.surfaceAngle"), settings.angle, SURFACE_TEXTURE_LIMITS.angle, 1, (angle) => set({ angle })) : null}
+                      {/* Oben und unten: Rillen, Seil und Strick in Reihen oder Ringen. */}
+                      {ringPattern && settings.projection !== "allRound" && settings.projection !== "flat"
+                        ? select("surfaceCapStyle", t("inspector.surfaceCapStyle"), settings.capStyle, SURFACE_TEXTURE_CAP_STYLES, (value) => t(L.capStyle[value]), (capStyle) => set({ capStyle }), t("inspector.surfaceCapStyleHint"))
+                        : null}
+                      {/* Wo die Seite auf eine gemusterte Ober- oder Unterseite trifft. */}
+                      {settings.projection !== "allRound" && settings.projection !== "flat" && !grain && !cracks && !wood
+                        ? select(
+                          "surfaceCapEdge",
+                          t("inspector.surfaceCapEdge"),
+                          capEdgeShown,
+                          SURFACE_TEXTURE_CAP_EDGES.filter((value) => ringPattern || (value !== "over" && value !== "fold")),
+                          (value) => t(L.capEdge[value]),
+                          (capEdge) => set({ capEdge }),
+                          t(L.capEdgeHint[capEdgeShown]),
+                        )
+                        : null}
+                      {grain || cracks || bricks || wood || bark ? null : (
+                        <>
+                          {range("surfaceFaceTurn", t("inspector.surfaceFaceTurn"), settings.faceTurn, SURFACE_TEXTURE_LIMITS.faceTurn, 1, (faceTurn) => set({ faceTurn }))}
+                          {hint(t("inspector.surfaceFaceTurnHint"))}
+                        </>
+                      )}
+                      <ToggleProperty label={t("inspector.surfaceOutside")} value={settings.outside} disabled={off} onChange={(outside) => set({ outside })} />
+                      <ToggleProperty label={t("inspector.surfaceInside")} value={settings.inside} disabled={off} onChange={(inside) => set({ inside })} />
+                      {range("surfaceBottomFree", t("inspector.surfaceBottomFree"), settings.bottomFree, SURFACE_TEXTURE_LIMITS.bottomFree, 1, (bottomFree) => set({ bottomFree }))}
+                      {range("surfaceTopFree", t("inspector.surfaceTopFree"), settings.topFree, SURFACE_TEXTURE_LIMITS.topFree, 1, (topFree) => set({ topFree }))}
+                      {range("surfaceZoneFrom", t("inspector.surfaceZoneFrom"), settings.zoneFrom, SURFACE_TEXTURE_LIMITS.zoneFrom, 1, (zoneFrom) => set({ zoneFrom }))}
+                      {range("surfaceZoneTo", t("inspector.surfaceZoneTo"), settings.zoneTo, SURFACE_TEXTURE_LIMITS.zoneTo, 1, (zoneTo) => set({ zoneTo }))}
+                      <ToggleProperty label={t("inspector.surfaceKeepEdges")} value={settings.keepEdges} disabled={off} onChange={(keepEdges) => set({ keepEdges })} />
+                    </>
+                  )}
+                  {range("surfaceFade", t("inspector.surfaceFade"), settings.fade, SURFACE_TEXTURE_LIMITS.fade, 0.1, (fade) => set({ fade }))}
+                  {hint(t("inspector.surfaceFadeHint"))}
+                  {select("surfaceDetail", t("inspector.surfaceDetail"), settings.detail, SURFACE_TEXTURE_DETAILS, (value) => t(L.detail[value]), (detail) => set({ detail }))}
+                  {hint(t("inspector.surfaceMaskTip"))}
+                </>
+              ) : null}
+              {hint(applied ? t("inspector.surfaceChangeHint", { pattern: surfacePatternLabel(applied.pattern) }) : t("inspector.surfaceHint"))}
+              <button className="inspector-action-button" type="button" disabled={off} onClick={apply}>
+                <Waves size={17} strokeWidth={2.5} />
+                <span>{t(busy ? "inspector.surfaceWorking" : applied ? "inspector.surfaceChange" : "inspector.surfaceApply")}</span>
+              </button>
+              {applied ? (
+                <button className="inspector-action-button" type="button" disabled={off} onClick={onRemove}>
+                  <Eraser size={17} strokeWidth={2.5} />
+                  <span>{t("inspector.surfaceRemove")}</span>
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

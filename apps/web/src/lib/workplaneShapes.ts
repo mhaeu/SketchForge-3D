@@ -824,6 +824,10 @@ export function workplaneShapesEqual(a: WorkplaneShape, b: WorkplaneShape) {
     a.sketchRevolve === b.sketchRevolve &&
     a.edgeTreatments === b.edgeTreatments &&
     a.edgeTreatmentHistory === b.edgeTreatmentHistory &&
+    // Nach Inhalt: Aus dem Speicher geladen ist es ein neues Objekt mit denselben Einstellungen.
+    (a.surfaceTexture === b.surfaceTexture || JSON.stringify(a.surfaceTexture ?? null) === JSON.stringify(b.surfaceTexture ?? null)) &&
+    a.surfaceTextureMask === b.surfaceTextureMask &&
+    a.surfaceFillOf === b.surfaceFillOf &&
     a.cadDisplayEdges === b.cadDisplayEdges &&
     a.cadDisplayEdgesVersion === b.cadDisplayEdgesVersion &&
     a.edgeResizeMode === b.edgeResizeMode &&

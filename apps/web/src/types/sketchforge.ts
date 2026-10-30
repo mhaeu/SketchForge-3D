@@ -350,7 +350,12 @@ export type SketchRevolveSettings = {
 };
 
 export type EdgeTreatmentFeature = {
-  kind: "fillet" | "chamfer" | "variableFillet";
+  /**
+   * "surfaceTexture" legt ein Relief auf den Koerper: `amount` ist seine
+   * Tiefe, und der Eintrag haelt den Koerper darunter fest, damit sich die
+   * Struktur aendern oder abnehmen laesst.
+   */
+  kind: "fillet" | "chamfer" | "variableFillet" | "surfaceTexture";
   amount: number;
   edgeCount: number;
   chamferAngle?: number;
@@ -369,6 +374,8 @@ export type EdgeTreatmentFeature = {
    * nach deren Zuruecknahme er genau der von vorher ist.
    */
   edgeIds?: number[];
+  /** Nur bei "surfaceTexture": die Einstellungen, mit denen sie gemacht wurde. */
+  surfaceTexture?: import("@/lib/surfaceTexture").SurfaceTextureSettings;
 };
 
 export type EdgeTreatmentHistoryEntry = {
@@ -720,6 +727,20 @@ export type WorkplaneShape = {
   markerRadius?: number;
   edgeTreatments?: EdgeTreatmentFeature[];
   edgeTreatmentHistory?: EdgeTreatmentHistoryEntry[];
+  /**
+   * An einem Koerper, den eine Oberflaechenstruktur gemacht hat (Rillen,
+   * Raendel, Waben, Noppen ...): mit welchen Einstellungen. Der Koerper
+   * darunter steht im letzten Eintrag von `edgeTreatmentHistory`.
+   */
+  surfaceTexture?: import("@/lib/surfaceTexture").SurfaceTextureSettings;
+  /**
+   * Ein Hilfskoerper fuer die Struktur eines anderen: Wo dieser konvexe
+   * Koerper hineinreicht, bleibt die Struktur weg ("exclude") oder kommt nur
+   * dorthin ("only").
+   */
+  surfaceTextureMask?: import("@/lib/surfaceTexture").SurfaceTextureMaskMode;
+  /** Das Gold in den Rissen dieses strukturierten Koerpers: Es geht mit, wenn die Struktur neu gemacht oder abgenommen wird. */
+  surfaceFillOf?: string;
   cadDisplayEdges?: CadDisplayEdge[];
   cadDisplayEdgesVersion?: 2;
   edgeResizeMode?: "scale" | "preserve";

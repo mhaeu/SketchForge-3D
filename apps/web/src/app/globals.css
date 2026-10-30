@@ -6624,6 +6624,75 @@ html[data-theme="dark"] .region-card-hint {
   font-weight: 650;
 }
 
+/* Oberflaechenstruktur im Eigenschaftenfeld: Schalter, Erklaerzeilen, "Mehr Einstellungen". */
+.check-property {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #637286;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.check-property input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0098c7;
+  cursor: pointer;
+}
+
+.check-property input:disabled {
+  cursor: default;
+}
+
+.surface-texture-hint {
+  margin: -6px 0 0;
+  color: #7a8899;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.surface-texture-more {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  padding: 2px 0;
+  color: #0d7198;
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.surface-texture-more svg {
+  transition: transform 0.15s ease;
+}
+
+.surface-texture-more svg.open {
+  transform: rotate(180deg);
+}
+
+.shape-inspector .surface-texture-body .inspector-action-button {
+  width: 100%;
+  margin: 0;
+}
+
+html[data-theme="dark"] .check-property {
+  color: #afc3d0;
+}
+
+html[data-theme="dark"] .surface-texture-hint {
+  color: #8fa3b2;
+}
+
+html[data-theme="dark"] .surface-texture-more {
+  color: #5cc6ea;
+}
+
 .select-property {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);

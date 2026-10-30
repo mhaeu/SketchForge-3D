@@ -176,6 +176,16 @@ export function ToolbarDeleteFaceIcon(props: IconProps) {
   );
 }
 
+/** Oberflaechenstruktur: ein Block, dessen Oberseite in Wellen laeuft, und darunter noch eine Welle. Nach layerling. */
+export function ToolbarSurfaceTextureIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" {...props}>
+      <path d="M8 40V22c2.7-4.5 5.3-4.5 8 0s5.3 4.5 8 0 5.3-4.5 8 0 5.3 4.5 8 0v18Z" fill="currentColor" fillOpacity="0.22" />
+      <path d="M8 31c2.7-4.5 5.3-4.5 8 0s5.3 4.5 8 0 5.3-4.5 8 0 5.3 4.5 8 0" strokeWidth="1.6" opacity="0.7" />
+    </svg>
+  );
+}
+
 /** Ausschneiden: ein Block mit einer Kerbe oben und daneben gestrichelt das Teil, das hineinpasst. */
 export function ToolbarCutOutIcon(props: IconProps) {
   return (

@@ -83,6 +83,7 @@ export type SketchForgeMcpCommandName =
   | "group_objects"
   | "ungroup_objects"
   | "hull_objects"
+  | "texture_surface"
   | "boolean_cut"
   | "separate_parts"
   | "list_edges"

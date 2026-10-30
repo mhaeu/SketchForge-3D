@@ -8,13 +8,37 @@ import { ADDITION, Brush, Evaluator, HOLLOW_INTERSECTION, HOLLOW_SUBTRACTION, IN
 import * as THREE from "three";
 import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { FontLoader, type Font, type FontData } from "three/examples/jsm/loaders/FontLoader.js";
-import droidMonoFontJson from "three/examples/fonts/droid/droid_sans_mono_regular.typeface.json";
-import droidSansBoldFontJson from "three/examples/fonts/droid/droid_sans_bold.typeface.json";
-import droidSerifBoldFontJson from "three/examples/fonts/droid/droid_serif_bold.typeface.json";
-import gentilisBoldFontJson from "three/examples/fonts/gentilis_bold.typeface.json";
-import helvetikerBoldFontJson from "three/examples/fonts/helvetiker_bold.typeface.json";
-import optimerBoldFontJson from "three/examples/fonts/optimer_bold.typeface.json";
+import { textFont } from "@/lib/textFonts";
+import { canChangeSurfaceTexture, canTextureSurface, offersSurfaceTexture, offersSurfaceTextureMask, surfaceTextureMaskOf, sceneWithSurfaceBody, shapeUnderSurfaceTexture, surfacePatternLabel, surfaceTextureEntry, surfaceTextureGoldShape, surfaceTexturedShape, surfaceTextureInput, surfaceTextureMasksFor } from "@/lib/surfaceTextureShape";
+import { textureSurfaceOffThread } from "@/lib/surfaceTextureWorkerClient";
+import { SURFACE_TEXT_FONTS, surfaceTextOutline } from "@/lib/surfaceTextOutline";
+import {
+  normalizeSurfaceTexture,
+  normalizeSurfaceTextureFaces,
+  SURFACE_TEXTURE_AXES,
+  SURFACE_TEXTURE_BARK_TYPES,
+  SURFACE_TEXTURE_BRICK_BONDS,
+  SURFACE_TEXTURE_CAP_EDGES,
+  SURFACE_TEXTURE_CAP_STYLES,
+  SURFACE_TEXTURE_CARBON_WEAVES,
+  SURFACE_TEXTURE_CRACK_STARTS,
+  SURFACE_TEXTURE_CRACK_STYLES,
+  SURFACE_TEXTURE_DETAILS,
+  SURFACE_TEXTURE_DIRECTIONS,
+  SURFACE_TEXTURE_FACE_NAMES,
+  SURFACE_TEXTURE_IMAGES,
+  SURFACE_TEXTURE_LIMITS,
+  SURFACE_TEXTURE_PATTERNS,
+  SURFACE_TEXTURE_PROFILES,
+  SURFACE_TEXTURE_PROJECTIONS,
+  SURFACE_TEXTURE_TILINGS,
+  SURFACE_TEXTURE_WOOD_CUTS,
+  SURFACE_TEXTURE_WOOD_TYPES,
+  type SurfaceTextureMask,
+  type SurfaceTextureSettings,
+} from "@/lib/surfaceTexture";
+import { normalizeSurfaceTextureOwnImage, SURFACE_TEXTURE_OWN_IMAGE_SIZE } from "@/lib/surfaceTextureImages";
+import type { SurfaceTextureCardProps } from "@/components/workplane/ShapeInspector";
 import type { AppThemePreference, ResolvedAppTheme } from "@/lib/appTheme";
 import type { ChallengeTutorialId } from "@/lib/challenges";
 import { manifoldModuleSource } from "@/generated/manifoldModuleSource";
@@ -79,6 +103,7 @@ import {
   ToolbarHullIcon,
   ToolbarOffsetIcon,
   ToolbarDeleteFaceIcon,
+  ToolbarSurfaceTextureIcon,
   ToolbarCutOutIcon,
   ToolbarCookieCutterIcon,
   ToolbarTrimIcon,
@@ -476,16 +501,6 @@ const COPLANAR_BOOLEAN_RESCUE_DEGREES = 0.02;
 const NORMAL_SELECTION_CAD_EDGE_MIN_ANGLE = 60;
 const MIN_EDGE_MODIFIER_AMOUNT = 0.001;
 const SEPARATE_PARTS_VERTEX_TOLERANCE = 0.0005;
-const booleanFontLoader = new FontLoader();
-const booleanTextFonts: Record<string, Font> = {
-  Multilanguage: booleanFontLoader.parse(helvetikerBoldFontJson as FontData),
-  Sans: booleanFontLoader.parse(droidSansBoldFontJson as FontData),
-  Serif: booleanFontLoader.parse(droidSerifBoldFontJson as FontData),
-  Script: booleanFontLoader.parse(gentilisBoldFontJson as FontData),
-  Monospace: booleanFontLoader.parse(droidMonoFontJson as FontData),
-  Rounded: booleanFontLoader.parse(optimerBoldFontJson as FontData),
-  Stencil: booleanFontLoader.parse(helvetikerBoldFontJson as FontData),
-};
 let manifoldRuntimePromise: Promise<ManifoldToplevel> | null = null;
 
 function emptySketchProfile(): SketchProfile {
@@ -1981,6 +1996,7 @@ function cadModifierComponentPreviews(sourceParts: WorkplaneShape[], components:
 
 function edgeTreatmentLabel(feature: NonNullable<WorkplaneShape["edgeTreatments"]>[number]) {
   const size = `${Number(feature.amount.toFixed(2))} mm`;
+  if (feature.kind === "surfaceTexture") return t("surfaceTexture.historyLabel", { pattern: surfacePatternLabel(feature.surfaceTexture?.pattern ?? "knurl"), depth: size });
   return `${feature.kind === "fillet" ? "fillet" : "chamfer"} (${size}, ${feature.edgeCount} edge${feature.edgeCount === 1 ? "" : "s"})`;
 }
 
@@ -2153,6 +2169,7 @@ function edgeTreatmentHistoryOptions(shape: WorkplaneShape, path: number[] = [],
   const ownOptions = ownHistory.map((entry, index) => {
     const removesNewerCount = Math.max(0, ownHistory.length - index - 1);
     const edgeIds = entry.feature.edgeIds;
+    const kind = entry.feature.kind;
     return {
       id: `${path.length ? path.join(".") : "root"}:${entry.id}`,
       entryId: entry.id,
@@ -2161,9 +2178,10 @@ function edgeTreatmentHistoryOptions(shape: WorkplaneShape, path: number[] = [],
       targetName,
       createdAt: entry.createdAt,
       removesNewerCount,
-      editable: path.length === 0 && removesNewerCount === 0 && edgeIds?.length
+      // Eine Oberflaechenstruktur aendert ihre eigene Karte, nicht das Kantenwerkzeug.
+      editable: path.length === 0 && removesNewerCount === 0 && edgeIds?.length && kind !== "surfaceTexture"
         ? {
-          kind: entry.feature.kind,
+          kind,
           amount: entry.feature.amount,
           edgeIds: [...edgeIds],
           chamferAngle: entry.feature.chamferAngle,
@@ -2600,7 +2618,7 @@ function createBooleanTextGeometry(shape: WorkplaneShape) {
   const bevel = clampNumber(shape.bevel ?? 0, 0, 8);
   const fontName = shape.font ?? "Multilanguage";
   const geometry = new TextGeometry(text, {
-    font: booleanTextFonts[fontName] ?? booleanTextFonts.Multilanguage,
+    font: textFont(fontName),
     size: 20,
     depth: shape.height,
     curveSegments: fontName === "Stencil" ? 1 : 8,
@@ -11825,6 +11843,111 @@ export function SketchForgeEditor({
   }, [commitShapes, selectedShapes]);
 
   /**
+   * Eine Oberflaechenstruktur auf den gewaehlten Koerper legen. Gerechnet wird
+   * im Worker; hat sich der Koerper inzwischen geaendert, gilt das Ergebnis
+   * etwas anderem und faellt weg. Nach layerling 1.121.1.
+   */
+  const [surfaceTextureOpen, setSurfaceTextureOpen] = useState(false);
+  const canSurfaceTexture = selectedShapes.length === 1 && offersSurfaceTexture(selectedShape) && !selectedShape?.locked;
+  const textureSelectedSurface = useCallback(async (settings: SurfaceTextureSettings) => {
+    if (selectedShapes.length !== 1 || !selectedShape) {
+      setNotice(t("status.selectOneToTexture"));
+      return;
+    }
+    const current = selectedShape;
+    // Geaendert wird eine Struktur, indem sie neu auf den Koerper darunter kommt, dort wo der strukturierte jetzt steht.
+    const under = canChangeSurfaceTexture(current) ? shapeUnderSurfaceTexture(current) : null;
+    if (!under && !canTextureSurface(current)) {
+      setNotice(t(current.locked ? "status.selectionLocked" : current.surfaceTexture ? "status.alreadyTextured" : "status.selectOneToTexture"));
+      return;
+    }
+    const source = under ?? current;
+    setNotice(t("status.surfaceTexturing"));
+    // Die Masken im Entwurf, die in den Koerper reichen, gehen mit und bleiben bei der Struktur.
+    const masks = surfaceTextureMasksFor(source, shapesRef.current, meshForShape);
+    let outcome: Awaited<ReturnType<typeof textureSurfaceOffThread>>;
+    let used: SurfaceTextureSettings;
+    try {
+      // Die Buchstaben einer Schrift entstehen hier, wo die Schriften sind, und gehen als Umrisse in den Worker.
+      const textOutline = settings.pattern === "text" ? surfaceTextOutline({ content: settings.textContent, font: settings.textFont, size: settings.textSize, vertical: settings.textVertical }) : [];
+      if (settings.pattern === "text" && !textOutline.length) {
+        setNotice(t("status.surfaceNoText"));
+        return;
+      }
+      used = { ...settings, masks, textOutline };
+      outcome = await textureSurfaceOffThread(surfaceTextureInput(meshForShape(source)), used);
+    } catch (error) {
+      setNotice(t("status.surfaceFailed", { error: error instanceof Error ? error.message : String(error) }));
+      return;
+    }
+    if (shapesRef.current.find((shape) => shape.id === current.id) !== current) {
+      setNotice(t("status.surfaceOutdated"));
+      return;
+    }
+    const textured = outcome.stats.nothing ? null : surfaceTexturedShape(source, outcome.positions, used);
+    if (!textured) {
+      setNotice(t("status.surfaceNothing"));
+      return;
+    }
+    const { stats } = outcome;
+    // Risse, die keinen Weg ueber den Koerper fanden, liessen ihn, wie er war.
+    if (stats.cracks && stats.cracks.lines === 0) {
+      setNotice(t("status.surfaceNoCracks"));
+      return;
+    }
+    // Ebenso eine Schrift, deren Buchstaben auf keine Flaeche kamen, die sie tragen darf.
+    if (stats.text && !stats.text.placed) {
+      setNotice(t("status.surfaceTextMissed"));
+      return;
+    }
+    const gold = outcome.fill ? surfaceTextureGoldShape(textured, outcome.fill, `${textured.name} – ${t("surfaceTexture.goldPart")}`) : null;
+    const pattern = surfacePatternLabel(textured.surfaceTexture?.pattern ?? settings.pattern);
+    const triangles = formatEstimateNumber(stats.triangles, 0);
+    // Die Masken sind die, die jetzt stehen: Eine inzwischen geloeschte zaehlt nicht mehr.
+    const masksBefore = under ? current.surfaceTexture?.masks.length ?? 0 : 0;
+    const done = stats.around ? t("status.surfaceTexturedAround", { pattern, count: stats.around, triangles }) : t("status.surfaceTextured", { pattern, triangles });
+    const notes = [
+      masks.length ? t("status.surfaceMasksUsed", { count: masks.length }) : "",
+      masksBefore && !masks.length ? t("status.surfaceMasksGone", { count: masksBefore }) : "",
+      stats.cracks ? t("status.surfaceCracks", { count: stats.cracks.lines, length: Math.round(stats.cracks.length) }) : "",
+      gold ? t("status.surfaceGold") : "",
+      stats.text?.torn ? t("status.surfaceTextTorn") : "",
+      stats.limited ? t("status.surfaceCoarser") : "",
+      stats.tooDeep ? t("status.surfaceTooDeep") : "",
+    ].filter(Boolean);
+    const message = notes.length ? `${done}. ${notes.join(" ")}` : done;
+    // Das Gold frueherer Risse weicht; neues kommt als eigenes Teil dazu.
+    commitShapes(sceneWithSurfaceBody(shapesRef.current, current.id, textured, gold), [textured.id], message);
+  }, [commitShapes, selectedShape, selectedShapes.length]);
+
+  /** Nimmt die Struktur vom gewaehlten Koerper: Der Koerper darunter kommt zurueck, wo der strukturierte steht. */
+  const removeSelectedSurfaceTexture = useCallback(() => {
+    if (selectedShapes.length !== 1 || !selectedShape) return;
+    if (selectedShape.locked) {
+      setNotice(t("status.selectionLocked"));
+      return;
+    }
+    const under = shapeUnderSurfaceTexture(selectedShape);
+    if (!under) {
+      setNotice(t("status.alreadyTextured"));
+      return;
+    }
+    const pattern = surfacePatternLabel(selectedShape.surfaceTexture?.pattern ?? "knurl");
+    commitShapes(sceneWithSurfaceBody(shapesRef.current, selectedShape.id, under, null), [under.id], t("status.surfaceRemoved", { pattern }));
+  }, [commitShapes, selectedShape, selectedShapes.length]);
+
+  const surfaceTextureCard = useMemo<SurfaceTextureCardProps | undefined>(() => (
+    selectedShapes.length === 1 && offersSurfaceTexture(selectedShape)
+      ? {
+        onApply: textureSelectedSurface,
+        onRemove: surfaceTextureEntry(selectedShape) ? removeSelectedSurfaceTexture : undefined,
+        open: surfaceTextureOpen,
+        onOpenChange: setSurfaceTextureOpen,
+      }
+      : undefined
+  ), [removeSelectedSurfaceTexture, selectedShape, selectedShapes.length, surfaceTextureOpen, textureSelectedSurface]);
+
+  /**
    * Eine Gruppe oeffnen, um ihre Teile zu aendern.
    *
    * Die Teile kommen einzeln in die Szene - dieselbe Rechnung wie beim
@@ -12460,6 +12583,99 @@ export function SketchForgeEditor({
         const hull = canonicalizeShape(result.group);
         commitShapes([...currentShapes().filter((shape) => !ids.has(shape.id)), hull], hull.id, t("status.hulledMany", { count: groupable.length }));
         return { object: mcpShapeSummary(hull) };
+      }
+
+      if (command.action === "texture_surface") {
+        const target = findShape(params.id) ?? (selectedIdsRef.current.length === 1 ? findShape(selectedIdsRef.current[0]) : null);
+        if (!target) throw new Error("Select one object to texture, or pass its id");
+        if (target.locked) throw new Error("Unlock the object before texturing it");
+        // Ein strukturierter Koerper wird vom Koerper unter seiner Struktur aus neu strukturiert, oder dieser kommt zurueck.
+        const under = target.surfaceTexture ? shapeUnderSurfaceTexture(target) : null;
+        if (target.surfaceTexture && !under) throw new Error("This object's texture keeps no body under it (other steps came after it): undo it first, then texture the plain body again");
+        if (params.remove !== undefined && typeof params.remove !== "boolean") throw new Error("remove must be true or false");
+        if (params.remove === true) {
+          if (!under || !target.surfaceTexture) throw new Error("This object has no surface texture to remove");
+          commitShapes(
+            sceneWithSurfaceBody(currentShapes(), target.id, under, null),
+            [under.id],
+            t("status.surfaceRemoved", { pattern: surfacePatternLabel(target.surfaceTexture.pattern) }),
+          );
+          return { object: mcpShapeSummary(under), removed: true };
+        }
+        if (!under && !canTextureSurface(target)) throw new Error("This object cannot be textured; a measuring tool or a reference point has no body of its own");
+        const source = under ?? target;
+        // Eine Wahl, die die Bruecke nicht kennt, wird abgelehnt statt still durch die Vorgabe ersetzt.
+        ["textContent", "textFont"].forEach((key) => {
+          if (params[key] !== undefined && typeof params[key] !== "string") throw new Error(`${key} must be text`);
+        });
+        const choices: Record<string, readonly string[]> = { pattern: SURFACE_TEXTURE_PATTERNS, profile: SURFACE_TEXTURE_PROFILES, direction: SURFACE_TEXTURE_DIRECTIONS, projection: SURFACE_TEXTURE_PROJECTIONS, axis: SURFACE_TEXTURE_AXES, detail: SURFACE_TEXTURE_DETAILS, crackStyle: SURFACE_TEXTURE_CRACK_STYLES, crackStart: SURFACE_TEXTURE_CRACK_STARTS, carbonWeave: SURFACE_TEXTURE_CARBON_WEAVES, brickBond: SURFACE_TEXTURE_BRICK_BONDS, barkType: SURFACE_TEXTURE_BARK_TYPES, woodType: SURFACE_TEXTURE_WOOD_TYPES, woodCut: SURFACE_TEXTURE_WOOD_CUTS, image: SURFACE_TEXTURE_IMAGES, imageTiling: SURFACE_TEXTURE_TILINGS, capStyle: SURFACE_TEXTURE_CAP_STYLES, capEdge: SURFACE_TEXTURE_CAP_EDGES };
+        Object.entries(choices).forEach(([key, allowed]) => {
+          if (params[key] !== undefined && !allowed.includes(String(params[key]))) throw new Error(`${key} must be one of ${allowed.join(", ")}`);
+        });
+        Object.keys(SURFACE_TEXTURE_LIMITS).forEach((key) => {
+          if (params[key] !== undefined && !Number.isFinite(mcpNumber(params[key], Number.NaN))) throw new Error(`${key} must be a number`);
+        });
+        ["keepEdges", "outside", "inside", "crackGold", "imageInvert", "textVertical"].forEach((key) => {
+          if (params[key] !== undefined && typeof params[key] !== "boolean") throw new Error(`${key} must be true or false`);
+        });
+        if (params.imageOwn !== undefined && !normalizeSurfaceTextureOwnImage(params.imageOwn)) {
+          throw new Error(`imageOwn must be { width, height, data }: whole numbers from 2 to ${SURFACE_TEXTURE_OWN_IMAGE_SIZE} and width × height grey values (0 to 255, a row at a time from the top) as Base64`);
+        }
+        if (params.image === "own" && params.imageOwn === undefined && !(under && target.surfaceTexture?.imageOwn)) throw new Error("image own needs imageOwn: the grey values of one's own image");
+        if (params.faces !== undefined) {
+          const named = `faces must be a list of ${SURFACE_TEXTURE_FACE_NAMES.join(", ")}, or faces as { at, normal }`;
+          if (!Array.isArray(params.faces)) throw new Error(named);
+          params.faces.forEach((face: unknown) => {
+            if (typeof face === "string" ? !(SURFACE_TEXTURE_FACE_NAMES as readonly string[]).includes(face) : !normalizeSurfaceTextureFaces([face]).length) throw new Error(named);
+          });
+        }
+        // Masken: die in `masks` genannten Koerper, sonst die als Masken markierten, die in diesen reichen.
+        let masks: SurfaceTextureMask[];
+        if (params.masks !== undefined) {
+          if (!Array.isArray(params.masks)) throw new Error("masks must be a list of { id, mode }");
+          masks = params.masks.map((entry: unknown) => {
+            const { id, mode } = (entry ?? {}) as { id?: unknown; mode?: unknown };
+            const body = typeof id === "string" ? findShape(id) : null;
+            if (!body) throw new Error(`No object ${String(id)} for a mask`);
+            if (mode !== "exclude" && mode !== "only") throw new Error("A mask's mode must be exclude or only");
+            if (body.id === target.id || !offersSurfaceTextureMask(body)) throw new Error(`${body.name} cannot be a mask: a mask is another box, cylinder, sphere, cone or pyramid`);
+            const mask = surfaceTextureMaskOf(meshForShape(body), mode);
+            if (!mask) throw new Error(`${body.name} has too many faces to be a mask`);
+            return mask;
+          });
+        } else masks = surfaceTextureMasksFor(source, currentShapes(), meshForShape);
+        // Eine Aenderung behaelt die Einstellungen, die sie nicht nennt.
+        const settings = { ...normalizeSurfaceTexture({ ...(under ? target.surfaceTexture : {}), ...params }), masks };
+        if (settings.pattern === "text") {
+          if (!SURFACE_TEXT_FONTS.includes(settings.textFont)) throw new Error(`textFont must be one of ${SURFACE_TEXT_FONTS.join(", ")}`);
+          // Die Buchstaben entstehen hier, wo die Schriften sind; mitgegebene Umrisse zaehlen nicht.
+          settings.textOutline = surfaceTextOutline({ content: settings.textContent, font: settings.textFont, size: settings.textSize, vertical: settings.textVertical });
+          if (!settings.textOutline.length) throw new Error("textContent has no letters to write");
+        }
+        const outcome = await textureSurfaceOffThread(surfaceTextureInput(meshForShape(source)), settings);
+        if (findShape(target.id) !== target) throw new Error("The object changed while the texture was computed; texture it again");
+        const textured = outcome.stats.nothing ? null : surfaceTexturedShape(source, outcome.positions, settings);
+        if (!textured) throw new Error("No part of this body gets the pattern: check faces, outside and inside, bottomFree and topFree, and zoneFrom and zoneTo");
+        if (outcome.stats.cracks && outcome.stats.cracks.lines === 0) throw new Error("No crack found a way across this body: try another crackStart (anywhere goes on any body), more crackLength, or let the pattern reach more faces");
+        if (outcome.stats.text && !outcome.stats.text.placed) throw new Error("The text came onto no face that may get it (a mask lies over it): move it with textAround and textHeight, or change the masks");
+        const gold = outcome.fill ? surfaceTextureGoldShape(textured, outcome.fill, `${textured.name} – ${t("surfaceTexture.goldPart")}`) : null;
+        commitShapes(
+          sceneWithSurfaceBody(currentShapes(), target.id, textured, gold),
+          [textured.id],
+          t("status.surfaceTextured", { pattern: surfacePatternLabel(settings.pattern), triangles: formatEstimateNumber(outcome.stats.triangles, 0) }),
+        );
+        const { triangles, around, spacing, limited, tooDeep, bedClamped, cracks, text, bricks, projection } = outcome.stats;
+        // Ein eigenes Bild wird mit seiner Groesse genannt, nicht mit seinen Grauwerten.
+        const { masks: _planes, textOutline: _outline, imageOwn, ...rest } = settings;
+        const shown = { ...rest, imageOwn: imageOwn ? { width: imageOwn.width, height: imageOwn.height } : null };
+        return {
+          object: mcpShapeSummary(textured),
+          ...(gold ? { gold: mcpShapeSummary(gold) } : {}),
+          changed: Boolean(under),
+          settings: shown,
+          masks: masks.length,
+          texture: { triangles, projection, around, spacing, limited, tooDeep, bedClamped, ...(cracks ? { cracks } : {}), ...(text ? { text } : {}), ...(bricks ? { bricks } : {}) },
+        };
       }
 
       if (command.action === "ungroup_objects") {
@@ -13739,6 +13955,9 @@ export function SketchForgeEditor({
         offsetActive={Boolean(edgeModifier?.hollow?.offset && !edgeModifier.hollow.offset.cutInto)}
         onDeleteFace={startDeleteFace}
         deleteFaceActive={Boolean(edgeModifier?.faceDelete)}
+        canSurfaceTexture={canSurfaceTexture}
+        onSurfaceTexture={() => setSurfaceTextureOpen((open) => !open)}
+        surfaceTextureActive={canSurfaceTexture && surfaceTextureOpen}
         onCutOut={() => startCutOut()}
         canCutOut={Boolean(cutOutPair())}
         cutOutActive={Boolean(edgeModifier?.hollow?.offset?.cutInto)}
@@ -13892,6 +14111,7 @@ export function SketchForgeEditor({
           onEditSketch={beginSketchEdit}
           canSeparateParts={canSeparateSelectedParts}
           onSeparateParts={separateSelectedParts}
+          surfaceTextureCard={surfaceTextureCard}
           onUpdateShape={updateShape}
           onDuplicateShapesMoved={duplicateShapesMoved}
           notes={notes}
@@ -14466,6 +14686,9 @@ function SecondaryToolbar({
   offsetActive,
   onDeleteFace,
   deleteFaceActive,
+  canSurfaceTexture,
+  onSurfaceTexture,
+  surfaceTextureActive,
   onCutOut,
   canCutOut,
   cutOutActive,
@@ -14601,6 +14824,9 @@ function SecondaryToolbar({
   offsetActive: boolean;
   onDeleteFace: () => void;
   deleteFaceActive: boolean;
+  canSurfaceTexture: boolean;
+  onSurfaceTexture: () => void;
+  surfaceTextureActive: boolean;
   onCutOut: () => void;
   canCutOut: boolean;
   cutOutActive: boolean;
@@ -14919,6 +15145,8 @@ function SecondaryToolbar({
     { label: t("editor.tool.hollow"), icon: ToolbarHollowIcon, action: onHollow, enabled: canEdgeModify, active: hollowActive },
     { label: t("editor.tool.offset"), icon: ToolbarOffsetIcon, action: onOffset, enabled: canEdgeModify, active: offsetActive },
     { label: t("editor.tool.deleteFace"), icon: ToolbarDeleteFaceIcon, action: onDeleteFace, enabled: canEdgeModify, active: deleteFaceActive },
+    // Die Struktur arbeitet am Netz, nicht am exakten Koerper: jeder einzelne Koerper geht.
+    { label: t("inspector.surfaceTexture"), icon: ToolbarSurfaceTextureIcon, action: onSurfaceTexture, enabled: canSurfaceTexture, active: surfaceTextureActive },
     { label: t("editor.tool.split"), icon: ToolbarSplitIcon, action: onSplit, enabled: hasSelection, active: splitActive },
     // Neben dem Teilen, weil es dieselbe Frage stellt: welche Flaeche?
     { label: t("editor.tool.holePattern"), icon: ToolbarHolePatternIcon, action: onHolePattern, enabled: hasSelection, active: holePatternActive },
