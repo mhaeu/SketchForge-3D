@@ -27,6 +27,8 @@ import { groupedContentScale, scaleGroupedVertices } from "@/lib/groupScale";
 import { manifoldFromOperand, manifoldUnionOfOperands, runManifoldJob, type ManifoldJob, type ManifoldJobResult, type ManifoldOperand } from "@/lib/manifoldJobs";
 import { manifoldJobOffThread } from "@/lib/manifoldWorkerClient";
 import { toggleCadFace, type CadFacePick } from "@/lib/cadFacePick";
+import { weldOnGrid } from "@/lib/gridWeld";
+import { meshPartCount } from "@/lib/meshPartCount";
 import { DELETE_FACES_UNCHANGED_MESSAGE } from "@/lib/cadDeleteFaces";
 import { DeleteFacePanel } from "@/components/workplane/DeleteFacePanel";
 import { modelSplitPlane, snapSplitPositionToVertices, splitAxisLabel, splitOrientationForNormal, splitPlaneIntersectsPoints, splitShapeFromWorldPositions, NO_SPLIT_ROTATION, type ModelSplitPlane, type SplitRotation } from "@/lib/modelSplit";
@@ -3891,8 +3893,10 @@ function meshDataPositions(mesh: MeshData) {
 
 function meshFaceComponents(mesh: MeshData, tolerance = SEPARATE_PARTS_VERTEX_TOLERANCE) {
   if (mesh.faces.length === 0) return [];
-  const keysByFace = mesh.faces.map((face) => face.map((vertexIndex) => quantizedPointKey(mesh.vertices[vertexIndex], tolerance)));
-  const facesByVertex = new Map<string, number[]>();
+  // Nummern statt Textschluessel je Ecke (gridWeld.ts): dieselben Gruppen, ohne einen Text je Ecke.
+  const { ids } = weldOnGrid(mesh.vertices, tolerance);
+  const keysByFace = mesh.faces.map((face) => face.map((vertexIndex) => ids[vertexIndex]));
+  const facesByVertex = new Map<number, number[]>();
   keysByFace.forEach((keys, faceIndex) => {
     keys.forEach((key) => {
       const current = facesByVertex.get(key);
@@ -4004,8 +4008,7 @@ function cadModifierSourceParts(shape: WorkplaneShape) {
 function separablePartCount(shape: WorkplaneShape) {
   if (shape.locked || shape.hole) return 0;
   if (shape.groupedShapes?.length && !shape.importedMesh) return shape.groupedShapes.length;
-  const mesh = meshForShape(shape);
-  return meshFaceComponents(mesh).length;
+  return meshPartCount(meshForShape(shape), SEPARATE_PARTS_VERTEX_TOLERANCE);
 }
 
 function separateShapeParts(shape: WorkplaneShape) {
