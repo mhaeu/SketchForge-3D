@@ -73,6 +73,7 @@ import {
   ToolbarHullIcon,
   ToolbarOffsetIcon,
   ToolbarCutOutIcon,
+  ToolbarCookieCutterIcon,
   ToolbarTrimIcon,
   ToolbarTrimBelowIcon,
   ToolbarBoreIcon,
@@ -237,6 +238,7 @@ import { bodiesTooTall } from "@/lib/buildVolume";
 import { toolbarDensityFor, toolbarRowWidth, type ToolbarRowItem } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
 import { normalizeOffsetDistance } from "@/lib/cadOffset";
+import { buildCookieCutter, normalizeCookieCutterOptions, type CookieCutterOptions } from "@/lib/cookieCutter";
 import { createGridfinityGeometry } from "@/lib/gridfinityGeometry";
 import { rememberManifoldRuntime, setManifoldLoader } from "@/lib/manifoldHandle";
 
@@ -250,6 +252,7 @@ import { MateFacesPanel } from "./workplane/MateFacesPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
 import { OffsetPanel } from "./workplane/OffsetPanel";
+import { CookieCutterPanel } from "./workplane/CookieCutterPanel";
 import { HollowPanel } from "./workplane/HollowPanel";
 import { ObjectListPanel } from "./workplane/ObjectListPanel";
 import {
@@ -6774,6 +6777,7 @@ export function SketchForgeEditor({
    * hineinschneiden. Wie das Lochmuster erst die Flaeche, dann die Zahlen;
    * `maxDepth` ist die Dicke des Koerpers hinter der Flaeche.
    */
+  const [cookieTool, setCookieTool] = useState<{ options: CookieCutterOptions; busy: boolean; error: string | null } | null>(null);
   const [faceTool, setFaceTool] = useState<{
     shapeId: string;
     picking: boolean;
@@ -11633,6 +11637,80 @@ export function SketchForgeEditor({
     commitShapes([...remainingShapes, intersection], intersection.id, t("status.intersectedMany", { count: groupable.length }));
   }, [commitShapes, selectedShapes]);
 
+  /*
+   * Ausstechform: aus dem Grundriss der Auswahl eine Wand mit Schneide und
+   * ein Rand um den Fuss, als ein Netzkoerper an ihrer Stelle. Der Grundriss
+   * ist der Schnitt knapp ueber ihrer Unterseite - das, worauf sie steht.
+   * Nach layerling 1.118.0 bis 1.121.0 (#982), hier direkt mit Manifold.
+   */
+  const cookieCutterSolids = useMemo(
+    () => selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape)),
+    [selectedShapes],
+  );
+
+  const startCookieCutter = useCallback(() => {
+    if (cookieTool) {
+      setCookieTool(null);
+      return;
+    }
+    if (cookieCutterSolids.length === 0) {
+      setNotice(t("status.cookieCutterSelect"));
+      return;
+    }
+    setCookieTool({ options: normalizeCookieCutterOptions(), busy: false, error: null });
+  }, [cookieCutterSolids.length, cookieTool]);
+
+  const applyCookieCutter = useCallback(async () => {
+    const tool = cookieTool;
+    const solids = cookieCutterSolids;
+    if (!tool || solids.length === 0) return;
+    setCookieTool({ ...tool, busy: true, error: null });
+    const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+    const created: ManifoldSolid[] = [];
+    const sections: Array<{ delete(): void }> = [];
+    let cutterShape: WorkplaneShape | null = null;
+    try {
+      const runtime = await getManifoldRuntime();
+      const union = shapesToManifoldUnion(runtime, solids, created);
+      if (!union) throw new Error(t("status.cookieCutterFailed"));
+      // Die Szene steht mit y nach oben, Manifold schneidet in z.
+      const turned = union.rotate([90, 0, 0]);
+      created.push(turned);
+      const bounds = turned.boundingBox();
+      const bottom = bounds.min[2];
+      let footprint = turned.slice(bottom + Math.min(0.05, (bounds.max[2] - bottom) / 2));
+      sections.push(footprint);
+      if (footprint.isEmpty()) throw new Error(t("status.cookieCutterNoFootprint"));
+      if (tool.options.mirror) {
+        const box = footprint.bounds();
+        footprint = footprint.mirror([1, 0]).translate([box.min[0] + box.max[0], 0]);
+        sections.push(footprint);
+      }
+      const cutter = buildCookieCutter(runtime, footprint, tool.options);
+      if (!cutter) throw new Error(t("status.cookieCutterFailed"));
+      created.push(cutter);
+      const placed = cutter.rotate([-90, 0, 0]).translate([0, bottom, 0]);
+      created.push(placed);
+      const shape = meshPositionsToGroupShape(solids, solids, manifoldMeshToPositions(placed.getMesh()), "cookie-cutter");
+      if (!shape) throw new Error(t("status.cookieCutterFailed"));
+      const { groupedShapes: _parts, groupedBaseWidth: _w, groupedBaseDepth: _d, groupedBaseHeight: _h, ...plain } = shape;
+      cutterShape = canonicalizeShape({ ...plain, name: t("shape.cookieCutter"), color: solids[0].color });
+    } catch (error) {
+      setCookieTool((current) => current ? { ...current, busy: false, error: error instanceof Error ? error.message : t("status.cookieCutterFailed") } : current);
+      return;
+    } finally {
+      Array.from(new Set(created)).forEach(disposeManifold);
+      sections.forEach((section) => section.delete());
+    }
+    if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+      setCookieTool((current) => current ? { ...current, busy: false, error: t("status.cookieCutterChanged") } : current);
+      return;
+    }
+    const used = new Set(solids.map((shape) => shape.id));
+    commitShapes([...shapesRef.current.filter((shape) => !used.has(shape.id)), cutterShape], cutterShape.id, t("status.cookieCutterDone"));
+    setCookieTool(null);
+  }, [commitShapes, cookieCutterSolids, cookieTool]);
+
   const hullSelected = useCallback(async () => {
     const groupable = selectedShapes.filter((shape) => !shape.locked);
     if (!canHullShapes(groupable)) {
@@ -13538,6 +13616,9 @@ export function SketchForgeEditor({
         onIntersect={intersectSelected}
         canHull={canHullShapes(selectedShapes)}
         onHull={hullSelected}
+        canCookieCutter={cookieCutterSolids.length > 0}
+        cookieCutterActive={Boolean(cookieTool)}
+        onCookieCutter={startCookieCutter}
         onTrim={trimAtWorkplane}
         onSubtractBore={subtractBoreFromSelection}
         onTrimFlush={trimFlushToBody}
@@ -13798,6 +13879,17 @@ export function SketchForgeEditor({
             setMateTool(null);
             setNotice(t("status.mateCancelled"));
           }}
+        />
+      ) : null}
+      {cookieTool ? (
+        <CookieCutterPanel
+          options={cookieTool.options}
+          workspace={workspaceSettings}
+          busy={cookieTool.busy}
+          error={cookieTool.error}
+          onChange={(patch) => setCookieTool((current) => current ? { ...current, options: normalizeCookieCutterOptions({ ...current.options, ...patch }), error: null } : current)}
+          onApply={() => { void applyCookieCutter(); }}
+          onCancel={() => setCookieTool(null)}
         />
       ) : null}
       {faceTool ? (
@@ -14164,6 +14256,9 @@ function SecondaryToolbar({
   objectListOpen,
   canIntersect,
   canHull,
+  canCookieCutter,
+  cookieCutterActive,
+  onCookieCutter,
   canRedo,
   canUngroup,
   canUndo,
@@ -14294,6 +14389,9 @@ function SecondaryToolbar({
   objectListOpen: boolean;
   canIntersect: boolean;
   canHull: boolean;
+  canCookieCutter: boolean;
+  cookieCutterActive: boolean;
+  onCookieCutter: () => void;
   canRedo: boolean;
   canUngroup: boolean;
   canUndo: boolean;
@@ -14672,6 +14770,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.intersect"), icon: ToolbarIntersectionIcon, action: onIntersect, enabled: canIntersect },
     { label: t("editor.tool.hull"), icon: ToolbarHullIcon, action: onHull, enabled: canHull },
     { label: t("editor.tool.cutOut"), icon: ToolbarCutOutIcon, action: onCutOut, enabled: canCutOut, active: cutOutActive },
+    { label: t("editor.tool.cookieCutter"), icon: ToolbarCookieCutterIcon, action: onCookieCutter, enabled: canCookieCutter, active: cookieCutterActive },
     { label: t("editor.tool.trimAbove"), icon: ToolbarTrimIcon, action: () => onTrim("above"), enabled: hasSelection },
     { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },
     { label: t("editor.tool.trimFlushAbove"), icon: ToolbarTrimFlushIcon, action: () => onTrimFlush("above"), enabled: canTrimFlush },

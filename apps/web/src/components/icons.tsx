@@ -140,6 +140,21 @@ export function ToolbarIntersectionIcon(props: IconProps) {
   );
 }
 
+/** Ausstechform: ein angebissener Keks mit Kruemeln. */
+export function ToolbarCookieCutterIcon(props: IconProps) {
+  const cookie = "M28.5 11A16 16 0 1 0 38 20.5A9 9 0 0 1 28.5 11Z";
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" {...props}>
+      <path d={cookie} fill="currentColor" fillOpacity="0.22" />
+      <circle cx="17" cy="21" r="2" fill="currentColor" stroke="none" />
+      <circle cx="25.5" cy="30" r="2" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="32" r="1.7" fill="currentColor" stroke="none" />
+      <circle cx="24" cy="19.5" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="32" cy="30.5" r="1.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** Versatz: ein Quader, um den ein gestrichelter, groesserer laeuft. */
 export function ToolbarOffsetIcon(props: IconProps) {
   return (
