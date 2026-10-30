@@ -300,6 +300,7 @@ export const MESSAGES_DE: Record<MessageKey, string> = {
   "deleteFace.cannot": "Diese Flächen lassen sich nicht löschen: Die Flächen rundherum schließen die Lücke nicht. Eine Hauptseite eines Quaders geht zum Beispiel nicht.",
   "deleteFace.needsExact": "Fläche löschen braucht einen genauen Körper. Eingelesene Netze (STL, OBJ, 3MF), geteilte und vereinfachte Körper haben keine Flächen, nur Dreiecke.",
   "deleteFace.running": "Flächen werden gelöscht …",
+  "deleteFace.doneOne": "1 Fläche gelöscht",
   "deleteFace.done": "{count} Flächen gelöscht",
   "deleteFace.pick": "Klick die Flächen an, die weg sollen",
   "offset.title": "Versatz",

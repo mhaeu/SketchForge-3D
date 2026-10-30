@@ -43,7 +43,7 @@ export function DeleteFacePanel({
         <button type="button" aria-label={t("common.cancel")} onClick={onCancel}><X size={20} /></button>
       </div>
 
-      <div className="edge-modifier-field">
+      <div className="edge-modifier-field edge-modifier-row">
         <span>{t("deleteFace.count", { count: faceCount })}</span>
         <button type="button" disabled={faceCount === 0 || busy} onClick={onClear}>
           {t("deleteFace.clear")}

@@ -2213,10 +2213,10 @@ function pickCadFace(state: ThreeState, pick: CadFacePick, clientX: number, clie
 }
 
 /** Die gewaehlten Flaechen kraeftig, die unter dem Zeiger heller; ohne pick wird alles abgebaut. */
-function syncCadFaceLayer(state: ThreeState, pick: CadFacePick | null, hoverId: number | null) {
+function syncCadFaceLayer(state: ThreeState, pick: CadFacePick | null, hoverId: number | null, keepPickMesh = false) {
   disposeChildren(state.cadFaceLayer);
   if (!pick) {
-    disposeCadFacePickMesh(state);
+    if (!keepPickMesh) disposeCadFacePickMesh(state);
     return;
   }
   const addFaces = (faceIds: number[], color: number, opacity: number) => {
@@ -6808,9 +6808,11 @@ export function WorkplaneViewport({
     const state = threeRef.current;
     if (!state) return;
     if (!cadFacePick) cadFaceHoverRef.current = null;
-    syncCadFaceLayer(state, cadFacePick, cadFaceHoverRef.current);
+    // Waehrend die Vorschau den Koerper ohne die Flaechen zeigt, stuenden die
+    // Markierungen frei im Raum oder schimmerten durch die geschlossene Luecke.
+    syncCadFaceLayer(state, modifierPreviewActive ? null : cadFacePick, cadFaceHoverRef.current, Boolean(cadFacePick));
     state.needsRender = true;
-  }, [cadFacePick]);
+  }, [cadFacePick, modifierPreviewActive]);
 
   const pickModifierEdge = useCallback((clientX: number, clientY: number) => {
     const state = threeRef.current;
@@ -7438,7 +7440,7 @@ export function WorkplaneViewport({
         const hovered = pickCadFace(threeRef.current, cadFacePickRef.current, event.clientX, event.clientY);
         if (hovered !== cadFaceHoverRef.current) {
           cadFaceHoverRef.current = hovered;
-          syncCadFaceLayer(threeRef.current, cadFacePickRef.current, hovered);
+          syncCadFaceLayer(threeRef.current, modifierPreviewActiveRef.current ? null : cadFacePickRef.current, hovered, true);
           threeRef.current.needsRender = true;
         }
         return;

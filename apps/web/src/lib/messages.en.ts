@@ -301,6 +301,7 @@ export const MESSAGES_EN = {
   "deleteFace.cannot": "These faces cannot be deleted: the faces around them do not close the gap. A main side of a box, for one, cannot.",
   "deleteFace.needsExact": "Delete face needs an exact body. Imported meshes (STL, OBJ, 3MF) and split or simplified bodies have no faces, only triangles.",
   "deleteFace.running": "Deleting faces …",
+  "deleteFace.doneOne": "Deleted 1 face",
   "deleteFace.done": "Deleted {count} faces",
   "deleteFace.pick": "Click the faces that should go",
   "offset.title": "Offset",

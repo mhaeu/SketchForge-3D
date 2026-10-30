@@ -2054,6 +2054,42 @@ html[data-theme="dark"] .app-error-actions a {
   cursor: pointer;
 }
 
+/* Eine Zeile mit Text und einem Knopf daneben: "Gewaehlte Flaechen" beim
+   Flaeche loeschen, das Paar beim Ausschneiden mit Spiel. */
+.hollow-panel .edge-modifier-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hollow-panel .edge-modifier-row button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  color: #33556d;
+  background: #f4f8fb;
+  border: 1px solid #c4d3df;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hollow-panel .edge-modifier-row button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+html[data-theme="dark"] .hollow-panel .edge-modifier-row button {
+  color: #c8dbe7;
+  background: #1b2a35;
+  border-color: #3c505d;
+}
+
 .edge-modifier-quick-actions button {
   color: #33556d;
   background: #f4f8fb;

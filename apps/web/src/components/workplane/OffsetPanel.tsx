@@ -74,7 +74,7 @@ export function OffsetPanel({
       </div>
 
       {cutOut ? (
-        <div className="edge-modifier-field">
+        <div className="edge-modifier-field edge-modifier-row">
           <span>{t("cutOut.pair", { part: cutOut.part, host: cutOut.host })}</span>
           <button type="button" disabled={busy} onClick={onSwap}>
             <ArrowLeftRight size={15} />

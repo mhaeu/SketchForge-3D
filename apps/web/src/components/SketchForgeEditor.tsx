@@ -10833,7 +10833,7 @@ export function SketchForgeEditor({
       commitShapes(
         shapes.map((shape) => (shape.id === base.id ? trimmed : shape)),
         base.id,
-        t("deleteFace.done", { count }),
+        count === 1 ? t("deleteFace.doneOne") : t("deleteFace.done", { count }),
       );
       invalidateCadModifierSession();
       return;
