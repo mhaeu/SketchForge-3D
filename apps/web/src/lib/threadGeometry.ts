@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { toCreasedNormals } from "@/lib/creasedNormals";
 import type { ThreadDrive, ThreadHand, ThreadHead, ThreadProfile, ThreadRole } from "@/types/sketchforge";
 
 export const DEFAULT_THREAD_ROLE: ThreadRole = "rod";
