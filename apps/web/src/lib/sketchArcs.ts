@@ -306,3 +306,38 @@ export function bezierArcGeometry(
   }
   return { apex, radius: circle.radius };
 }
+
+/**
+ * Der Bogen durch drei Punkte: von `from` nach `to`, durch `through`. Die
+ * Woelbung ist der Abstand des Scheitels von der Sehne; der Scheitel liegt
+ * auf der Seite von `through`. Mit dem Mittelpunkt C des Kreises durch die
+ * drei Punkte, h = (C - Sehnenmitte) in Richtung der Normalen und dem
+ * Halbmesser r ist sie h + r auf der positiven Seite und h - r auf der
+ * negativen. Liegen die drei Punkte auf einer Geraden, gibt es keinen Bogen.
+ * Nach layerling 1.94.0 (#643).
+ */
+export function arcThroughThreePoints(from: ArcPoint, to: ArcPoint, through: ArcPoint): { bulge: number; radius: number } | null {
+  const frame = chordFrame(from, to);
+  if (!frame) return null;
+  const ax = from.x;
+  const az = from.z;
+  const bx = to.x;
+  const bz = to.z;
+  const cx = through.x;
+  const cz = through.z;
+  const d = 2 * (ax * (bz - cz) + bx * (cz - az) + cx * (az - bz));
+  if (Math.abs(d) < 1e-9 * Math.max(1, frame.length * frame.length)) return null;
+  const a2 = ax * ax + az * az;
+  const b2 = bx * bx + bz * bz;
+  const c2 = cx * cx + cz * cz;
+  const centre = {
+    x: (a2 * (bz - cz) + b2 * (cz - az) + c2 * (az - bz)) / d,
+    z: (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d,
+  };
+  const radius = Math.hypot(ax - centre.x, az - centre.z);
+  const side = (through.x - frame.middle.x) * frame.normal.x + (through.z - frame.middle.z) * frame.normal.z;
+  if (Math.abs(side) < 1e-12) return null;
+  const h = (centre.x - frame.middle.x) * frame.normal.x + (centre.z - frame.middle.z) * frame.normal.z;
+  const bulge = clampArcBulge(side > 0 ? h + radius : h - radius, frame.length);
+  return Math.abs(bulge) < MIN_ARC_BULGE ? null : { bulge, radius };
+}

@@ -26,7 +26,7 @@ import { t } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 export type { SketchPrimitive } from "@/lib/sketchPrimitives";
-export type SketchTool = "line" | "bezier" | "smooth" | SketchPrimitive | "select" | "refine" | "erase" | "measure";
+export type SketchTool = "line" | "arc" | "bezier" | "smooth" | SketchPrimitive | "select" | "refine" | "erase" | "measure";
 export type SketchSelection =
   | { kind: "point"; id: string }
   | { kind: "segment"; id: string }
@@ -899,7 +899,7 @@ export function SketchWorkspace({
     } else if (tool === "select") {
       event.currentTarget.setPointerCapture(event.pointerId);
       setPointerAction({ kind: "marquee", pointerId: event.pointerId, origin: point, current: point });
-    } else if (tool === "line" || tool === "smooth" || tool === "measure") {
+    } else if (tool === "line" || tool === "arc" || tool === "smooth" || tool === "measure") {
       onPlanePoint(point);
     }
   };
@@ -1039,7 +1039,7 @@ export function SketchWorkspace({
    * hinterher nachzumessen; ohne eine Kante davor gibt es nichts zu
    * vergleichen, dann steht auch nichts da.
    */
-  const previewAngle = activePoint && hover && ["line", "bezier", "smooth"].includes(tool)
+  const previewAngle = activePoint && hover && ["line", "arc", "bezier", "smooth"].includes(tool)
     ? sketchPreviewAngle(profile, activePoint.id, hover)
     : null;
   /*
@@ -1621,8 +1621,8 @@ export function SketchWorkspace({
               </g>
             );
           })() : null}
-          {activePoint && hover && ["line", "bezier", "smooth"].includes(tool) ? <line className="sketch-preview-line" x1={activePoint.x} y1={activePoint.z} x2={hover.x} y2={hover.z} pointerEvents="none" /> : null}
-          {activePoint && hover && ["line", "bezier", "smooth"].includes(tool) ? (
+          {activePoint && hover && ["line", "arc", "bezier", "smooth"].includes(tool) ? <line className="sketch-preview-line" x1={activePoint.x} y1={activePoint.z} x2={hover.x} y2={hover.z} pointerEvents="none" /> : null}
+          {activePoint && hover && ["line", "arc", "bezier", "smooth"].includes(tool) ? (
             <g className="sketch-segment-dimensions preview" pointerEvents="none" transform={`translate(${(activePoint.x + hover.x) / 2} ${(activePoint.z + hover.z) / 2 - labelOffset})`}>
               {(() => {
                 const pill = dimensionPillSize(previewLabel, screenUnit, 18);
@@ -1862,7 +1862,7 @@ export function SketchWorkspace({
               ))}
             </g>
           ) : null}
-          {hover && ["line", "bezier", "smooth", "measure"].includes(tool) ? <circle className="sketch-cursor-point" cx={hover.x} cy={hover.z} r={hoverPointRadius} pointerEvents="none" /> : null}
+          {hover && ["line", "arc", "bezier", "smooth", "measure"].includes(tool) ? <circle className="sketch-cursor-point" cx={hover.x} cy={hover.z} r={hoverPointRadius} pointerEvents="none" /> : null}
         </svg>
       </section>
       {selectedImage && tool === "select" ? (

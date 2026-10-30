@@ -174,7 +174,7 @@ import { bakedRotationForBake, parametricRebuildPlan, parametricSourceForBake, p
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
-import { arcBulgeAlong, arcCubics, isArcSegment, retargetSketchArcs, stepsEncloseArea } from "@/lib/sketchArcs";
+import { arcBulgeAlong, arcCubics, arcThroughThreePoints, isArcSegment, retargetSketchArcs, stepsEncloseArea } from "@/lib/sketchArcs";
 import { buildSweepMesh } from "@/lib/sweepMesh";
 import { splitSweepDrawing, sweepPathPoint } from "@/lib/sketchSweep";
 import { mirrorSketchPoints, rotateSketchPoints, selectedSketchPoints } from "@/lib/sketchRotation";
@@ -8193,6 +8193,7 @@ export function SketchForgeEditor({
     if (tool !== "measure") setSketchMeasureStart(null);
     const messages: Record<SketchTool, string> = {
       line: t("status.sketchTool.line"),
+      arc: t("sketch.arcHint"),
       bezier: t("status.sketchTool.bezier"),
       smooth: t("status.sketchTool.smooth"),
       rectangle: t("status.sketchTool.rectangle"),
@@ -8274,10 +8275,72 @@ export function SketchForgeEditor({
     [commitSketchProfile, sketchActivePointId, sketchConstructionMode, sketchProfile, sketchTool],
   );
 
+  /*
+   * Bogen durch drei Punkte: die beiden Enden anklicken, dann einen Punkt,
+   * durch den der Bogen laeuft. Nach dem zweiten Klick steht die Sehne als
+   * Strecke da; der dritte Klick woelbt sie (sketchArcs.ts). Ein Ende auf
+   * einem vorhandenen Punkt schliesst an ihn an. Nach layerling 1.94.0 (#643).
+   */
+  const [sketchArcChord, setSketchArcChord] = useState<string | null>(null);
+  const sketchArcClick = useCallback((position: { x: number; z: number }, existingId?: string) => {
+    if (sketchArcChord) {
+      const chord = sketchProfile.segments.find((segment) => segment.id === sketchArcChord);
+      const from = chord ? sketchProfile.points.find((point) => point.id === chord.startId) : undefined;
+      const to = chord ? sketchProfile.points.find((point) => point.id === chord.endId) : undefined;
+      setSketchArcChord(null);
+      if (!chord || !from || !to) return;
+      const arc = arcThroughThreePoints(from, to, position);
+      if (!arc) {
+        setNotice(t("sketch.arcInLine"));
+        return;
+      }
+      commitSketchProfile({
+        ...sketchProfile,
+        segments: sketchProfile.segments.map((segment) => (segment.id === chord.id ? { ...segment, kind: "arc" as const, bulge: arc.bulge } : segment)),
+      }, t("sketch.arcPlaced", { radius: Number(arc.radius.toFixed(2)) }));
+      setSketchActivePointId(null);
+      setSketchSelection({ kind: "segment", id: chord.id });
+      return;
+    }
+    const pointId = existingId ?? createLocalId("sketch-point");
+    const points = existingId ? sketchProfile.points : [...sketchProfile.points, { id: pointId, ...position, mode: "corner" as const }];
+    if (!sketchActivePointId) {
+      if (!existingId) commitSketchProfile({ ...sketchProfile, points }, t("status.sketchPointAdded"));
+      setSketchActivePointId(pointId);
+      setSketchSelection({ kind: "point", id: pointId });
+      return;
+    }
+    if (sketchActivePointId === pointId) return;
+    const segmentId = createLocalId("sketch-segment");
+    commitSketchProfile({
+      ...sketchProfile,
+      points,
+      segments: [...sketchProfile.segments, {
+        id: segmentId,
+        startId: sketchActivePointId,
+        endId: pointId,
+        kind: "line",
+        ...(sketchConstructionMode ? { construction: true } : {}),
+      }],
+    }, t("sketch.arcChord"));
+    setSketchArcChord(segmentId);
+    setSketchActivePointId(null);
+    setSketchSelection({ kind: "point", id: pointId });
+  }, [commitSketchProfile, sketchActivePointId, sketchArcChord, sketchConstructionMode, sketchProfile]);
+
+  useEffect(() => {
+    if (sketchTool !== "arc") setSketchArcChord(null);
+  }, [sketchTool]);
+
   const addSketchPlanePoint = useCallback(
     (position: { x: number; z: number }, handles?: { handleIn: { x: number; z: number }; handleOut: { x: number; z: number } }) => {
       if (sketchTool === "measure") {
         measureSketchPoint({ id: "measure", ...position });
+        return;
+      }
+      if (sketchTool === "arc") {
+        const existing = sketchProfile.points.find((point) => Math.hypot(point.x - position.x, point.z - position.z) < 0.0001);
+        sketchArcClick(position, existing?.id);
         return;
       }
       if (!["line", "bezier", "smooth"].includes(sketchTool)) return;
@@ -8308,7 +8371,7 @@ export function SketchForgeEditor({
       setSketchActivePointId(point.id);
       setSketchSelection({ kind: "point", id: point.id });
     },
-    [commitSketchProfile, connectSketchPoint, measureSketchPoint, sketchActivePointId, sketchConstructionMode, sketchProfile, sketchTool],
+    [commitSketchProfile, connectSketchPoint, measureSketchPoint, sketchActivePointId, sketchArcClick, sketchConstructionMode, sketchProfile, sketchTool],
   );
 
   /**
@@ -8371,9 +8434,13 @@ export function SketchForgeEditor({
         setSketchActivePointId(null);
         return;
       }
+      if (sketchTool === "arc") {
+        sketchArcClick(point, id);
+        return;
+      }
       connectSketchPoint(id);
     },
-    [connectSketchPoint, measureSketchPoint, sketchProfile.points, sketchTool],
+    [connectSketchPoint, measureSketchPoint, sketchArcClick, sketchProfile.points, sketchTool],
   );
 
   const deleteSketchPoint = useCallback(
@@ -14185,6 +14252,7 @@ export function SketchForgeEditor({
 
 const sketchReferenceIcons = {
   line: "sketch-tool-line.png",
+  arc: "sketch-tool-arc.png",
   bezier: "sketch-tool-bezier-curve.png",
   smooth: "sketch-tool-smooth-curve.png",
   select: "sketch-tool-select.png",
@@ -15203,6 +15271,9 @@ function SecondaryToolbar({
                   <div className="toolbar-section-tools">
                     <button className={`toolbar-icon sketch-tool-icon ${sketchTool === "line" ? "active" : ""}`} type="button" aria-label={t("sketch.line")} title={t("sketch.line")} onClick={() => onSketchTool("line")}>
                       <SketchReferenceIcon name="line" />
+                    </button>
+                    <button className={`toolbar-icon sketch-tool-icon ${sketchTool === "arc" ? "active" : ""}`} type="button" aria-label={t("sketch.arc")} title={t("sketch.arcHint")} onClick={() => onSketchTool("arc")}>
+                      <SketchReferenceIcon name="arc" />
                     </button>
                     <button className={`toolbar-icon sketch-tool-icon ${sketchTool === "bezier" ? "active" : ""}`} type="button" aria-label={t("sketch.bezier")} title={t("sketch.bezier")} onClick={() => onSketchTool("bezier")}>
                       <SketchReferenceIcon name="bezier" />
