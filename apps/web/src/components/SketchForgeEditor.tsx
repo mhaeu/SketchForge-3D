@@ -8974,7 +8974,7 @@ export function SketchForgeEditor({
         ...shape,
         ...placementPatchForNewShape(shape, target, point ?? target.origin),
       };
-      commitShapes([...shapes, nextShape], nextShape.id, `${asset.name} added`);
+      commitShapes([...shapes, nextShape], nextShape.id, t("status.shapeAdded", { name: asset.name }));
     },
     [commitShapes, placementWorkplane, shapes],
   );
