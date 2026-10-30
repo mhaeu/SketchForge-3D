@@ -8380,6 +8380,10 @@ export function WorkplaneViewport({
                     }}
                   >
                     {shape.name}{shape.hole ? ` (${t("selectOther.hole")})` : ""}
+                    {/* Gleiche Namen (zweimal "Box") unterscheiden sich an ihren Massen. */}
+                    {selectOther.ids.some((other) => other !== id && shapesRef.current.find((candidate) => candidate.id === other)?.name === shape.name)
+                      ? <small>{[shapeWidth(shape), shapeDepth(shape), shape.height].map((value) => Number(value.toFixed(1))).join(" × ")} mm</small>
+                      : null}
                   </button>
                 );
               })}

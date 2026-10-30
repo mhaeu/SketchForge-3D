@@ -5287,6 +5287,12 @@ html[data-theme="dark"] .section-view-switches button {
   cursor: pointer;
 }
 
+.select-other-menu button small {
+  display: block;
+  opacity: 0.65;
+  font-size: 11px;
+}
+
 .select-other-menu button:hover,
 .select-other-menu button:focus-visible,
 .select-other-menu button.active {
