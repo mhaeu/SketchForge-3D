@@ -76,6 +76,7 @@ export function CookieCutterPanel({
             min={COOKIE_CUTTER_LIMITS.bridgeCount[0]}
             max={COOKIE_CUTTER_LIMITS.bridgeCount[1]}
             step={1}
+            whole
             workspace={workspace}
             disabled={busy}
             onChange={(bridgeCount) => onChange({ bridgeCount })}

@@ -1957,6 +1957,11 @@ html[data-theme="dark"] .app-error-actions a {
   border-radius: 12px;
   box-shadow: 0 14px 38px rgba(30, 55, 74, 0.2);
   backdrop-filter: blur(12px);
+  /* Ein langes Feld (Ausstechform) lief sonst unten aus dem Fenster, und sein
+     Knopf war nicht mehr zu erreichen. */
+  max-height: calc(100vh - var(--editor-toolbar-height) - 28px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .edge-modifier-header,

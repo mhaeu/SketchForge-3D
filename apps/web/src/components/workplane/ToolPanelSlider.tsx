@@ -37,6 +37,7 @@ export function ToolPanelSlider({
   unit,
   workspace,
   length = false,
+  whole = false,
   disabled = false,
   children,
   onChange,
@@ -49,6 +50,8 @@ export function ToolPanelSlider({
   unit?: string;
   workspace: WorkplaneWorkspaceSettings;
   length?: boolean;
+  /** Eine Anzahl: ohne Kommastellen anzeigen. */
+  whole?: boolean;
   disabled?: boolean;
   children?: ReactNode;
   onChange: (value: number) => void;
@@ -60,7 +63,7 @@ export function ToolPanelSlider({
   const shownMax = toDisplay(max);
   const shownStep = length ? displayStepFromMillimeters(step, workspace) : step;
   const position = ((clamp(shown, shownMin, shownMax) - shownMin) / Math.max(Number.EPSILON, shownMax - shownMin)) * 100;
-  const text = formatMeasurementNumber(shown, workspace.accuracy, shownStep);
+  const text = whole ? String(Math.round(shown)) : formatMeasurementNumber(shown, workspace.accuracy, shownStep);
   useLanguage();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
