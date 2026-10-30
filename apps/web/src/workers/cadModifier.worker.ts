@@ -2,6 +2,7 @@
 
 import * as THREE from "three";
 import { JoinType, OcctKernel, type ShapeHandle } from "occt-wasm";
+import { CANNOT_OFFSET_MESSAGE, offsetSolid } from "@/lib/cadOffset";
 import { describeHollowFaces, hollowSidesWithoutFace, openingFaceIndexes, type CadHollowOpening } from "@/lib/cadHollow";
 import { buildProfileExtrusionSolid } from "@/lib/cadProfileSolid";
 import type { CadModifierComponentMesh, CadModifierDeflection, CadModifierDisplayEdge, CadModifierEdge, CadModifierKind, CadModifierMeshPart, CadModifierPrimitivePart, CadModifierQuality, CadModifierWorkerRequest, CadModifierWorkerResponse } from "@/lib/cadModifierTypes";
@@ -743,17 +744,22 @@ self.onmessage = async (event: MessageEvent<CadModifierWorkerRequest>) => {
       });
       return;
     }
-    if (request.type === "hollow") {
+    // Der Versatz laeuft dieselbe Strecke wie das Aushoehlen; nur die
+    // Rechnung je Koerper ist eine andere.
+    if (request.type === "hollow" || request.type === "offset") {
       if (baseShape === null) throw new Error("Prepare an object before hollowing");
       const shells: ShapeHandle[] = [];
       let hollowed: ShapeHandle | null = null;
+      const size = request.type === "hollow" ? request.thickness : request.distance;
       try {
         for (const solid of baseSolids) {
-          shells.push(hollowSolid(activeCad, solid, request.thickness, request.opening, request.join));
+          shells.push(request.type === "hollow"
+            ? hollowSolid(activeCad, solid, request.thickness, request.opening, request.join)
+            : offsetSolid(activeCad, solid, request.distance, request.shrink, request.join));
         }
         hollowed = shells.length === 1 ? shells[0] : activeCad.makeCompound(shells);
-        if (!cadShapeIsUsableSolid(activeCad, hollowed)) throw new Error("The chosen wall leaves no hollow body");
-        const requested = cadModifierTessellationDeflection(request.quality, request.thickness, request.minDeflection);
+        if (!cadShapeIsUsableSolid(activeCad, hollowed)) throw new Error(request.type === "hollow" ? "The chosen wall leaves no hollow body" : CANNOT_OFFSET_MESSAGE);
+        const requested = cadModifierTessellationDeflection(request.quality, size, request.minDeflection);
         const meshed = meshTreatedBody(activeCad, [...shells], hollowed, requested);
         shells.splice(0, shells.length, ...meshed.components);
         hollowed = meshed.result;

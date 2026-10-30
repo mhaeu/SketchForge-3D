@@ -140,6 +140,26 @@ export function ToolbarIntersectionIcon(props: IconProps) {
   );
 }
 
+/** Versatz: ein Quader, um den ein gestrichelter, groesserer laeuft. */
+export function ToolbarOffsetIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" {...props}>
+      <path d="M15 17h18v18H15Z" fill="currentColor" fillOpacity="0.22" />
+      <path d="M9 11h30v30H9Z" strokeDasharray="4 3" />
+    </svg>
+  );
+}
+
+/** Ausschneiden: ein Block mit einer Kerbe oben und daneben gestrichelt das Teil, das hineinpasst. */
+export function ToolbarCutOutIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" {...props}>
+      <path d="M6 22h14v6h8v-6h14v18H6Z" fill="currentColor" fillOpacity="0.22" />
+      <path d="M20 8h8v14h-8Z" strokeDasharray="4 3" />
+    </svg>
+  );
+}
+
 /** Huelle: zwei verschieden grosse Teile, von einem Umriss umschlossen, der beide beruehrt. */
 export function ToolbarHullIcon(props: IconProps) {
   return (

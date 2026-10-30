@@ -141,6 +141,20 @@ export type CadModifierWorkerRequest =
       quality: CadModifierQuality;
       minDeflection?: CadModifierDeflection;
     }
+  | {
+      /**
+       * Versatz: jede Flaeche des vorbereiteten Koerpers um `distance` nach
+       * aussen oder (`shrink`) nach innen. Die Antwort ist dieselbe wie beim
+       * Aushoehlen.
+       */
+      type: "offset";
+      requestId: number;
+      distance: number;
+      shrink: boolean;
+      join: CadHollowJoin;
+      quality: CadModifierQuality;
+      minDeflection?: CadModifierDeflection;
+    }
   | { type: "dispose"; requestId: number };
 
 export type CadModifierWorkerResponse =

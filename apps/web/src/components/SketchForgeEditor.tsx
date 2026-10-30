@@ -71,6 +71,8 @@ import {
   ToolbarImportIcon,
   ToolbarIntersectionIcon,
   ToolbarHullIcon,
+  ToolbarOffsetIcon,
+  ToolbarCutOutIcon,
   ToolbarTrimIcon,
   ToolbarTrimBelowIcon,
   ToolbarBoreIcon,
@@ -234,6 +236,7 @@ import { selectionCentre, setDownRotation, setDownTranslation } from "@/lib/setD
 import { bodiesTooTall } from "@/lib/buildVolume";
 import { toolbarDensityFor, toolbarRowWidth, type ToolbarRowItem } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
+import { normalizeOffsetDistance } from "@/lib/cadOffset";
 
 /** Womit das Aushoehlen anfaengt: der Deckel offen, der Rest zu. */
 const HOLLOW_OPENING_TOP: CadHollowOpening = ["top"];
@@ -244,6 +247,7 @@ import { HolePatternPanel } from "./workplane/HolePatternPanel";
 import { MateFacesPanel } from "./workplane/MateFacesPanel";
 import { PointTargetPanel } from "./workplane/PointTargetPanel";
 import { OpenGroupPanel } from "./workplane/OpenGroupPanel";
+import { OffsetPanel } from "./workplane/OffsetPanel";
 import { HollowPanel } from "./workplane/HollowPanel";
 import { ObjectListPanel } from "./workplane/ObjectListPanel";
 import {
@@ -329,7 +333,18 @@ type EdgeModifierSession = {
    * Vorschau, Fehlerbehandlung, Escape und Eingabe - ist dieselbe, darum liegt
    * es in derselben Sitzung.
    */
-  hollow: { thickness: number; opening: CadHollowOpening; join: CadHollowJoin } | null;
+  hollow: {
+    thickness: number;
+    opening: CadHollowOpening;
+    join: CadHollowJoin;
+    /*
+     * Gesetzt beim Versatz: Dann ist `thickness` der Abstand, um den jede
+     * Flaeche wandert, und `opening` bleibt leer. `keepOriginal` legt den
+     * versetzten Koerper als Loch neben den alten, `cutInto` schneidet ihn
+     * gleich aus diesem Koerper aus (Ausschneiden mit Spiel).
+     */
+    offset?: { shrink: boolean; keepOriginal: boolean; cutInto?: string };
+  } | null;
 };
 
 type EdgeModifierComponentPreview = {
@@ -7085,7 +7100,7 @@ export function SketchForgeEditor({
         // der geht jetzt raus, und die Meldung wartet auf dessen Ergebnis.
         const queuedNext = cadPreviewQueueRef.current.settle(message.requestId);
         if (preview && queuedNext.status !== "sent") {
-          setNotice(edgeModifierRef.current?.hollow ? t("status.hollowReady") : t("status.edgePreviewReady"));
+          setNotice(edgeModifierRef.current?.hollow?.offset ? t("status.offsetReady") : edgeModifierRef.current?.hollow ? t("status.hollowReady") : t("status.edgePreviewReady"));
         }
         return;
       }
@@ -10262,8 +10277,11 @@ export function SketchForgeEditor({
   const startEdgeModifier = useCallback((
     kind: CadModifierKind,
     hollow: EdgeModifierSession["hollow"] = null,
+    // Ein anderer Koerper als die Auswahl, etwa das Teil beim Ausschneiden.
+    baseOverride?: WorkplaneShape,
   ) => {
-    if (selectedShapes.length !== 1 || !selectedShape || selectedShape.locked || selectedShape.hole) {
+    const selectedShape = baseOverride ?? selectedShapes.at(-1) ?? null;
+    if ((!baseOverride && selectedShapes.length !== 1) || !selectedShape || selectedShape.locked || selectedShape.hole) {
       setNotice(t("status.selectOneUnlocked", { kind }));
       return;
     }
@@ -10336,7 +10354,7 @@ export function SketchForgeEditor({
       componentPreviews: [],
       hollow,
     });
-    setNotice(hollow ? t("status.preparingHollow") : t("status.preparingEdges", { kind }));
+    setNotice(hollow?.offset ? t("status.preparingOffset") : hollow ? t("status.preparingHollow") : t("status.preparingEdges", { kind }));
     const parts: CadModifierMeshPart[] = partInputs.map((part) => {
       if (part.brep) return { brep: part.brep, brepTransform: part.brepTransform, hole: Boolean(part.shape.hole) };
       if (part.stepText) {
@@ -10364,7 +10382,7 @@ export function SketchForgeEditor({
     }
     cadModifierPrepareRef.current = prepareRequestId;
     armCadModifierWatchdog(prepareRequestId, "prepare", cadModifierPrepareTimeoutMs(triangleCount, exactSourceLength));
-  }, [armCadModifierWatchdog, invalidateCadModifierSession, postCadModifierRequest, selectedShape, selectedShapes.length]);
+  }, [armCadModifierWatchdog, invalidateCadModifierSession, postCadModifierRequest, selectedShapes]);
 
   const prepareCadModifierForMcp = useCallback(async (shape: WorkplaneShape, sharpAngle: number) => {
     if (shape.locked || shape.hole) {
@@ -10574,13 +10592,10 @@ export function SketchForgeEditor({
    */
   const sendCadHollow = useCallback((hollow: NonNullable<EdgeModifierSession["hollow"]>) => {
     if (!cadModifierBaseShapeRef.current) return;
-    const requestId = postCadModifierRequest({
-      type: "hollow",
-      thickness: hollow.thickness,
-      opening: hollow.opening,
-      join: hollow.join,
-      quality: edgeModifierRef.current?.quality ?? "standard",
-    });
+    const quality = edgeModifierRef.current?.quality ?? "standard";
+    const requestId = postCadModifierRequest(hollow.offset
+      ? { type: "offset", distance: hollow.thickness, shrink: hollow.offset.shrink, join: hollow.join, quality }
+      : { type: "hollow", thickness: hollow.thickness, opening: hollow.opening, join: hollow.join, quality });
     if (requestId === null) {
       const message = cadModifierWorkerFailureMessage();
       setEdgeModifier((current) => current ? { ...current, busy: false, preview: null, error: message } : current);
@@ -10590,7 +10605,9 @@ export function SketchForgeEditor({
     cadModifierLatestPreviewRef.current = requestId;
     armCadModifierWatchdog(requestId, "preview");
     setEdgeModifier((current) => current ? { ...current, hollow, busy: true, preview: null, error: null } : current);
-    setNotice(t("status.hollowRunning", { wall: Number(hollow.thickness.toFixed(2)) }));
+    setNotice(hollow.offset
+      ? t("status.offsetRunning", { distance: Number(hollow.thickness.toFixed(2)) })
+      : t("status.hollowRunning", { wall: Number(hollow.thickness.toFixed(2)) }));
   }, [armCadModifierWatchdog]);
 
   useEffect(() => {
@@ -10626,6 +10643,68 @@ export function SketchForgeEditor({
     });
   }, [selectedShape, startEdgeModifier]);
 
+  /**
+   * Versatz anfangen: dieselbe Sitzung wie beim Aushoehlen, mit einem
+   * Abstand statt einer Wand. Nach layerling 1.113.0 (#919).
+   */
+  const startOffset = useCallback(() => {
+    if (!selectedShape) {
+      setNotice(t("status.selectShapeFirst"));
+      return;
+    }
+    startEdgeModifier("fillet", {
+      thickness: normalizeOffsetDistance(0.2),
+      opening: [],
+      join: "round",
+      offset: { shrink: false, keepOriginal: false },
+    });
+  }, [selectedShape, startEdgeModifier]);
+
+  /*
+   * Ausschneiden mit Spiel: Zwei Koerper sind gewaehlt; der kleinere ist das
+   * Teil, das an seinem Platz bleibt, aus dem anderen wird eine um das Spiel
+   * gewachsene Kopie davon herausgeschnitten. Das Wachsen macht der Versatz,
+   * also oeffnet sich dessen Feld mit dem Teil. Nach layerling 1.113.0 (#927).
+   */
+  const cutOutPair = useCallback((swap = false) => {
+    const solids = selectedShapes.filter((shape) => !shape.locked && !shape.hole && isSolidShape(shape));
+    if (selectedShapes.length !== 2 || solids.length !== 2) return null;
+    const volume = (shape: WorkplaneShape) => shapeWidth(shape) * shapeDepth(shape) * shape.height;
+    const [part, host] = volume(solids[0]) <= volume(solids[1]) ? solids : [solids[1], solids[0]];
+    return swap ? { part: host, host: part } : { part, host };
+  }, [selectedShapes]);
+
+  const startCutOut = useCallback((swap = false) => {
+    const pair = cutOutPair(swap);
+    if (!pair) {
+      setNotice(t("status.cutOutSelectTwo"));
+      return;
+    }
+    startEdgeModifier("fillet", {
+      thickness: normalizeOffsetDistance(0.2),
+      opening: [],
+      join: "round",
+      offset: { shrink: false, keepOriginal: true, cutInto: pair.host.id },
+    }, pair.part);
+  }, [cutOutPair, startEdgeModifier]);
+
+  const changeOffset = useCallback((next: { distance?: number; shrink?: boolean; join?: CadHollowJoin; keepOriginal?: boolean }) => {
+    const current = edgeModifierRef.current?.hollow;
+    if (!current?.offset) return;
+    const offset = {
+      ...current.offset,
+      ...(next.shrink !== undefined ? { shrink: next.shrink } : {}),
+      ...(next.keepOriginal !== undefined ? { keepOriginal: next.keepOriginal } : {}),
+    };
+    const thickness = normalizeOffsetDistance(next.distance ?? current.thickness);
+    // Nur wer den Koerper aendert, braucht eine neue Rechnung.
+    if (thickness === current.thickness && offset.shrink === current.offset.shrink && (next.join ?? current.join) === current.join) {
+      setEdgeModifier((session) => session?.hollow ? { ...session, hollow: { ...session.hollow, offset } } : session);
+      return;
+    }
+    sendCadHollowRef.current?.({ ...current, thickness, join: next.join ?? current.join, offset });
+  }, []);
+
   const changeHollow = useCallback((next: { wall?: number; opening?: CadHollowOpening; join?: CadHollowJoin }) => {
     const current = edgeModifierRef.current?.hollow;
     if (!current) return;
@@ -10647,6 +10726,51 @@ export function SketchForgeEditor({
      * *einer Kante*, die man einzeln zuruecknehmen koennte, sondern eine neue
      * Form. Zurueck geht es ueber den Verlauf wie bei jedem anderen Schritt.
      */
+    if (edgeModifier.hollow?.offset) {
+      const offset = edgeModifier.hollow.offset;
+      const distance = Number(edgeModifier.hollow.thickness.toFixed(2));
+      const offsetShape = canonicalizeShape({
+        ...bakedEdgeTreatmentPreview(edgeModifier.preview, base),
+        name: base.name,
+        color: base.color,
+        cadDisplayEdgesVersion: 2 as const,
+      });
+      if (!offset.keepOriginal) {
+        commitShapes(
+          shapes.map((shape) => (shape.id === base.id ? offsetShape : shape)),
+          base.id,
+          t(offset.shrink ? "status.offsetShrunk" : "status.offsetGrown", { distance }),
+        );
+        invalidateCadModifierSession();
+        return;
+      }
+      const hole = canonicalizeShape(withHoleMode({ ...offsetShape, id: createLocalId("offset-hole"), name: `${base.name} +${distance}` }, true));
+      const host = offset.cutInto ? shapes.find((shape) => shape.id === offset.cutInto) : undefined;
+      invalidateCadModifierSession();
+      if (!host) {
+        commitShapes([...shapes, hole], hole.id, t("status.offsetHoleAdded", { distance }));
+        return;
+      }
+      void (async () => {
+        const sourceFingerprint = projectShapesFingerprint(shapesRef.current);
+        const result = await buildGroupedShapeFromSelection([host, hole]);
+        if (projectShapesFingerprint(shapesRef.current) !== sourceFingerprint) {
+          setNotice(t("status.cutOutChanged"));
+          return;
+        }
+        if (!result.group) {
+          setNotice(result.failureNotice);
+          return;
+        }
+        const group = canonicalizeShape({ ...result.group, name: host.name, color: host.color, groupOperation: "group" });
+        commitShapes(
+          [...shapesRef.current.filter((shape) => shape.id !== host.id), group],
+          [group.id, base.id],
+          t("status.cutOutDone", { part: base.name, host: host.name, distance }),
+        );
+      })();
+      return;
+    }
     if (edgeModifier.hollow) {
       const hollowShape = canonicalizeShape({
         ...bakedEdgeTreatmentPreview(edgeModifier.preview, base),
@@ -13418,7 +13542,12 @@ export function SketchForgeEditor({
         onPivot={togglePivotTool}
         pivotActive={pivotMode || Boolean(rotationPivot)}
         onHollow={startHollow}
-        hollowActive={Boolean(edgeModifier?.hollow)}
+        hollowActive={Boolean(edgeModifier?.hollow && !edgeModifier.hollow.offset)}
+        onOffset={startOffset}
+        offsetActive={Boolean(edgeModifier?.hollow?.offset && !edgeModifier.hollow.offset.cutInto)}
+        onCutOut={() => startCutOut()}
+        canCutOut={Boolean(cutOutPair())}
+        cutOutActive={Boolean(edgeModifier?.hollow?.offset?.cutInto)}
         onLayFlat={toggleLayFlatTool}
         layFlatActive={layFlatMode}
         onMateFaces={toggleMateFaces}
@@ -13728,7 +13857,25 @@ export function SketchForgeEditor({
           }}
         />
       ) : null}
-      {edgeModifier?.hollow ? (
+      {edgeModifier?.hollow?.offset ? (
+        <OffsetPanel
+          distance={edgeModifier.hollow.thickness}
+          shrink={edgeModifier.hollow.offset.shrink}
+          join={edgeModifier.hollow.join}
+          keepOriginal={edgeModifier.hollow.offset.keepOriginal}
+          cutOut={edgeModifier.hollow.offset.cutInto
+            ? { part: cadModifierBaseShapeRef.current?.name ?? "", host: shapes.find((shape) => shape.id === edgeModifier.hollow?.offset?.cutInto)?.name ?? "" }
+            : null}
+          workspace={workspaceSettings}
+          busy={edgeModifier.busy}
+          error={edgeModifier.error}
+          ready={Boolean(edgeModifier.preview) && !edgeModifier.busy && !edgeModifier.error}
+          onChange={changeOffset}
+          onSwap={() => startCutOut(cadModifierBaseShapeRef.current?.id === cutOutPair()?.part.id)}
+          onApply={applyEdgeModifier}
+          onCancel={cancelEdgeModifier}
+        />
+      ) : edgeModifier?.hollow ? (
         <HollowPanel
           wall={edgeModifier.hollow.thickness}
           opening={edgeModifier.hollow.opening}
@@ -14077,6 +14224,11 @@ function SecondaryToolbar({
   pivotActive,
   onHollow,
   hollowActive,
+  onOffset,
+  offsetActive,
+  onCutOut,
+  canCutOut,
+  cutOutActive,
   onLayFlat,
   layFlatActive,
   onMateFaces,
@@ -14202,6 +14354,11 @@ function SecondaryToolbar({
   pivotActive: boolean;
   onHollow: () => void;
   hollowActive: boolean;
+  onOffset: () => void;
+  offsetActive: boolean;
+  onCutOut: () => void;
+  canCutOut: boolean;
+  cutOutActive: boolean;
   onLayFlat: () => void;
   layFlatActive: boolean;
   onMateFaces: () => void;
@@ -14494,6 +14651,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.openGroup"), icon: ToolbarOpenGroupIcon, action: onOpenGroup, enabled: canUngroup, active: groupOpen },
     { label: t("editor.tool.intersect"), icon: ToolbarIntersectionIcon, action: onIntersect, enabled: canIntersect },
     { label: t("editor.tool.hull"), icon: ToolbarHullIcon, action: onHull, enabled: canHull },
+    { label: t("editor.tool.cutOut"), icon: ToolbarCutOutIcon, action: onCutOut, enabled: canCutOut, active: cutOutActive },
     { label: t("editor.tool.trimAbove"), icon: ToolbarTrimIcon, action: () => onTrim("above"), enabled: hasSelection },
     { label: t("editor.tool.trimBelow"), icon: ToolbarTrimBelowIcon, action: () => onTrim("below"), enabled: hasSelection },
     { label: t("editor.tool.trimFlushAbove"), icon: ToolbarTrimFlushIcon, action: () => onTrimFlush("above"), enabled: canTrimFlush },
@@ -14513,6 +14671,7 @@ function SecondaryToolbar({
     { label: t("editor.tool.variableFillet"), icon: ToolbarVariableFilletIcon, action: onVariableFillet, enabled: canEdgeModify, active: edgeModifierKind === "variableFillet" },
     // Aushoehlen braucht denselben exakten Koerper wie die Kantenwerkzeuge.
     { label: t("editor.tool.hollow"), icon: ToolbarHollowIcon, action: onHollow, enabled: canEdgeModify, active: hollowActive },
+    { label: t("editor.tool.offset"), icon: ToolbarOffsetIcon, action: onOffset, enabled: canEdgeModify, active: offsetActive },
     { label: t("editor.tool.split"), icon: ToolbarSplitIcon, action: onSplit, enabled: hasSelection, active: splitActive },
     // Neben dem Teilen, weil es dieselbe Frage stellt: welche Flaeche?
     { label: t("editor.tool.holePattern"), icon: ToolbarHolePatternIcon, action: onHolePattern, enabled: hasSelection, active: holePatternActive },
