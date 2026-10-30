@@ -174,6 +174,7 @@ import { bakedRotationForBake, parametricRebuildPlan, parametricSourceForBake, p
 import { createLocalId } from "@/lib/localIds";
 import { projectExportFileName } from "@/lib/exportNames";
 import { exportMeshesToObj } from "@/lib/objExport";
+import { curveThroughPoints } from "@/lib/sketchCurveThroughPoints";
 import { arcBulgeAlong, arcCubics, arcThroughThreePoints, isArcSegment, retargetSketchArcs, stepsEncloseArea } from "@/lib/sketchArcs";
 import { buildSweepMesh } from "@/lib/sweepMesh";
 import { splitSweepDrawing, sweepPathPoint } from "@/lib/sketchSweep";
@@ -13799,6 +13800,14 @@ export function SketchForgeEditor({
             onInsertPoint={insertSketchPoint}
             onSetPointMode={setSketchPointMode}
             onRoundPoint={roundSketchPoint}
+            onCurveThroughPoints={(pointIds) => {
+              const result = curveThroughPoints(sketchProfile, pointIds);
+              if (!result) {
+                setNotice(t("sketch.curveThroughPointsNone"));
+                return;
+              }
+              commitSketchProfile(result.profile, t("sketch.curveThroughPointsDone", { count: result.count }));
+            }}
             onMarkPath={markSketchSweepPath}
             onBendSegment={bendSketchSegment}
             onClearMeasurement={clearSketchMeasurement}

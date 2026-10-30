@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Split, Trash2, Waves, Waypoints } from "lucide-react";
+import { ChevronUp, Circle, CornerDownRight, Home, Link, Link2Off, LockKeyhole, LockKeyholeOpen, Minus, Plus, Spline, Split, Trash2, Waves, Waypoints } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { SnapGridControl } from "@/components/workplane/ShapeInspector";
 import { SketchRevolvePreview } from "@/components/SketchRevolvePreview";
@@ -72,6 +72,8 @@ type SketchWorkspaceProps = {
   onSetPointMode: (id: string, mode: "corner" | "smooth" | "split") => void;
   /** Aus der Ecke einen echten Kreisbogen machen. */
   onRoundPoint: (id: string) => void;
+  /** Kurve durch die gewaehlten Punkte (drei oder mehr). */
+  onCurveThroughPoints: (pointIds: string[]) => void;
   /** Den Zug, zu dem diese Kante gehoert, als Weg festlegen - oder wieder freigeben. */
   onMarkPath: (segmentId: string) => void;
   /** Die Woelbung eines Bogens setzen - null macht wieder eine Strecke daraus. */
@@ -557,6 +559,7 @@ export function SketchWorkspace({
   onInsertPoint,
   onSetPointMode,
   onRoundPoint,
+  onCurveThroughPoints,
   onMarkPath,
   onBendSegment,
   onClearMeasurement,
@@ -1897,6 +1900,11 @@ export function SketchWorkspace({
               echter Kreisbogen - eine Rundung mit einem Halbmesser, den man
               nennen kann, statt einer Kurve mit Griffen. */}
           <button type="button" title={t("sketch.roundCorner")} onClick={() => onRoundPoint(selectedPoint.id)}><Circle /><span>{t("sketch.round")}</span></button>
+        </div>
+      ) : null}
+      {selected?.kind === "multiple" && selected.pointIds.length >= 3 && tool === "select" ? (
+        <div className="sketch-point-actions" aria-label={t("sketch.pointActions")}>
+          <button type="button" title={t("sketch.curveThroughPointsHint")} onClick={() => onCurveThroughPoints(selected.pointIds)}><Spline /><span>{t("sketch.curveThroughPoints")}</span></button>
         </div>
       ) : null}
       {operation === "sweep" && tool === "select" ? (() => {
