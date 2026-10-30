@@ -1,5 +1,23 @@
 "use client";
 
+import {
+  MAX_GRIDFINITY_HEIGHT_UNITS,
+  MAX_GRIDFINITY_TRAY_HEIGHT,
+  MAX_GRIDFINITY_TRAY_SIZE,
+  MIN_GRIDFINITY_TRAY_HEIGHT,
+  MIN_GRIDFINITY_TRAY_SIZE,
+  MIN_GRIDFINITY_UNITS,
+  MIN_GRIDFINITY_WALL_THICKNESS,
+  gridfinityCompartmentCount,
+  gridfinityCompartmentCountPatch,
+  gridfinityCompartmentMax,
+  gridfinityMaxUnits,
+  gridfinityShapePatch,
+  gridfinityUnits,
+  gridfinityWallMaxThickness,
+  gridfinityWallThickness,
+  normalizeGridfinityType,
+} from "@/lib/gridfinityGeometry";
 import { ChevronDown, ChevronUp, Link2, LockKeyhole, LockKeyholeOpen, Split, Unlink2 } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { ToolbarHideSelectedIcon } from "@/components/icons";
@@ -173,7 +191,7 @@ import {
   isPolygonLoftShape,
   loftSettings,
 } from "@/lib/loftGeometry";
-import type { CustomSnapGrid, GearType, GridSize, LoftProfileShape, MeasurementAccuracy, ThreadDrive, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
+import type { CustomSnapGrid, GearType, GridfinityType, GridSize, LoftProfileShape, MeasurementAccuracy, ThreadDrive, ThreadShapeParams, WorkplaneShape, WorkplaneWorkspaceSettings } from "@/types/sketchforge";
 
 const MIN_SHAPE_SIZE = 0.01;
 const SOLID_COLORS = [
@@ -942,6 +960,66 @@ function getShapePropertiesWithAppLimits(
         onChange: (gearBacklash) => onUpdate({ gearBacklash }),
       },
     ];
+  }
+
+  if (shape.kind === "gridfinity") {
+    /*
+     * Gridfinity: Ein Behaelter oder eine Grundplatte zaehlt Rastereinheiten
+     * von 42 mm (Hoehe 7 mm), eine Schale hat freie Masse. Gezeigt werden die
+     * Einstellungen, die man am haeufigsten braucht; alle anderen, die eine
+     * Datei aus layerling mitbringt, bleiben erhalten und wirken weiter.
+     */
+    const fields = { ...shape, width, depth };
+    const type = normalizeGridfinityType(shape.gridfinityType);
+    const count = gridfinityUnits(fields);
+    const onOff = [{ value: "on", label: t("common.on") }, { value: "off", label: t("common.off") }];
+    const toggle = (id: string, label: string, on: boolean, patch: (on: boolean) => Partial<WorkplaneShape>): ShapePropertyConfig => ({
+      type: "select", id, label, value: on ? "on" : "off", options: onOff, onChange: (value) => onUpdate(patch(value === "on")),
+    });
+    const units = (next: { type?: GridfinityType; x?: number; z?: number; y?: number; lip?: boolean; halfGrid?: boolean }) => onUpdate(gridfinityShapePatch(fields, next));
+    const properties: ShapePropertyConfig[] = [{
+      type: "select",
+      id: "gridfinityType",
+      label: t("gridfinity.type"),
+      value: type,
+      options: [
+        { value: "bin", label: t("gridfinity.bin") },
+        { value: "baseplate", label: t("gridfinity.baseplate") },
+        { value: "tray", label: t("gridfinity.tray") },
+      ],
+      onChange: (value) => units({ type: normalizeGridfinityType(value) }),
+    }];
+    if (type === "tray") {
+      properties.push(
+        { id: "width", label: t("prop.width"), value: width, min: MIN_GRIDFINITY_TRAY_SIZE, max: MAX_GRIDFINITY_TRAY_SIZE, onChange: setWidth },
+        { id: "length", label: t("prop.length"), value: depth, min: MIN_GRIDFINITY_TRAY_SIZE, max: MAX_GRIDFINITY_TRAY_SIZE, onChange: setDepth },
+        { id: "height", label: t("prop.height"), value: shape.height, min: MIN_GRIDFINITY_TRAY_HEIGHT, max: MAX_GRIDFINITY_TRAY_HEIGHT, onChange: setHeight },
+      );
+    } else {
+      const max = gridfinityMaxUnits(fields);
+      properties.push(
+        { id: "gridfinityUnitsX", label: t("gridfinity.unitsX"), value: count.x, min: MIN_GRIDFINITY_UNITS, max, step: 1, onChange: (x) => units({ x }) },
+        { id: "gridfinityUnitsZ", label: t("gridfinity.unitsZ"), value: count.z, min: MIN_GRIDFINITY_UNITS, max, step: 1, onChange: (z) => units({ z }) },
+      );
+      if (type === "bin") {
+        properties.push(
+          { id: "gridfinityUnitsY", label: t("gridfinity.unitsY"), value: count.y, min: MIN_GRIDFINITY_UNITS, max: MAX_GRIDFINITY_HEIGHT_UNITS, step: 1, onChange: (y) => units({ y }) },
+          toggle("gridfinityLip", t("gridfinity.lip"), shape.gridfinityLip !== false, (lip) => gridfinityShapePatch(fields, { lip })),
+          toggle("gridfinityMagnets", t("gridfinity.magnets"), shape.gridfinityMagnets === true, (gridfinityMagnets) => ({ gridfinityMagnets })),
+          toggle("gridfinityHalfGrid", t("gridfinity.halfGrid"), shape.gridfinityHalfGrid === true, (halfGrid) => gridfinityShapePatch(fields, { halfGrid })),
+        );
+      }
+    }
+    if (type !== "baseplate") {
+      properties.push(
+        { id: "thickness", label: t("gridfinity.wall"), value: gridfinityWallThickness(fields), min: MIN_GRIDFINITY_WALL_THICKNESS, max: Math.max(MIN_GRIDFINITY_WALL_THICKNESS, gridfinityWallMaxThickness(fields)), step: 0.05, onChange: (gridfinityWallThickness) => onUpdate({ gridfinityWallThickness }) },
+        { id: "gridfinityCompartmentsX", label: t("gridfinity.compartmentsX"), value: gridfinityCompartmentCount(fields, "x"), min: 1, max: Math.max(1, gridfinityCompartmentMax(fields, "x")), step: 1, onChange: (value) => onUpdate(gridfinityCompartmentCountPatch("x", value)) },
+        { id: "gridfinityCompartmentsZ", label: t("gridfinity.compartmentsZ"), value: gridfinityCompartmentCount(fields, "z"), min: 1, max: Math.max(1, gridfinityCompartmentMax(fields, "z")), step: 1, onChange: (value) => onUpdate(gridfinityCompartmentCountPatch("z", value)) },
+        toggle("gridfinityScoopFront", t("gridfinity.scoopFront"), shape.gridfinityScoopFront === true, (gridfinityScoopFront) => ({ gridfinityScoopFront })),
+        toggle("gridfinityLabelBack", t("gridfinity.labelBack"), shape.gridfinityLabelBack === true, (gridfinityLabelBack) => ({ gridfinityLabelBack })),
+      );
+    }
+    return properties;
   }
 
   if (shape.kind === "knurl") {

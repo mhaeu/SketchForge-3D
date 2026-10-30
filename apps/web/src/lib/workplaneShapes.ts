@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { createLocalId } from "@/lib/localIds";
 import { createThreadShapeFields } from "@/lib/threadShape";
 import { threadFootprintPatch } from "@/lib/threadGeometry";
+import { GRIDFINITY_PADDING_KEYS, gridfinityFootprintPatch, normalizeGridfinityPadding } from "@/lib/gridfinityGeometry";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
 export function normalizeDegrees(value: number) {
@@ -692,6 +693,14 @@ export function canonicalizeShape(shape: WorkplaneShape): WorkplaneShape {
   if (next.kind === "thread") {
     Object.assign(next, threadFootprintPatch(next));
     next.size = resizedShapeSize(next.width, next.depth);
+  }
+  // Ein Gridfinity-Behaelter oder eine Grundplatte sind ganze Rastereinheiten,
+  // was auch immer ihr Mass gesetzt hat; eine Schale bleibt in ihren Grenzen.
+  if (next.kind === "gridfinity") {
+    for (const key of Object.values(GRIDFINITY_PADDING_KEYS)) if (typeof next[key] === "number") next[key] = normalizeGridfinityPadding(next[key]);
+    const footprint = gridfinityFootprintPatch(next);
+    Object.assign(next, footprint);
+    next.size = resizedShapeSize(footprint.width, footprint.depth);
   }
   if (shape.groupedShapes) {
     next.groupedShapes = shape.groupedShapes.map(canonicalizeShape);

@@ -190,7 +190,7 @@ export function arrowNudgeStep(size: GridSize, shift: boolean) {
 const customizableShapeKinds: ShapeKind[] = [
   "box", "roundedBox", "honeycomb", "cylinder", "ellipse", "sphere", "sketch", "scribble", "cone", "pyramid", "roof", "text", "roundRoof",
   "halfSphere", "torus", "tube", "gear", "rack", "ringGear", "knurl", "thread", "spring", "ruler", "ring", "wedge", "polygon", "icosahedron",
-  "mesh", "loft", "counterbore", "countersink", "teardrop",
+  "gridfinity", "mesh", "loft", "counterbore", "countersink", "teardrop",
 ];
 
 function numberOrDefault(value: unknown, fallback: number) {

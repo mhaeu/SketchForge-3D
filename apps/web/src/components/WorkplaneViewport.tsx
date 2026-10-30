@@ -31,6 +31,9 @@ import { createGearGeometry } from "@/lib/gearGeometry";
 import { createRackGeometry } from "@/lib/rackGeometry";
 import { createRingGearGeometry } from "@/lib/ringGearGeometry";
 import { createKnurlGeometry } from "@/lib/knurlGeometry";
+import { createGridfinityGeometry } from "@/lib/gridfinityGeometry";
+import { pickGridfinityFields } from "@/lib/gridfinityFields";
+import { manifoldRevision, onManifoldReady } from "@/lib/manifoldHandle";
 import { createThreadGeometry } from "@/lib/threadGeometry";
 import { createSpringGeometry } from "@/lib/springGeometry";
 import { createLoftGeometry } from "@/lib/loftGeometry";
@@ -176,6 +179,7 @@ const SHAPE_KINDS = new Set<ShapeAsset["kind"]>([
   "rack",
   "ringGear",
   "knurl",
+  "gridfinity",
   "ring",
   "wedge",
   "polygon",
@@ -1401,6 +1405,8 @@ function rulerShapeTopologyKey(shape: WorkplaneShape): string {
     knurlDepth: shape.knurlDepth,
     knurlAngle: shape.knurlAngle,
     knurlChamfer: shape.knurlChamfer,
+    // Ohne die Laufzeit fehlen Etikettenleisten und Mulden; ist sie da, wird neu gebaut.
+    ...(shape.kind === "gridfinity" ? { ...pickGridfinityFields(shape), manifold: manifoldRevision() } : {}),
     threadRole: shape.threadRole,
     threadHead: shape.threadHead,
     threadDrive: shape.threadDrive,
@@ -1611,6 +1617,8 @@ function shapeGeometrySignature(shape: WorkplaneShape): string {
     knurlDepth: shape.knurlDepth,
     knurlAngle: shape.knurlAngle,
     knurlChamfer: shape.knurlChamfer,
+    // Ohne die Laufzeit fehlen Etikettenleisten und Mulden; ist sie da, wird neu gebaut.
+    ...(shape.kind === "gridfinity" ? { ...pickGridfinityFields(shape), manifold: manifoldRevision() } : {}),
     threadRole: shape.threadRole,
     threadHead: shape.threadHead,
     threadDrive: shape.threadDrive,
@@ -4287,6 +4295,18 @@ export function WorkplaneViewport({
     }
     onWorkspaceSettingsChange?.({ workspace: normalizedWorkspace, snap: normalizedSnap });
   }, [onWorkspaceSettingsChange, snap, workspace]);
+
+  /*
+   * Etikettenleisten und Mulden eines Gridfinity-Behaelters braucht Manifold.
+   * Bis die Laufzeit da ist, steht der Behaelter ohne sie; danach wird neu
+   * gebaut (der Fingerabdruck enthaelt manifoldRevision).
+   */
+  useEffect(() => onManifoldReady(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    rebuildShapes(state, shapesRef.current, renderSelectionIds(), shouldBuildCutPreviews(transformRef.current, dragRef.current), modifierActiveRef.current, placementWorkplaneRef.current);
+    state.needsRender = true;
+  }), []);
 
   useEffect(() => {
     const openWorkspaceSettings = () => setSettingsOpen(true);
@@ -10751,6 +10771,9 @@ function createShapeObject(
         gearPressureAngle: shape.gearPressureAngle,
         gearBacklash: shape.gearBacklash,
       })), material, shape);
+      break;
+    case "gridfinity":
+      addMesh(group, sharedShapeGeometry(geometryCacheKey, () => createGridfinityGeometry({ ...shape, width, depth, height })), material, shape);
       break;
     case "knurl":
       // Die Raendelung ist rund: Breite ist ihr Durchmesser, die Tiefe folgt

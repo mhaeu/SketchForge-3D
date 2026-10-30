@@ -7,6 +7,8 @@ import {
   normalizeHoneycombFrameWidth,
   normalizeHoneycombWallThickness,
 } from "@/lib/honeycombGeometry";
+import { DEFAULT_GRIDFINITY_LIP, DEFAULT_GRIDFINITY_MAGNETS, DEFAULT_GRIDFINITY_TYPE, DEFAULT_GRIDFINITY_UNITS, gridfinitySize } from "@/lib/gridfinityGeometry";
+import { pickGridfinityFields } from "@/lib/gridfinityFields";
 import {
   DEFAULT_ROUNDED_BOX_CORNER_FILLET,
   DEFAULT_ROUNDED_BOX_TOP_BOTTOM_FILLET,
@@ -134,6 +136,7 @@ const SHAPE_LABEL_KEYS: Record<string, MessageKey> = {
   rack: "shape.rack",
   ringGear: "shape.ringGear",
   knurl: "shape.knurl",
+  gridfinity: "shape.gridfinity",
   loft: "shape.loft",
   counterbore: "shape.counterbore",
   countersink: "shape.countersink",
@@ -176,6 +179,9 @@ export const toolbarShapeAssets: ToolbarShapeAsset[] = [
   // Planetengetriebe, und alle drei kommen aus demselben Modul.
   { id: "ringGear", name: "Ring gear", src: "assets/sketchforge/shape-icons-gray/ring-gear.svg", menuIcon: "assets/sketchforge/shape-icons-gray/ring-gear.svg", kind: "ringGear", color: "#6f7f8d" },
   { id: "knurl", name: "Knurl", src: "assets/sketchforge/shape-icons-gray/knurl.png", menuIcon: "assets/sketchforge/shape-icons-gray/knurl.png", kind: "knurl", color: "#7a8a99" },
+  // Gridfinity: Behaelter auf dem 42-mm-Raster, Grundplatten und Schalen.
+  // Nach layerling 1.84.0 (#381) und den Nachfolgern bis 1.116.
+  { id: "gridfinity", name: "Gridfinity", src: "assets/sketchforge/shape-icons-gray/gridfinity.png", menuIcon: "assets/sketchforge/shape-icons-gray/gridfinity.png", kind: "gridfinity", color: "#4f7fa8" },
   { id: "loft", name: "Loft", src: "assets/sketchforge/shape-icons-gray/loft.svg", menuIcon: "assets/sketchforge/shape-icons-gray/loft.svg", kind: "loft", color: "#5b5ce2" },
   // Die drei Bohrformen. Sie sind zum Abziehen gedacht - hinstellen, mit dem
   // Werkstueck verschneiden, fertig - und tragen darum eine eigene Farbe.
@@ -245,6 +251,9 @@ export function shapeAssetDefaultDimensions(kind: ShapeKind) {
       depth: minRackDepth(DEFAULT_GEAR_MODULE),
       height: 6,
     };
+  }
+  if (kind === "gridfinity") {
+    return gridfinitySize(DEFAULT_GRIDFINITY_TYPE, DEFAULT_GRIDFINITY_UNITS);
   }
   if (kind === "knurl") {
     // Ein Griff zum Anfassen: 20 mm dick, 15 hoch. Nicht aus der runden Reihe
@@ -329,6 +338,9 @@ export function shapeAssetSpecialDefaults(kind: ShapeKind, dimensions = shapeAss
       threadClearance: DEFAULT_THREAD_CLEARANCE,
       threadQuality: DEFAULT_THREAD_QUALITY,
     };
+  }
+  if (kind === "gridfinity") {
+    return { gridfinityType: DEFAULT_GRIDFINITY_TYPE, gridfinityLip: DEFAULT_GRIDFINITY_LIP, gridfinityMagnets: DEFAULT_GRIDFINITY_MAGNETS };
   }
   if (kind === "knurl") {
     return {
@@ -437,6 +449,7 @@ export function sceneShape(shape: Partial<WorkplaneShape> & Pick<WorkplaneShape,
     gearPressureAngle: shape.gearPressureAngle,
     gearBacklash: shape.gearBacklash,
     ringRim: shape.ringRim,
+    ...(shape.kind === "gridfinity" ? pickGridfinityFields(shape) : {}),
     knurlPattern: shape.knurlPattern,
     knurlCount: shape.knurlCount,
     knurlDepth: shape.knurlDepth,
@@ -630,6 +643,12 @@ export function makeShapeFromAsset(
     loftTopRotation: asset.kind === "loft" ? 0 : undefined,
     loftSegments: asset.kind === "loft" ? DEFAULT_LOFT_SEGMENTS : undefined,
     loftLayers: asset.kind === "loft" ? DEFAULT_LOFT_LAYERS : undefined,
+    ...(asset.kind === "gridfinity" ? {
+      gridfinityType: DEFAULT_GRIDFINITY_TYPE,
+      gridfinityLip: DEFAULT_GRIDFINITY_LIP,
+      gridfinityMagnets: DEFAULT_GRIDFINITY_MAGNETS,
+      ...pickGridfinityFields(customization as Partial<WorkplaneShape>),
+    } : {}),
     locked: false,
     hidden: false,
   };

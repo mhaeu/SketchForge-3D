@@ -31,7 +31,8 @@ export type ShapeKind =
   | "counterbore"
   | "countersink"
   | "teardrop"
-  | "loft";
+  | "loft"
+  | "gridfinity";
 
 /** Was fuer ein Koerper das Gewinde ist - Stange, Schraube, Gewindestift, Mutter, Loch. */
 export type ThreadRole = "rod" | "screw" | "setScrew" | "nut" | "bore";
@@ -124,6 +125,59 @@ export type ShapeCustomization = {
   gearBacklash?: number;
   /** Hohlrad: der Kranz hinter dem Zahnfuss, in mm. */
   ringRim?: number;
+  /*
+   * Gridfinity: Behaelter, Grundplatte oder Schale. Die Felder und ihre
+   * Bedeutung stehen in gridfinityGeometry.ts (aus layerling uebernommen).
+   */
+  gridfinityType?: GridfinityType;
+  gridfinityLip?: boolean;
+  gridfinityMagnets?: boolean;
+  gridfinityHalfGrid?: boolean;
+  gridfinityLabelBack?: boolean;
+  gridfinityLabelFront?: boolean;
+  gridfinityLabelLeft?: boolean;
+  gridfinityLabelRight?: boolean;
+  gridfinityLabelBackWidth?: number;
+  gridfinityLabelBackLength?: number;
+  gridfinityLabelBackOffset?: number;
+  gridfinityLabelFrontWidth?: number;
+  gridfinityLabelFrontLength?: number;
+  gridfinityLabelFrontOffset?: number;
+  gridfinityLabelLeftWidth?: number;
+  gridfinityLabelLeftLength?: number;
+  gridfinityLabelLeftOffset?: number;
+  gridfinityLabelRightWidth?: number;
+  gridfinityLabelRightLength?: number;
+  gridfinityLabelRightOffset?: number;
+  gridfinityLabelCorner?: GridfinityLabelCorner;
+  gridfinityLabelCornerSize?: number;
+  gridfinityScoopBack?: boolean;
+  gridfinityScoopFront?: boolean;
+  gridfinityScoopLeft?: boolean;
+  gridfinityScoopRight?: boolean;
+  gridfinityScoopRadius?: number;
+  gridfinityFloorHeight?: number;
+  gridfinityOpenBack?: boolean;
+  gridfinityOpenFront?: boolean;
+  gridfinityOpenLeft?: boolean;
+  gridfinityOpenRight?: boolean;
+  gridfinityLipChamfer?: number;
+  gridfinityWallThickness?: number;
+  gridfinityOpeningCorner?: GridfinityLabelCorner;
+  gridfinityOpeningCornerSize?: number;
+  gridfinityPaddingBack?: number;
+  gridfinityPaddingFront?: number;
+  gridfinityPaddingLeft?: number;
+  gridfinityPaddingRight?: number;
+  gridfinityCornerRadius?: number;
+  gridfinityBinCornerRadius?: number;
+  gridfinityCompartmentsX?: number;
+  gridfinityCompartmentsZ?: number;
+  gridfinityDividerThickness?: number;
+  gridfinityDividerPositionsX?: number[];
+  gridfinityDividerPositionsZ?: number[];
+  gridfinityCompartmentLabels?: GridfinityCompartmentLabel[];
+  gridfinityOpenings?: GridfinityOpening[];
   /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
   knurlPattern?: KnurlPattern;
   /** Raendelung: wie viele Rillen ringsherum. */
@@ -527,6 +581,59 @@ export type WorkplaneShape = {
   gearBacklash?: number;
   /** Hohlrad: der Kranz hinter dem Zahnfuss, in mm. */
   ringRim?: number;
+  /*
+   * Gridfinity: Behaelter, Grundplatte oder Schale. Die Felder und ihre
+   * Bedeutung stehen in gridfinityGeometry.ts (aus layerling uebernommen).
+   */
+  gridfinityType?: GridfinityType;
+  gridfinityLip?: boolean;
+  gridfinityMagnets?: boolean;
+  gridfinityHalfGrid?: boolean;
+  gridfinityLabelBack?: boolean;
+  gridfinityLabelFront?: boolean;
+  gridfinityLabelLeft?: boolean;
+  gridfinityLabelRight?: boolean;
+  gridfinityLabelBackWidth?: number;
+  gridfinityLabelBackLength?: number;
+  gridfinityLabelBackOffset?: number;
+  gridfinityLabelFrontWidth?: number;
+  gridfinityLabelFrontLength?: number;
+  gridfinityLabelFrontOffset?: number;
+  gridfinityLabelLeftWidth?: number;
+  gridfinityLabelLeftLength?: number;
+  gridfinityLabelLeftOffset?: number;
+  gridfinityLabelRightWidth?: number;
+  gridfinityLabelRightLength?: number;
+  gridfinityLabelRightOffset?: number;
+  gridfinityLabelCorner?: GridfinityLabelCorner;
+  gridfinityLabelCornerSize?: number;
+  gridfinityScoopBack?: boolean;
+  gridfinityScoopFront?: boolean;
+  gridfinityScoopLeft?: boolean;
+  gridfinityScoopRight?: boolean;
+  gridfinityScoopRadius?: number;
+  gridfinityFloorHeight?: number;
+  gridfinityOpenBack?: boolean;
+  gridfinityOpenFront?: boolean;
+  gridfinityOpenLeft?: boolean;
+  gridfinityOpenRight?: boolean;
+  gridfinityLipChamfer?: number;
+  gridfinityWallThickness?: number;
+  gridfinityOpeningCorner?: GridfinityLabelCorner;
+  gridfinityOpeningCornerSize?: number;
+  gridfinityPaddingBack?: number;
+  gridfinityPaddingFront?: number;
+  gridfinityPaddingLeft?: number;
+  gridfinityPaddingRight?: number;
+  gridfinityCornerRadius?: number;
+  gridfinityBinCornerRadius?: number;
+  gridfinityCompartmentsX?: number;
+  gridfinityCompartmentsZ?: number;
+  gridfinityDividerThickness?: number;
+  gridfinityDividerPositionsX?: number[];
+  gridfinityDividerPositionsZ?: number[];
+  gridfinityCompartmentLabels?: GridfinityCompartmentLabel[];
+  gridfinityOpenings?: GridfinityOpening[];
   /** Raendelung: gerade Rillen laengs der Achse oder gekreuzt zu Rauten. */
   knurlPattern?: KnurlPattern;
   /** Raendelung: wie viele Rillen ringsherum. */
@@ -674,4 +781,37 @@ export type WorkplaneNote = {
   anchor?: WorkplaneNoteAnchor;
   /** Zugeklappt zeigt die Notiz nur ihre Nadel mit der Nummer. */
   collapsed?: boolean;
+};
+
+export type GridfinityType = "bin" | "baseplate" | "tray";
+/** How a label shelf's corners are finished where it meets a wall or another shelf. */
+export type GridfinityLabelCorner = "round" | "chamfer";
+/**
+ * A label in one compartment of a Gridfinity bin with dividers (#554): column 0 is the left, row 0 the back. It stands
+ * against one side of the compartment, the bin's wall or a divider; `length` is a share of that side in per cent (10 to
+ * 100, missing the full length), `align` where a shorter one sits along it (start towards -x on a back or front side and
+ * towards -z on a left or right one; missing the middle), `width` how far it reaches out in mm (missing 14, within what
+ * the compartment takes).
+ */
+export type GridfinityCompartmentLabel = {
+  column: number;
+  row: number;
+  side: "back" | "front" | "left" | "right";
+  length?: number;
+  align?: "start" | "middle" | "end";
+  width?: number;
+};
+
+/**
+ * A Gridfinity bin's side switched open, opened only partly (#455): a notch from the lip's top down `depth` mm, `width`
+ * mm wide, at its place along the side's straight part: `align` start (towards -x on a back or front side, towards -z on
+ * a left or right one), middle or end, and `distance` mm from that end; a missing value is the full depth, the full
+ * wall, the middle or 0. At the full depth and the full wall the side is open as before.
+ */
+export type GridfinityOpening = {
+  side: "back" | "front" | "left" | "right";
+  depth?: number;
+  width?: number;
+  align?: "start" | "middle" | "end";
+  distance?: number;
 };

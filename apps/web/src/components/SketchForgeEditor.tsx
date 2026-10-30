@@ -237,6 +237,8 @@ import { bodiesTooTall } from "@/lib/buildVolume";
 import { toolbarDensityFor, toolbarRowWidth, type ToolbarRowItem } from "@/lib/toolbarDensity";
 import { normalizeHollowWall, type CadHollowJoin, type CadHollowOpening } from "@/lib/cadHollow";
 import { normalizeOffsetDistance } from "@/lib/cadOffset";
+import { createGridfinityGeometry } from "@/lib/gridfinityGeometry";
+import { rememberManifoldRuntime, setManifoldLoader } from "@/lib/manifoldHandle";
 
 /** Womit das Aushoehlen anfaengt: der Deckel offen, der Rest zu. */
 const HOLLOW_OPENING_TOP: CadHollowOpening = ["top"];
@@ -1160,6 +1162,9 @@ async function importBundledManifoldModule() {
   }
 }
 
+// Wer die Laufzeit ohne Warten braucht, fragt ueber manifoldHandle; geladen wird sie hier.
+if (typeof window !== "undefined") setManifoldLoader(() => getManifoldRuntime());
+
 function getManifoldRuntime() {
   const assetBase = typeof window === "undefined" ? "/" : new URL(".", window.location.href).href;
   const isFileBuild = typeof window !== "undefined" && window.location.protocol === "file:";
@@ -1180,6 +1185,8 @@ function getManifoldRuntime() {
     })
     .then((runtime) => {
       runtime.setup();
+      // Fuer Geometrie, die nicht warten kann (Gridfinity-Leisten und -Mulden).
+      rememberManifoldRuntime(runtime);
       return runtime;
     })
     .catch((error) => {
@@ -2767,6 +2774,9 @@ function geometryMeshForShape(shape: WorkplaneShape): MeshData | null {
       // exports elsewhere. Should it reach here anyway, its plain bar is what
       // is meant.
       geometry = new THREE.BoxGeometry(width, height, depth);
+      break;
+    case "gridfinity":
+      geometry = createGridfinityGeometry({ ...shape, width, depth, height });
       break;
     case "loft":
       geometry = createLoftGeometry({
@@ -6684,6 +6694,16 @@ export function SketchForgeEditor({
   const [projectAssets, setProjectAssets] = useState<ProjectAsset[]>(() => dedupeProjectAssets(initialAssets));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [clipboard, setClipboard] = useState<WorkplaneShape[]>([]);
+  /*
+   * Trennwaende, Etikettenleisten und Mulden eines Gridfinity-Behaelters
+   * fuegt Manifold an. Steht einer in der Szene, wird die Laufzeit gleich
+   * geladen - sonst zeigte die Ansicht ihn erst nackt und eine sehr fruehe
+   * Ausgabe ohne seine Waende.
+   */
+  const hasGridfinity = shapes.some((shape) => shape.kind === "gridfinity");
+  useEffect(() => {
+    if (hasGridfinity) void getManifoldRuntime().catch(() => undefined);
+  }, [hasGridfinity]);
   const [systemClipboardSupported, setSystemClipboardSupported] = useState(false);
   const [history, setHistory] = useState<EditorHistoryEntry[]>(() => (initialHistoryStateRef.current as EditorHistoryState).entries);
   const [historyIndex, setHistoryIndex] = useState(() => (initialHistoryStateRef.current as EditorHistoryState).index);
