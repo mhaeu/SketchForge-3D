@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendEditorHistorySnapshot, boundedEditorHistory, continuesKeyRun, KEY_RUN_GAP_MS, editorHistoryEntry, editorHistoryForExport, hydrateEditorHistoryState, immutableResourceFingerprint, projectSceneFingerprint, projectShapesFingerprint, workplaneForHistoryIndex } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistory, continuesKeyRun, KEY_RUN_GAP_MS, editorHistoryEntry, editorHistoryForExport, historyStateAt, hydrateEditorHistoryState, immutableResourceFingerprint, projectSceneFingerprint, projectShapesFingerprint, workplaneForHistoryIndex } from "@/lib/editorHistory";
 import { horizontalPlacementWorkplane } from "@/lib/placementWorkplane";
 import type { WorkplaneShape } from "@/types/sketchforge";
 
@@ -282,5 +282,48 @@ describe("Ein Zug von Pfeiltasten", () => {
     expect(continuesKeyRun(run, "move:box-1", 1100, at(1), true)).toBe(false);
     expect(continuesKeyRun(run, "move:box-1", 1100, entry, false)).toBe(false);
     expect(continuesKeyRun(null, "move:box-1", 1100, entry, true)).toBe(false);
+  });
+});
+
+describe("Verlaufsansicht", () => {
+  it("stempelt einen neuen Stand mit seiner Zeit und behaelt sie beim Wiederaufsetzen", () => {
+    const first = editorHistoryEntry([box()], []);
+    const second = editorHistoryEntry([box({ x: 10 })], []);
+    const appended = appendEditorHistorySnapshot([first], 0, second, "unlimited", false, 1_700_000_000_000);
+
+    expect(appended.changed).toBe(true);
+    expect(appended.entries[1].at).toBe(1_700_000_000_000);
+    expect(appended.entries[1].fingerprint).toBe(second.fingerprint);
+
+    const hydrated = hydrateEditorHistoryState([box({ x: 10 })], appended.entries, 1);
+    expect(hydrated.entries).toHaveLength(2);
+    expect(hydrated.entries[1].at).toBe(1_700_000_000_000);
+    expect(hydrated.entries[0].at).toBeUndefined();
+  });
+
+  it("stempelt keinen unveraenderten Stand und laesst den Fingerabdruck in Ruhe", () => {
+    const first = editorHistoryEntry([box()], []);
+    const again = appendEditorHistorySnapshot([first], 0, editorHistoryEntry([box()], ["box-1"]), "unlimited", false, 5);
+
+    expect(again.changed).toBe(false);
+    expect(again.entries[0].at).toBeUndefined();
+    expect(editorHistoryEntry([box()], [], [], undefined, 42).fingerprint).toBe(first.fingerprint);
+  });
+
+  it("liest einen Stand mit Koerpern, Auswahl und Notizen", () => {
+    const entries = [
+      editorHistoryEntry([box()], []),
+      editorHistoryEntry([box({ x: 5 }), box({ id: "box-2", x: 30 })], ["box-2", "gone"], [{ id: "n1", text: "hi", x: 1, y: 2, z: 3 }]),
+    ];
+
+    const resolved = historyStateAt(entries, 1);
+    expect(resolved?.index).toBe(1);
+    expect(resolved?.shapes.map((shape) => shape.id)).toEqual(["box-1", "box-2"]);
+    expect(resolved?.selectedIds).toEqual(["box-2"]);
+    expect(resolved?.notes.map((note) => note.text)).toEqual(["hi"]);
+
+    expect(historyStateAt(entries, 99)?.index).toBe(1);
+    expect(historyStateAt(entries, -3)?.index).toBe(0);
+    expect(historyStateAt([], 0)).toBeNull();
   });
 });

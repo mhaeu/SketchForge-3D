@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./historyView.css";
 
 export const metadata: Metadata = {
   title: "SketchForge 3D editor",

@@ -25,6 +25,12 @@ export type EditorHistoryEntry = {
    * einer Arbeitsebene rueckgaengig gemacht werden kann.
    */
   placementWorkplane?: PlacementWorkplane;
+  /**
+   * Wann dieser Stand entstanden ist, in Millisekunden seit 1970. Neue Staende
+   * bekommen die Zeit beim Anlegen; aeltere Projekte tragen sie nicht, und die
+   * Verlaufsansicht zeigt dann nur die Nummer des Standes.
+   */
+  at?: number;
   fingerprint: string;
   estimatedBytes: number;
 };
@@ -289,6 +295,7 @@ export function editorHistoryEntry(
   selectedIds: string[],
   notes: WorkplaneNote[] = [],
   workplane?: PlacementWorkplane,
+  at?: number,
 ): EditorHistoryEntry {
   const canonicalShapes = shapes.map(canonicalizeShape);
   const validSelection = selectedIds.filter((id, index) => selectedIds.indexOf(id) === index && canonicalShapes.some((shape) => shape.id === id));
@@ -311,7 +318,37 @@ export function editorHistoryEntry(
   if (normalizedWorkplane && !placementWorkplaneIsBase(normalizedWorkplane)) {
     entry.placementWorkplane = normalizedWorkplane;
   }
+  if (typeof at === "number" && Number.isFinite(at)) entry.at = at;
   return entry;
+}
+
+/**
+ * Ein Stand des Verlaufs, so wie die Verlaufsansicht ihn braucht: Koerper,
+ * Auswahl, Notizen und Arbeitsebene. Nach Layerling.
+ */
+export type ResolvedHistoryState = {
+  entry: EditorHistoryEntry;
+  index: number;
+  shapes: WorkplaneShape[];
+  selectedIds: string[];
+  notes: WorkplaneNote[];
+  placementWorkplane: PlacementWorkplane;
+};
+
+export function historyStateAt(entries: EditorHistoryEntry[], requestedIndex: number): ResolvedHistoryState | null {
+  if (entries.length === 0) return null;
+  const index = Math.min(Math.max(0, Math.round(requestedIndex)), entries.length - 1);
+  const entry = entries[index];
+  const shapes = (entry?.shapes ?? []).map(canonicalizeShape);
+  const selectedIds = (entry?.selectedIds ?? []).filter((id) => shapes.some((shape) => shape.id === id));
+  return {
+    entry,
+    index,
+    shapes,
+    selectedIds,
+    notes: normalizeNotes(entry?.notes),
+    placementWorkplane: normalizePlacementWorkplane(entry?.placementWorkplane),
+  };
 }
 
 /**
@@ -402,6 +439,7 @@ export function appendEditorHistorySnapshot(
   entry: EditorHistoryEntry,
   limit: EditorHistoryExportLimit = "unlimited",
   replaceCurrent = false,
+  now: number = Date.now(),
 ) {
   const index = Math.min(Math.max(0, requestedIndex), Math.max(0, entries.length - 1));
   const current = entries[index];
@@ -414,14 +452,17 @@ export function appendEditorHistorySnapshot(
     };
   }
 
+  // Ein neuer Stand bekommt seine Zeit hier, wo er in den Verlauf kommt - und
+  // nur hier, damit ein Eintrag, der bloss verglichen wird, keine traegt.
+  const stamped: EditorHistoryEntry = typeof entry.at === "number" && Number.isFinite(entry.at) ? entry : { ...entry, at: now };
   if (replaceCurrent && index > 0 && index === entries.length - 1) {
     const before = entries[index - 1];
     const replaced = before.fingerprint === entry.fingerprint
       ? entries.slice(0, index)
-      : [...entries.slice(0, index), entry];
+      : [...entries.slice(0, index), stamped];
     return { entries: replaced, index: replaced.length - 1, changed: true };
   }
-  const nextEntries = boundedEditorHistory([...entries.slice(0, index + 1), entry], limit);
+  const nextEntries = boundedEditorHistory([...entries.slice(0, index + 1), stamped], limit);
   return { entries: nextEntries, index: nextEntries.length - 1, changed: true };
 }
 
@@ -445,6 +486,7 @@ export function hydrateEditorHistoryState(
         Array.isArray(entry?.selectedIds) ? entry.selectedIds.filter((id): id is string => typeof id === "string") : [],
         normalizeNotes(entry?.notes),
         entry?.placementWorkplane ?? currentWorkplane,
+        typeof entry?.at === "number" && Number.isFinite(entry.at) ? entry.at : undefined,
       ),
     );
     const index = Number.isInteger(requestedIndex)

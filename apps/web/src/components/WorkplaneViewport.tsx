@@ -13,6 +13,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
 import { AlignOverlay, MirrorOverlay, type AlignOverlayState, type MirrorOverlayState } from "@/components/workplane/ActionOverlays";
 import { MoveDimensionOverlay } from "@/components/workplane/MoveDimensionOverlay";
+import { usePickOnlyPointer, type PickOnlySelection } from "@/components/workplane/pickOnlyPointer";
 import { ShapeInspector, SnapGridControl, type ShapeInspectorUpdateOptions } from "@/components/workplane/ShapeInspector";
 import { KeyTagTutorialPanel } from "@/components/workplane/KeyTagTutorialPanel";
 import { NameplateTutorialPanel } from "@/components/workplane/NameplateTutorialPanel";
@@ -424,6 +425,12 @@ type WorkplaneViewportProps = {
   /** Gesetzt bei "Flaeche loeschen": Dann waehlt ein Klick eine Flaeche statt einer Kante. */
   cadFacePick?: CadFacePick | null;
   onCadFaceToggle?: (faceId: number) => void;
+  /**
+   * Gesetzt, solange die Verlaufsansicht offen ist: Ein Klick waehlt dann nur
+   * ein Objekt des gezeigten Stands aus, ziehen dreht die Ansicht, und kein
+   * Griff und kein Werkzeug kann etwas bewegen.
+   */
+  pickOnly?: PickOnlySelection | null;
   challengeTutorial?: ChallengeTutorialId | null;
   onChallengeTutorialFinish?: () => void;
   themePreference?: AppThemePreference;
@@ -3888,6 +3895,7 @@ export function WorkplaneViewport({
   selectedModifierEdgeIds = [],
   onModifierEdgeToggle,
   cadFacePick = null,
+  pickOnly = null,
   onCadFaceToggle,
   challengeTutorial = null,
   onChallengeTutorialFinish,
@@ -4067,6 +4075,8 @@ export function WorkplaneViewport({
   modifierOnlyVisibleEdgesRef.current = modifierOnlyVisibleEdges;
   const modifierEdgesRef = useRef(modifierEdges);
   const cadFacePickRef = useRef(cadFacePick);
+  const pickOnlyRef = useRef(pickOnly);
+  pickOnlyRef.current = pickOnly;
   cadFacePickRef.current = cadFacePick;
   const cadFaceHoverRef = useRef<number | null>(null);
   const [hoverModifierEdgeId, setHoverModifierEdgeId] = useState<number | null>(null);
@@ -6281,6 +6291,14 @@ export function WorkplaneViewport({
 
     return nearestId;
   }, [isCutAwayPoint]);
+  const pickOnlyPointer = usePickOnlyPointer(pickOnly, pickShape);
+  const pickOnlyKey = pickOnly ? pickOnly.ids.join("\0") : null;
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state) return;
+    // Nach dem Neubau der Koerper: Ein anderer Stand baut sie neu, die Markierung folgt.
+    syncPickHighlight(state, pickOnlyRef.current?.ids ?? []);
+  }, [pickOnlyKey, shapes]);
 
   /*
    * Anderes waehlen: alle Formen, durch die der Strahl unter dem Zeiger geht,
@@ -8336,11 +8354,11 @@ export function WorkplaneViewport({
               event.dataTransfer.dropEffect = "copy";
             }}
             onDrop={handleDrop}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishDrag}
-            onPointerCancel={finishDrag}
-            onPointerLeave={handlePointerLeave}
+            onPointerDown={pickOnly ? pickOnlyPointer.onPointerDown : handlePointerDown}
+            onPointerMove={pickOnly ? undefined : handlePointerMove}
+            onPointerUp={pickOnly ? pickOnlyPointer.onPointerUp : finishDrag}
+            onPointerCancel={pickOnly ? pickOnlyPointer.onPointerCancel : finishDrag}
+            onPointerLeave={pickOnly ? undefined : handlePointerLeave}
           />
           {!workplaneMode && marqueeRect ? <div className="selection-marquee" style={marqueeRect} /> : null}
           {selectOther ? (
@@ -10431,6 +10449,95 @@ function syncMirrorOverlay(
 
 function findShapeObject(state: ThreeState, id: string) {
   return state.shapeRecords.get(id)?.object ?? null;
+}
+
+/*
+ * Die Markierung der in der Verlaufsansicht gewaehlten Objekte. Dort gibt es
+ * keine Griffe und keinen Bodenschatten, die duenne Auswahlkante allein war
+ * kaum zu sehen: Gewaehlte Objekte bekommen einen breiten Umriss, der durch
+ * alles davor scheint, und eine Toenung ueber ihren Flaechen. Nach Layerling.
+ */
+const PICK_COLOR = "#00aeea";
+const PICK_OUTLINE_PX = 2;
+const PICK_TINT_OPACITY = 0.28;
+/** Nur Knicke schaerfer als dieser Winkel bekommen einen Umriss, damit ein runder Koerper seine Raender zeigt, nicht jede Facette. */
+const PICK_EDGE_ANGLE = 30;
+/** Darueber nur die Toenung: der Umriss braeuchte bei einem Klick zu lange. */
+const PICK_OUTLINE_TRIANGLE_LIMIT = 200_000;
+const pickHighlightLayers = new WeakMap<ThreeState, THREE.Group>();
+
+function syncPickHighlight(state: ThreeState, ids: readonly string[]) {
+  let layer = pickHighlightLayers.get(state);
+  if (!layer) {
+    layer = new THREE.Group();
+    layer.name = "history-pick-highlight";
+    state.scene.add(layer);
+    pickHighlightLayers.set(state, layer);
+  }
+  for (const child of [...layer.children]) {
+    // Die Toenung zeichnet die Geometrie des Koerpers selbst; nur die Umrisse gehoeren der Markierung.
+    if (child.userData.ownGeometry && "geometry" in child) (child.geometry as THREE.BufferGeometry).dispose();
+    layer.remove(child);
+  }
+  for (const material of (layer.userData.materials ?? []) as THREE.Material[]) material.dispose();
+  layer.userData.materials = [];
+
+  if (ids.length > 0) {
+    const tint = new THREE.MeshBasicMaterial({
+      color: PICK_COLOR,
+      transparent: true,
+      opacity: PICK_TINT_OPACITY,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+      side: THREE.DoubleSide,
+    });
+    tint.toneMapped = false;
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    const outline = new LineMaterial({
+      color: PICK_COLOR,
+      linewidth: PICK_OUTLINE_PX,
+      worldUnits: false,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+    });
+    outline.toneMapped = false;
+    outline.resolution.set(Math.max(1, rect.width), Math.max(1, rect.height));
+    layer.userData.materials = [tint, outline];
+
+    for (const id of ids) {
+      const object = findShapeObject(state, id);
+      if (!object) continue;
+      object.updateWorldMatrix(true, true);
+      object.traverse((child) => {
+        if (!(child instanceof THREE.Mesh) || !child.visible) return;
+        const geometry = child.geometry as THREE.BufferGeometry;
+        const surface = new THREE.Mesh(geometry, tint);
+        surface.matrixAutoUpdate = false;
+        surface.matrix.copy(child.matrixWorld);
+        surface.renderOrder = 1004;
+        layer.add(surface);
+
+        const triangles = (geometry.index ? geometry.index.count : geometry.getAttribute("position")?.count ?? 0) / 3;
+        if (triangles > PICK_OUTLINE_TRIANGLE_LIMIT) return;
+        const edges = new THREE.EdgesGeometry(geometry, PICK_EDGE_ANGLE);
+        const lineGeometry = new LineSegmentsGeometry().setPositions(edges.getAttribute("position").array as Float32Array);
+        edges.dispose();
+        const line = new LineSegments2(lineGeometry, outline);
+        line.matrixAutoUpdate = false;
+        line.matrix.copy(child.matrixWorld);
+        line.frustumCulled = false;
+        line.renderOrder = 1005;
+        line.userData.ownGeometry = true;
+        layer.add(line);
+      });
+    }
+    setObjectRenderLayer(layer, RENDER_LAYER_HELPERS);
+  }
+  state.needsRender = true;
 }
 
 function findSelectionHelper(state: ThreeState, id: string) {

@@ -1,0 +1,551 @@
+/* Die Verlaufsansicht, nach Layerling (historyView.css), in den Farben von
+   SketchForge. layout.tsx bindet die Datei direkt nach globals.css ein. */
+
+/* ---------------------------------------------------------------------------
+   The history view: a bar at the foot of the work area while the viewport
+   shows an earlier state. The ribbon stays visible but asleep, except for the
+   history button that closes the view again; nothing in the bar changes the
+   design, it only looks back and lets you take a state along.
+   ------------------------------------------------------------------------- */
+.history-view-bar {
+  position: fixed;
+  bottom: calc(var(--editor-footer-height, 34px) + 16px);
+  left: calc((100vw - min(760px, 100vw - 28px)) / 2);
+  z-index: 46;
+  display: grid;
+  gap: 10px;
+  width: min(760px, calc(100vw - 28px));
+  padding: 12px 16px 14px;
+  color: #263f57;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #d6e0e7;
+  border-radius: 12px;
+  box-shadow: 0 14px 38px rgba(22, 40, 58, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.history-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-view-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.history-view-heading strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.history-view-heading span {
+  font-size: 12px;
+  color: #718697;
+}
+
+/* In Layerling kommt das aus globals.css; SketchForge hat die Klasse nicht. */
+.history-view-head .panel-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-view-head .panel-header-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.history-view-head .panel-header-actions button:hover,
+.history-view-slider {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-view-slider > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: #3c505d;
+  background: #fff;
+  border: 1px solid #d6e0e7;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.history-view-slider > button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.history-view-slider .range-control {
+  height: 32px;
+}
+
+.history-view-slider input[type="range"]:focus-visible {
+  outline: 2px solid #169fce;
+  outline-offset: 4px;
+  border-radius: 999px;
+}
+
+.history-view-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px 14px;
+  font-size: 13px;
+}
+
+.history-view-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.history-view-step.next {
+  justify-content: flex-end;
+}
+
+.history-view-step > svg {
+  flex: none;
+  color: #8fa1ae;
+}
+
+.history-view-step-label {
+  flex: none;
+  color: #718697;
+}
+
+.history-view-step-text {
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-view-step.none .history-view-step-text {
+  font-weight: 400;
+  color: #8fa1ae;
+}
+
+@media (max-width: 560px) {
+  .history-view-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-view-step.next {
+    justify-content: flex-start;
+  }
+}
+
+/* The steps as a list, newest at the top : a click goes to that state. */
+.history-view-head .panel-header-actions button.active {
+  color: #0b6f96;
+  background: #e6f6fc;
+}
+
+.history-view-list {
+  display: grid;
+  max-height: min(240px, 32vh);
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #dbe5eb;
+  border-radius: 8px;
+}
+
+.history-view-list button {
+  display: flex;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.history-view-list button:hover {
+  background: #f1f5f8;
+}
+
+.history-view-list button.shown {
+  color: #fff;
+  background: #087f9f;
+}
+
+.history-view-list button.ahead:not(.shown) {
+  color: #8fa1ae;
+  font-style: italic;
+}
+
+.history-view-list-number {
+  flex: none;
+  min-width: 2.2em;
+  font-size: 11px;
+  text-align: end;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-view-list-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-view-list-now {
+  flex: none;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  font-style: normal;
+  color: #2a8f57;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.history-view-list button.shown .history-view-list-now {
+  color: #fff;
+}
+
+.history-view-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+
+.history-view-state strong {
+  font-weight: 600;
+}
+
+.history-view-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: #718697;
+}
+
+.history-view-facts .current {
+  color: #2a8f57;
+  font-weight: 700;
+}
+
+.history-view-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.history-view-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  padding: 0 13px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #d6e0e7;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.history-view-actions .secondary {
+  color: #3c505d;
+  background: white;
+}
+
+.history-view-actions .primary {
+  color: white;
+  background: #087f9f;
+  border-color: #0b6f96;
+}
+
+.history-view-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* Delete history: alone at the left of the row, in a colour that says it is not like the others. */
+.history-view-actions .delete-history {
+  margin-right: auto;
+  color: #a33a2a;
+  background: white;
+  border-color: #e3bdb4;
+}
+
+.history-view-actions .delete-history:hover:not(:disabled) {
+  background: #fdf1ee;
+}
+
+.history-view-confirm {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  color: #6b2a1f;
+  background: #fdf1ee;
+  border: 1px solid #e3bdb4;
+  border-radius: 8px;
+}
+
+.history-view-confirm p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.history-view-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.history-view-confirm-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  padding: 0 13px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #d6e0e7;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.history-view-confirm-actions .secondary {
+  color: #3c505d;
+  background: white;
+}
+
+.history-view-confirm-actions .danger {
+  color: white;
+  background: #b4402e;
+  border-color: #962f1f;
+}
+
+.history-view-spinner {
+  animation: history-view-spin 0.9s linear infinite;
+}
+
+@keyframes history-view-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Asleep while looking back: every tool but the one that ends the view. */
+.sketchforge-editor.history-view-active .secondary-toolbar button:not([data-sketchforge-tool="history"]),
+.sketchforge-editor.history-view-active .object-list-panel,
+.sketchforge-editor.history-view-active .toolbar-title-row-actions {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+@media (max-width: 640px) {
+  .history-view-bar {
+    left: 8px;
+    width: calc(100vw - 16px);
+    padding: 10px 12px 12px;
+  }
+
+  .history-view-state {
+    flex-direction: column;
+  }
+
+  .history-view-actions button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+html[data-theme="dark"] .history-view-bar {
+  color: #e4edf3;
+  background: rgba(22, 32, 42, 0.97);
+  border-color: #344854;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.34);
+}
+
+html[data-theme="dark"] .history-view-heading span,
+html[data-theme="dark"] .history-view-step-label,
+html[data-theme="dark"] .history-view-step > svg,
+html[data-theme="dark"] .history-view-step.none .history-view-step-text,
+html[data-theme="dark"] .history-view-facts {
+  color: #a9b8c3;
+}
+
+html[data-theme="dark"] .history-view-facts .current {
+  color: #5fd394;
+}
+
+html[data-theme="dark"] .history-view-head .panel-header-actions button:hover,
+html[data-theme="dark"] .history-view-head .panel-header-actions button.active {
+  color: #8fdaf5;
+  background: #263f57;
+}
+
+html[data-theme="dark"] .history-view-list {
+  background: #16283a;
+  border-color: #344854;
+}
+
+html[data-theme="dark"] .history-view-list button:hover {
+  background: #16283a;
+}
+
+html[data-theme="dark"] .history-view-list button.shown {
+  color: #fff;
+  background: #087f9f;
+}
+
+html[data-theme="dark"] .history-view-list button.ahead:not(.shown) {
+  color: #a9b8c3;
+}
+
+html[data-theme="dark"] .history-view-list-now {
+  color: #5fd394;
+}
+
+html[data-theme="dark"] .history-view-slider > button,
+html[data-theme="dark"] .history-view-actions .secondary,
+html[data-theme="dark"] .history-view-inside button {
+  color: #e3ebf0;
+  background: #2c3e4c;
+  border-color: #3c505d;
+}
+
+html[data-theme="dark"] .history-view-slider .range-control input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #169fce 0 var(--slider-pos), #344854 var(--slider-pos) 100%);
+}
+
+html[data-theme="dark"] .history-view-slider .range-control input[type="range"]::-moz-range-track {
+  background: #344854;
+}
+
+html[data-theme="dark"] .history-view-slider .range-control input[type="range"]::-moz-range-progress {
+  background: #169fce;
+}
+
+/* The groups opened to look inside, with the way back out. */
+.history-view-inside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0b6f96;
+  background: #e6f6fc;
+  border: 1px solid #a9dcef;
+  border-radius: 8px;
+}
+
+.history-view-inside > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-view-inside button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  font: inherit;
+  font-weight: 700;
+  color: #3c505d;
+  background: #fff;
+  border: 1px solid #d6e0e7;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+html[data-theme="dark"] .history-view-inside {
+  color: #8fdaf5;
+  background: rgba(0, 174, 234, 0.12);
+  border-color: rgba(0, 174, 234, 0.4);
+}
+
+/* Der Schieber der Leiste; SketchForge hat kein allgemeines .range-control. */
+.history-view-slider .range-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 3px;
+}
+
+.history-view-slider .range-control input[type="range"] {
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.history-view-slider .range-control input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px;
+  background: linear-gradient(to right, #169fce 0 var(--slider-pos), #dbe5eb var(--slider-pos) 100%);
+  border-radius: 999px;
+}
+
+.history-view-slider .range-control input[type="range"]::-webkit-slider-thumb {
+  width: 17px;
+  height: 17px;
+  margin-top: -6px;
+  appearance: none;
+  background: #ffffff;
+  border: 2px solid #169fce;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(22, 40, 58, 0.2);
+}
+
+.history-view-slider .range-control input[type="range"]::-moz-range-track {
+  height: 5px;
+  background: #dbe5eb;
+  border-radius: 999px;
+}
+
+.history-view-slider .range-control input[type="range"]::-moz-range-progress {
+  height: 5px;
+  background: #169fce;
+  border-radius: 999px;
+}
+
+.history-view-slider .range-control input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  background: #ffffff;
+  border: 2px solid #169fce;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(22, 40, 58, 0.2);
+}

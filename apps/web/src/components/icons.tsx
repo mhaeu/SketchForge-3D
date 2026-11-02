@@ -186,6 +186,18 @@ export function ToolbarSurfaceTextureIcon(props: IconProps) {
   );
 }
 
+/** Verlauf: eine Uhr mit einem Pfeil, der zurueckzeigt. Nach Layerling. */
+export function ToolbarHistoryIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="24.5" cy="25" r="13" fill="currentColor" fillOpacity="0.22" stroke="none" />
+      <path d="M11.5 25a13 13 0 1 0 3.8-9.2" />
+      <path d="M11 11v8h8" />
+      <path d="M24.5 18v7.5l5.5 3.5" />
+    </svg>
+  );
+}
+
 /** Ausschneiden: ein Block mit einer Kerbe oben und daneben gestrichelt das Teil, das hineinpasst. */
 export function ToolbarCutOutIcon(props: IconProps) {
   return (

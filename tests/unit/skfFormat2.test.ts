@@ -176,3 +176,23 @@ describe("Der Schreiber der Fassung 2", () => {
     expect(project.shapes[0].cadDisplayEdges).toEqual(edges);
   });
 });
+
+describe("Die Zeit der Verlaufsstaende", () => {
+  it("geht als recordedAt in die Datei und kommt wieder heraus; ein Stand ohne Zeit bleibt ohne", async () => {
+    const body = { id: "koerper", name: "koerper", kind: "box", color: "#d41721", x: 0, z: 0, elevation: 0, size: 20, width: 20, depth: 20, height: 10, rotation: 0 } as WorkplaneShape;
+    const history = [
+      editorHistoryEntry([body], []),
+      editorHistoryEntry([{ ...body, x: 5 }], [], [], undefined, Date.UTC(2026, 10, 2, 9, 30)),
+    ];
+    const bytes = await exportSkfProject({
+      projectId: "zeiten", projectName: "Zeiten", createdAt: 1, modifiedAt: 2,
+      shapes: history[1].shapes, history, historyIndex: 1, assets: [],
+      workspace: DEFAULT_WORKPLANE_WORKSPACE, snapGrid: DEFAULT_SNAP_GRID, placementElevation: 0,
+    } as Parameters<typeof exportSkfProject>[0]);
+    const document = JSON.parse(strFromU8(unzipSync(bytes)["project.json"]));
+    expect(document.history.entries[1].recordedAt).toBe("2026-11-02T09:30:00.000Z");
+    expect(document.history.entries[0].recordedAt).toBeUndefined();
+    const project = await importSkfProject(bytes);
+    expect(project.history.map((entry) => entry.at)).toEqual([undefined, Date.UTC(2026, 10, 2, 9, 30)]);
+  });
+});

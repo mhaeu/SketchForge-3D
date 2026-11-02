@@ -9,6 +9,10 @@ import * as THREE from "three";
 import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { textFont } from "@/lib/textFonts";
+import { describeHistoryStep, historyStepsAround } from "@/lib/historyStepDescription";
+import { HistoryViewOverlay } from "@/components/workplane/HistoryViewOverlay";
+import { useHistoryViewPicking } from "@/components/workplane/useHistoryViewPicking";
+import { historyViewMcpCommand } from "@/components/workplane/historyViewMcp";
 import { canChangeSurfaceTexture, canTextureSurface, offersSurfaceTexture, offersSurfaceTextureMask, surfaceTextureMaskOf, sceneWithSurfaceBody, shapeUnderSurfaceTexture, surfacePatternLabel, surfaceTextureEntry, surfaceTextureGoldShape, surfaceTexturedShape, surfaceTextureInput, surfaceTextureMasksFor } from "@/lib/surfaceTextureShape";
 import { textureSurfaceOffThread } from "@/lib/surfaceTextureWorkerClient";
 import { SURFACE_TEXT_FONTS, surfaceTextOutline } from "@/lib/surfaceTextOutline";
@@ -83,6 +87,7 @@ import { holesReachingBounds, meshBounds, overlappingExportClusters } from "@/li
 import { createCadPreviewQueue } from "@/lib/cadPreviewQueue";
 import { workplaneAlignRotation, workplaneCentringShift } from "@/lib/workplaneArrange";
 import { getLanguage, t, translateIfKey, type MessageKey } from "@/lib/i18n";
+import { lengthDisplayUnit } from "@/lib/measurementUnits";
 import { useLanguage } from "@/lib/useLanguage";
 import {
   SketchBoltCircleIcon,
@@ -109,6 +114,7 @@ import {
   ToolbarOffsetIcon,
   ToolbarDeleteFaceIcon,
   ToolbarSurfaceTextureIcon,
+  ToolbarHistoryIcon,
   ToolbarCutOutIcon,
   ToolbarCookieCutterIcon,
   ToolbarTrimIcon,
@@ -202,7 +208,7 @@ import {
   SKETCH_CAD_DEFLECTION,
 } from "@/lib/cadModifierRuntime";
 import { cloneWorkplaneShapeSnapshot, compactEdgeTreatmentHistory, edgeTreatmentAppliedFrame, restoreShapeBeforeEdgeTreatment } from "@/lib/edgeTreatmentHistory";
-import { appendEditorHistorySnapshot, boundedEditorHistoryState, continuesKeyRun, editorHistoryEntry, type KeyRun, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
+import { appendEditorHistorySnapshot, boundedEditorHistoryState, continuesKeyRun, editorHistoryEntry, historyStateAt, type KeyRun, editorHistoryForExport, hydrateEditorHistoryState, notesForHistoryIndex, projectSceneFingerprint, workplaneForHistoryIndex, projectShapesFingerprint, type EditorHistoryEntry, type EditorHistoryExportLimit, type EditorHistoryState } from "@/lib/editorHistory";
 import { snapShapeFootprintToVisibleGrid, visibleGridStep } from "@/lib/gridSnap";
 import { closedMeshVolume } from "@/lib/meshVolume";
 import { DEFAULT_PRINT_MATERIAL, PRINT_MATERIALS, normalizePrintMaterial, printEstimate, type PrintMaterial } from "@/lib/printEstimate";
@@ -6426,6 +6432,9 @@ function compactShapeSummary(shape: WorkplaneShape, index: number) {
   ].join(",");
 }
 
+/** Was die Bruecke tun darf, waehrend die Verlaufsansicht offen ist: lesen, und die Verlaufsbefehle selbst. */
+const HISTORY_VIEW_MCP_ACTIONS = new Set(["get_scene", "list_objects", "list_edges", "inspect_errors", "capture_image", "set_history_view", "restore_from_history", "clear_history"]);
+
 function mcpShapeSummary(shape: WorkplaneShape): SketchForgeMcpShapeSummary {
   return {
     id: shape.id,
@@ -6652,6 +6661,28 @@ export function SketchForgeEditor({
   const [systemClipboardSupported, setSystemClipboardSupported] = useState(false);
   const [history, setHistory] = useState<EditorHistoryEntry[]>(() => (initialHistoryStateRef.current as EditorHistoryState).entries);
   const [historyIndex, setHistoryIndex] = useState(() => (initialHistoryStateRef.current as EditorHistoryState).index);
+  /**
+   * Die Verlaufsansicht: welcher Stand gerade gezeigt wird, null ausserhalb.
+   * Sie aendert das Projekt nicht - die Arbeitsflaeche zeigt derweil nur einen
+   * anderen Eintrag desselben Verlaufs. Nach Layerling.
+   */
+  const [historyViewIndex, setHistoryViewIndex] = useState<number | null>(null);
+  const historyViewState = useMemo(
+    () => (historyViewIndex === null ? null : historyStateAt(history, historyViewIndex)),
+    [history, historyViewIndex],
+  );
+  const historyViewStateRef = useRef(historyViewState);
+  historyViewStateRef.current = historyViewState;
+  // Was die Pfeile der Verlaufsansicht vom gezeigten Stand aus zuruecknaehmen und wiederholten.
+  const historyViewSteps = useMemo(
+    () => (historyViewState ? historyStepsAround(history, historyViewState.index) : null),
+    [history, historyViewState],
+  );
+  // Der Schritt, der zu jedem Stand fuehrte, fuer die Liste der Schritte.
+  const describeHistoryViewStep = useCallback(
+    (index: number) => describeHistoryStep(history[index - 1], history[index]),
+    [history],
+  );
   // Die Arbeitsebene reist im Verlauf mit, also kommt auch sie von dort - der
   // Stand, auf den der Verlauf zeigt, ist der Stand, den der Editor zeigt.
   const [placementWorkplane, setPlacementWorkplane] = useState<PlacementWorkplane>(
@@ -7434,8 +7465,17 @@ export function SketchForgeEditor({
       : latest);
     if (notice) setNotice(notice);
   }, []);
-  const exportableShapeCount = useMemo(() => (hasSelection ? selectedShapes : shapes).filter((shape) => !shape.hole).length, [hasSelection, selectedShapes, shapes]);
-  const exportScopeLabel = hasSelection ? "selected" : "total";
+  /*
+   * Was ausgegeben wird: in der Verlaufsansicht der gezeigte Stand, sonst die
+   * Auswahl oder alles.
+   */
+  const exportScoped = hasSelection && !historyViewState;
+  const exportSourceShapes = useMemo(
+    () => (historyViewState ? historyViewState.shapes.filter((shape) => !isReferencePoint(shape)) : hasSelection ? selectedShapes : shapes),
+    [hasSelection, historyViewState, selectedShapes, shapes],
+  );
+  const exportableShapeCount = useMemo(() => exportSourceShapes.filter((shape) => !shape.hole).length, [exportSourceShapes]);
+  const exportScopeLabel = exportScoped ? "selected" : "total";
   const effectiveAlignAnchorId = useMemo(
     () => effectiveAlignmentAnchorId(selectedShapes, alignAnchorId),
     [alignAnchorId, selectedShapes],
@@ -7801,6 +7841,13 @@ export function SketchForgeEditor({
 
   const commitShapes = useCallback(
     (next: WorkplaneShape[], nextSelection: string | string[] | null = selectedIds, message?: string, keyRunKey?: string) => {
+      // Solange die Verlaufsansicht offen ist, zeigt die Flaeche nicht den
+      // Entwurf. Eine Aenderung, die jetzt noch durchkaeme - ueber einen
+      // Umweg, den die Leiste nicht kennt -, traefe etwas, das keiner sieht.
+      if (historyViewStateRef.current) {
+        setNotice(t("status.historyViewBlocksEdits"));
+        return;
+      }
       const canonicalNext = next.map(canonicalizeShape);
       const requestedSelection = Array.isArray(nextSelection) ? nextSelection : nextSelection ? [nextSelection] : [];
       const validSelection = requestedSelection.filter((id, index) => requestedSelection.indexOf(id) === index && canonicalNext.some((shape) => shape.id === id));
@@ -7848,6 +7895,10 @@ export function SketchForgeEditor({
    */
   const commitNotes = useCallback(
     (next: WorkplaneNote[], message?: string) => {
+      if (historyViewStateRef.current) {
+        setNotice(t("status.historyViewBlocksEdits"));
+        return;
+      }
       const normalized = normalizeNotes(next);
       notesRef.current = normalized;
       setNotes(normalized);
@@ -7859,6 +7910,84 @@ export function SketchForgeEditor({
     },
     [appendHistoryEntry, setNotice, syncProjectShapes],
   );
+
+  /**
+   * Die Verlaufsansicht oeffnet beim aktuellen Stand; von dort fuehrt der
+   * Schieber zurueck. Werkzeuge, die auf der Arbeitsflaeche etwas vorhaben,
+   * werden abgelegt - sie wuerden sonst auf einem Stand arbeiten, der nur
+   * gezeigt wird.
+   */
+  const openHistoryView = useCallback(() => {
+    if (projectInteractionActiveRef.current) {
+      setNotice(t("status.finishBeforeHistory"));
+      return;
+    }
+    if (historyRef.current.length <= 1) {
+      setNotice(t("status.historyViewEmpty"));
+      return;
+    }
+    setNoteMode(false);
+    setSnapMode(null);
+    setPivotMode(false);
+    setLayFlatMode(false);
+    setSetDownMode(false);
+    setTopPanel(null);
+    setHistoryViewIndex(historyIndexRef.current);
+    setNotice(t("status.historyViewOpened"));
+  }, [setNotice]);
+
+  const closeHistoryView = useCallback(() => {
+    setHistoryViewIndex(null);
+    setTopPanel(null);
+    setNotice(t("status.historyViewClosed"));
+  }, [setNotice]);
+
+  const stepHistoryView = useCallback((delta: number) => {
+    setHistoryViewIndex((current) => {
+      if (current === null) return current;
+      return Math.min(Math.max(0, current + delta), Math.max(0, historyRef.current.length - 1));
+    });
+  }, []);
+
+  const historyView = useHistoryViewPicking(historyViewState, {
+    entries: useCallback(() => historyRef.current, []),
+    closeView: useCallback(() => {
+      if (!historyViewStateRef.current) return;
+      setHistoryViewIndex(null);
+      setTopPanel(null);
+      // Der Zustand folgt erst beim naechsten Zeichnen; der Schritt danach darf nicht darauf warten.
+      historyViewStateRef.current = null;
+    }, []),
+    commit: useCallback((copies: WorkplaneShape[], message: string) => {
+      commitShapes([...shapesRef.current, ...copies], copies.map((shape) => shape.id), message);
+    }, [commitShapes]),
+    openGroup: restoreGroupedChildren,
+    language: getLanguage(),
+  });
+
+  /**
+   * Wirft alle frueheren Schritte weg: Der Entwurf behaelt seinen jetzigen
+   * Stand als einzigen - fuer eine Datei ohne Verlauf, oder um die
+   * Rueckgaengig-Schritte neu zu beginnen.
+   */
+  const clearHistory = useCallback(() => {
+    if (projectInteractionActiveRef.current) {
+      setNotice(t("status.finishBeforeHistory"));
+      return 0;
+    }
+    const removed = historyRef.current.length - 1;
+    const entry = editorHistoryEntry(shapesRef.current, selectedIdsRef.current, notesRef.current, placementWorkplaneRef.current, Date.now());
+    historyRef.current = [entry];
+    historyIndexRef.current = 0;
+    keyRunRef.current = null;
+    setHistory([entry]);
+    setHistoryIndex(0);
+    setHistoryViewIndex(null);
+    setTopPanel(null);
+    syncProjectShapes(shapesRef.current, true);
+    setNotice(t("status.historyCleared"));
+    return Math.max(0, removed);
+  }, [setNotice, syncProjectShapes]);
 
   const addNote = useCallback(
     (note: { x: number; y: number; z: number; anchor?: WorkplaneNote["anchor"] }) => {
@@ -10104,6 +10233,10 @@ export function SketchForgeEditor({
   }, [clipboard, commitShapes]);
 
   const undo = useCallback(() => {
+    if (historyViewStateRef.current) {
+      setNotice(t("status.historyViewBlocksEdits"));
+      return;
+    }
     if (projectInteractionActiveRef.current) {
       setNotice(t("status.finishBeforeUndo"));
       return;
@@ -10139,6 +10272,10 @@ export function SketchForgeEditor({
   }, [invalidateCadModifierSession, syncProjectShapes]);
 
   const redo = useCallback(() => {
+    if (historyViewStateRef.current) {
+      setNotice(t("status.historyViewBlocksEdits"));
+      return;
+    }
     if (projectInteractionActiveRef.current) {
       setNotice(t("status.finishBeforeRedo"));
       return;
@@ -12373,9 +12510,28 @@ export function SketchForgeEditor({
 
     try {
       lastMcpErrorRef.current = null;
+      // Die Arbeitsflaeche zeigt in der Verlaufsansicht einen alten Stand; eine
+      // Aenderung traefe einen Entwurf, den keiner sieht.
+      if (historyViewStateRef.current && !HISTORY_VIEW_MCP_ACTIONS.has(command.action)) {
+        throw new Error("The history view is open. Close it with sketchforge_set_history_view (open: false) before changing the design.");
+      }
       if (command.action === "get_scene") {
         return mcpSceneSnapshot(params.includeRawShapes === true);
       }
+
+      const historyResult = historyViewMcpCommand(command.action, params, {
+        entries: () => historyRef.current,
+        current: () => historyIndexRef.current,
+        showing: () => historyViewStateRef.current,
+        openView: openHistoryView,
+        closeView: closeHistoryView,
+        showState: setHistoryViewIndex,
+        busy: () => projectInteractionActiveRef.current,
+        clearHistory,
+        bringBack: historyView.bringBack,
+        summary: mcpShapeSummary,
+      });
+      if (historyResult !== undefined) return historyResult;
 
       if (command.action === "list_objects") {
         return { objects: currentShapes().map(mcpShapeSummary) };
@@ -12828,10 +12984,14 @@ export function SketchForgeEditor({
     }
   }, [
     applyCadModifierForMcp,
+    clearHistory,
+    closeHistoryView,
     commitShapes,
+    historyView.bringBack,
     initialSnap,
     invalidateCadModifierSession,
     mcpSceneSnapshot,
+    openHistoryView,
     placementElevation,
     prepareCadModifierForMcp,
   ]);
@@ -13105,8 +13265,8 @@ export function SketchForgeEditor({
    * die Zahl zur Datei gehoert und nicht zu einer anderen Auswahl.
    */
   const exportTargetShapes = useMemo(
-    () => (hasSelection ? selectedShapes : shapes).filter((shape) => !shape.hole && isSolidShape(shape)),
-    [hasSelection, selectedShapes, shapes],
+    () => exportSourceShapes.filter((shape) => !shape.hole && isSolidShape(shape)),
+    [exportSourceShapes],
   );
   /**
    * Die Loecher, die mitgehen - sichtbar, und bei einer Auswahl nur die
@@ -13114,8 +13274,8 @@ export function SketchForgeEditor({
    * geschnitten, die sie treffen (siehe `cutLooseExportHoles`).
    */
   const exportHoleShapes = useMemo(
-    () => (hasSelection ? selectedShapes : shapes).filter((shape) => shape.hole && isSolidShape(shape) && !shape.hidden),
-    [hasSelection, selectedShapes, shapes],
+    () => exportSourceShapes.filter((shape) => shape.hole && isSolidShape(shape) && !shape.hidden),
+    [exportSourceShapes],
   );
   /** Was die Schaetzung ansieht: die Koerper und die Loecher, die mitgehen. */
   const exportEstimateShapes = useMemo(
@@ -13126,7 +13286,7 @@ export function SketchForgeEditor({
   const exportDesign = useCallback((format: DirectExportFormat, exportName: string) => {
     const exportable = exportTargetShapes;
     if (exportable.length === 0) {
-      setNotice(hasSelection ? t("status.selectSolidBeforeExport") : t("status.addSolidBeforeExport"));
+      setNotice(exportScoped ? t("status.selectSolidBeforeExport") : t("status.addSolidBeforeExport"));
       return;
     }
     const invalidSvg = exportable.map(invalidSvgMeshReason).find((reason): reason is string => Boolean(reason));
@@ -13140,7 +13300,7 @@ export function SketchForgeEditor({
         setNotice(t("status.savedFileTo", { label, path: result.path }));
         return;
       }
-      setNotice(hasSelection ? `${selectedNotice} as ${label}` : t("status.exportedAs", { label }));
+      setNotice(exportScoped ? `${selectedNotice} as ${label}` : t("status.exportedAs", { label }));
     };
     const failNotice = (label: string, error: unknown) => {
       setNotice(error instanceof Error ? error.message : t("status.exportFailed", { label }));
@@ -13174,13 +13334,13 @@ export function SketchForgeEditor({
         else finishNotice(label, result);
       })
       .catch((error: unknown) => failNotice(label, error));
-  }, [exportHoleShapes, exportTargetShapes, hasSelection, projectName]);
+  }, [exportHoleShapes, exportScoped, exportTargetShapes, projectName]);
 
   const exportStepDesign = useCallback(async (exportName: string) => {
     if (stepExporting) {
       return;
     }
-    const sourceShapes = hasSelection ? selectedShapes : shapes;
+    const sourceShapes = exportSourceShapes;
     if (sourceShapes.some((shape) => shape.hole) && !sourceShapes.some((shape) => !shape.hole)) {
       setNotice(t("status.selectSolidForStep"));
       return;
@@ -13213,7 +13373,7 @@ export function SketchForgeEditor({
     } finally {
       setStepExporting(false);
     }
-  }, [hasSelection, projectName, selectedShapes, shapes, stepExporting]);
+  }, [exportSourceShapes, projectName, stepExporting]);
 
   const exportSkfDesign = useCallback(async (exportName: string, historyLimit: SkfHistoryLimit, target: SkfExportTarget = "download") => {
     if (skfExporting) return;
@@ -13577,6 +13737,32 @@ export function SketchForgeEditor({
       const key = event.key.toLowerCase();
       const shortcut = event.ctrlKey || event.metaKey;
 
+      // In der Verlaufsansicht gehoeren die Tasten der Ansicht: Pfeile gehen
+      // durch die Staende, Escape kehrt zurueck. Alles andere - Loeschen,
+      // Einfuegen, Rueckgaengig - wuerde das Projekt aendern, waehrend es
+      // etwas anderes zeigt.
+      if (historyViewIndex !== null) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeHistoryView();
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+          event.preventDefault();
+          stepHistoryView(-1);
+        } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+          event.preventDefault();
+          stepHistoryView(1);
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          stepHistoryView(-Number.MAX_SAFE_INTEGER);
+        } else if (event.key === "End") {
+          event.preventDefault();
+          stepHistoryView(Number.MAX_SAFE_INTEGER);
+        } else if (key === "e" && !shortcut && !event.altKey && historyView.openPickedGroup()) {
+          event.preventDefault();
+        }
+        return;
+      }
+
       if (sketchActive && toolbarMode === "sketch") {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -13838,6 +14024,10 @@ export function SketchForgeEditor({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    closeHistoryView,
+    historyView.openPickedGroup,
+    historyViewIndex,
+    stepHistoryView,
     commitShapes,
     clearSketchMeasurement,
     copySelected,
@@ -13885,7 +14075,7 @@ export function SketchForgeEditor({
   ]);
 
   return (
-    <div className="sketchforge-editor">
+    <div className={`sketchforge-editor ${historyViewState ? "history-view-active" : ""}`}>
       <SecondaryToolbar
         noteMode={noteMode}
         notesVisible={notesVisible}
@@ -13905,8 +14095,11 @@ export function SketchForgeEditor({
           setTopPanel(null);
           setMenuOpen(false);
         }}
-        canUndo={!projectInteractionActive && (historyIndex > 0 || Boolean(edgeModifier))}
-        canRedo={!projectInteractionActive && historyIndex < history.length - 1}
+        canUndo={!projectInteractionActive && historyViewIndex === null && (historyIndex > 0 || Boolean(edgeModifier))}
+        canRedo={!projectInteractionActive && historyViewIndex === null && historyIndex < history.length - 1}
+        canHistoryView={historyViewIndex !== null || (!projectInteractionActive && !edgeModifier && !openGroup && !sketchActive && history.length > 1)}
+        historyViewActive={historyViewIndex !== null}
+        onHistoryView={historyViewIndex === null ? openHistoryView : closeHistoryView}
         canGroup={selectedShapes.length > 1 && selectedShapes.every((shape) => !shape.locked)}
         onOpenGroup={openSelectedGroup}
         groupOpen={Boolean(openGroup)}
@@ -14117,15 +14310,16 @@ export function SketchForgeEditor({
           />
         ) : (
           <WorkplaneViewport
-          shapes={viewportShapes}
-          selectedIds={selectedIds}
+          shapes={historyView.shapes ?? viewportShapes}
+          selectedIds={historyViewState ? [] : selectedIds}
+          pickOnly={historyView.pickOnly}
           alignMode={alignMode}
           alignAnchorId={effectiveAlignAnchorId}
           alignHandles={alignHandleStatuses}
           alignReferenceShapes={shapes}
           mirrorMode={mirrorMode}
           mirrorReferenceShapes={shapes}
-          placementWorkplane={placementWorkplane}
+          placementWorkplane={historyViewState ? historyViewState.placementWorkplane : placementWorkplane}
           workplaneMode={workplaneMode}
           linkedAxes={linkedAxes}
           onLinkedAxesChange={setLinkedAxes}
@@ -14211,8 +14405,8 @@ export function SketchForgeEditor({
       </div>
       {objectListOpen ? (
         <ObjectListPanel
-          shapes={shapes.filter((shape) => !isReferencePoint(shape))}
-          selectedIds={selectedIds}
+          shapes={(historyViewState?.shapes ?? shapes).filter((shape) => !isReferencePoint(shape))}
+          selectedIds={historyViewState ? [] : selectedIds}
           onSelect={selectShape}
           onSetHidden={setShapeHidden}
           onSetLocked={setShapeLocked}
@@ -14471,6 +14665,30 @@ export function SketchForgeEditor({
           onCancel={cancelEdgeModifier}
         />
       ) : null}
+      {historyViewState ? (
+        <HistoryViewOverlay
+          index={historyViewState.index}
+          count={history.length}
+          liveIndex={historyIndex}
+          recordedAt={historyViewState.entry.at}
+          objectCount={historyViewState.shapes.filter((shape) => !isReferencePoint(shape)).length}
+          lastStep={historyViewSteps?.last ?? null}
+          nextStep={historyViewSteps?.next ?? null}
+          describeStep={describeHistoryViewStep}
+          accuracy={workspaceSettings.accuracy}
+          unit={lengthDisplayUnit(workspaceSettings)}
+          pickedCount={historyView.picked.length}
+          onBringBack={() => historyView.bringBack(historyViewState.index, historyView.picked)}
+          openGroups={historyView.open.map((group) => group.name)}
+          canOpenGroup={Boolean(historyView.pickedGroup)}
+          onOpenGroup={historyView.openPickedGroup}
+          onBackOut={historyView.backOut}
+          onIndexChange={(index) => setHistoryViewIndex(Math.min(Math.max(0, index), Math.max(0, history.length - 1)))}
+          onExport={() => setTopPanel((current) => (current === "export" ? null : "export"))}
+          onDeleteHistory={clearHistory}
+          onClose={closeHistoryView}
+        />
+      ) : null}
       {topPanel ? (
         <TopActionPanel
           panel={topPanel}
@@ -14664,6 +14882,9 @@ function SecondaryToolbar({
   cookieCutterActive,
   onCookieCutter,
   canRedo,
+  canHistoryView,
+  historyViewActive,
+  onHistoryView,
   canUngroup,
   canUndo,
   hasClipboard,
@@ -14802,6 +15023,10 @@ function SecondaryToolbar({
   cookieCutterActive: boolean;
   onCookieCutter: () => void;
   canRedo: boolean;
+  /** Die Verlaufsansicht: ob sie aufgeht, ob sie offen ist, und der Knopf, der sie oeffnet und schliesst. */
+  canHistoryView: boolean;
+  historyViewActive: boolean;
+  onHistoryView: () => void;
   canUngroup: boolean;
   canUndo: boolean;
   hasClipboard: boolean;
@@ -15155,6 +15380,7 @@ function SecondaryToolbar({
     { label: t("common.delete"), icon: ToolbarTrashIcon, action: onDelete, enabled: hasSelection },
     { label: t("editor.tool.undo"), icon: ToolbarUndoIcon, action: onUndo, enabled: canUndo },
     { label: t("editor.tool.redo"), icon: ToolbarRedoIcon, action: onRedo, enabled: canRedo },
+    { id: "history", label: t("editor.tool.history"), icon: ToolbarHistoryIcon, action: onHistoryView, enabled: canHistoryView, active: historyViewActive },
   ];
   const visibilityTools = [
     {

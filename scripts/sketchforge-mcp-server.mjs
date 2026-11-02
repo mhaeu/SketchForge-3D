@@ -178,6 +178,44 @@ const tools = [
     },
   },
   {
+    name: "sketchforge_set_history_view",
+    description: "Look back at an earlier state of the project, like the editor's History view: the workplane shows that state while the real design stays untouched. Give `index` (0 is the oldest state, the last one is the current design) to open the view at that state or move it, `open: false` to close it, or no settings to read where it stands. While it is open, tools that change the design answer with an error - close it first; reading and `sketchforge_capture_image` (a picture of the shown state) still work. `sketchforge_read_scene` keeps describing the live design. Returns the state shown, how many there are and its bodies; a group lists its `parts` at every depth, whose ids `sketchforge_restore_from_history` takes. Every answer also has undoStep and redoStep: what undo and redo would take back or bring again from the design's own state, as a sentence with the measure in brackets where the step has one (\"Rounded the edges of Box (5 mm)\"); lastStep and nextStep carry measures the same way. With `steps: true` it also lists every state with the step that led to it (`steps`, newest last), as the History view's list does.",
+    inputSchema: {
+      ...editorTargetSchema,
+      properties: {
+        ...editorTargetSchema.properties,
+        open: { type: "boolean", description: "false closes the view; true (or an index) opens it." },
+        index: { type: "number", description: "The state to show, 0 = oldest. Clamped to the existing states." },
+        steps: { type: "boolean", description: "true adds `steps`: every state's index with the step that led to it, as a sentence." },
+      },
+    },
+  },
+  {
+    name: "sketchforge_restore_from_history",
+    description: "Bring objects back from an earlier state of the history into the current design, as the History view's \"Bring into design\" button does: each comes in as a copy with new ids, exactly as it was in that state and at the spot it had there, and the copies end up selected. Each copy is named after the time of that state, such as \"Box (12:32)\" (the date too for a state of an earlier day), so it is easy to tell from the current version. A part inside a group can be brought back on its own - give its id from the `parts` that `sketchforge_set_history_view` lists for a group; it comes out where opening the group would put it, and the group itself stays untouched. It is one step: Undo takes it back. Closes the History view if it is open. Notes attached to the objects are not brought along. Returns the new objects.",
+    inputSchema: {
+      ...editorTargetSchema,
+      required: ["index", "ids"],
+      properties: {
+        ...editorTargetSchema.properties,
+        index: { type: "number", description: "The state to bring the objects back from, 0 = oldest, as sketchforge_set_history_view numbers them." },
+        ids: { type: "array", items: { type: "string" }, description: "Ids of objects in that state, at any depth inside groups." },
+      },
+    },
+  },
+  {
+    name: "sketchforge_clear_history",
+    description: "Delete every undo and redo step of the design for good, as the History view's \"Delete history\" button does: the design keeps its current state as its only one, so Undo has nothing to go back to, and an .skf file saved afterwards carries no history. It cannot be undone. Needs `confirm: true`, so it is never done by accident. Closes the History view if it is open. Returns how many steps were removed.",
+    inputSchema: {
+      ...editorTargetSchema,
+      required: ["confirm"],
+      properties: {
+        ...editorTargetSchema.properties,
+        confirm: { type: "boolean", description: "Must be true: every earlier state is deleted for good." },
+      },
+    },
+  },
+  {
     name: "sketchforge_texture_surface",
     description: "Lay a surface texture onto one body, as the editor's \"Surface texture\" does: grooves, knurling, honeycomb, bumps, irregular cells, a brick wall, knitting, a wound rope, basket weave, carbon fibre in twill, the bark of a tree, wood grain with its annual rings, grain or an image as a height map, for grip or for looks, cracks as in kintsugi, with gold in them as a part of its own, or a text stuck on like a label pressed on (engraved or raised, along a vase's belly or over a box's edge). The body becomes one mesh with the relief, standing where it stood; the body under the relief is kept with it. Called again on a textured body, it makes the texture again on that body with the settings given (the ones not given stay as they were), where the body stands now; remove: true takes the texture off and brings that body back. A texture made before this, or one with other steps after it, has no body kept: undo it instead. Around an axis (projection \"cylinder\", the default, for round bodies such as a cup, a knob or a handle) the spacing is rounded so that a whole number of grooves or cells goes round and the pattern closes without a seam; \"allRound\" suits bodies that are not round, \"flat\" a lid or a plate seen along the axis. Axes are named as the editor shows them, z up. Faces pointing down or up within 30 degrees stay smooth unless bottomFree or topFree say otherwise, so the body stays flat on the bed; faces names the faces that get it instead (faces: [\"top\"] textures only the top, also of a cylinder). A large body takes a few seconds. Returns the new object, the settings used (values out of range are clamped), how many masks took part and what was made: triangles, how many grooves or cells go round, the spacing as made (bricks: also how many courses and how high), and warnings (limited: made coarser to stay within the triangle budget; tooDeep: inward from both sides deeper than half the thinnest size).",
     inputSchema: {
@@ -441,6 +479,12 @@ async function callTool(name, args) {
       return bridgeCommand("hull_objects", args, 30000);
     case "sketchforge_texture_surface":
       return bridgeCommand("texture_surface", args, 120000);
+    case "sketchforge_set_history_view":
+      return bridgeCommand("set_history_view", args);
+    case "sketchforge_restore_from_history":
+      return bridgeCommand("restore_from_history", args);
+    case "sketchforge_clear_history":
+      return bridgeCommand("clear_history", args);
     case "sketchforge_ungroup_objects":
       return bridgeCommand("ungroup_objects", args);
     case "sketchforge_boolean_cut":

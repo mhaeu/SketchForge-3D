@@ -12,3 +12,8 @@ export function createLocalId(prefix: string) {
   const random = Math.random().toString(36).slice(2, 10);
   return `${prefix}-${timestamp}-${counter}-${random}`;
 }
+
+/** Die Kennung, die ein Objekt vor jedem Gruppieren oder Aufloesen hatte. Nach Layerling. */
+export function localIdBase(id: string) {
+  return id.split(/-(?:group-child|ungroup)-/)[0] || id;
+}

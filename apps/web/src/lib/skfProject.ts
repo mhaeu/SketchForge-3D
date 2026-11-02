@@ -145,7 +145,7 @@ export type SkfProjectDocumentV1 = {
   sceneStateId: string;
   states: SkfStateV1[];
   history: {
-    entries: Array<{ stateId: string; selectedObjectIds: string[]; workplane?: PlacementWorkplane }>;
+    entries: Array<{ stateId: string; selectedObjectIds: string[]; workplane?: PlacementWorkplane; recordedAt?: string }>;
     index: number;
   };
   sketches: Array<{ id: string; nodeId: string; objectId: string; operation?: SketchOperation; extrusionDepth: number; revolve?: SketchRevolveSettings }>;
@@ -834,7 +834,7 @@ export async function exportSkfProject(input: SkfProjectExportInput) {
   // real geometry - exclude it from shared/exported projects the same way the
   // STEP exporter does. ensureReferencePoint recreates it on load.
   const exportEntries = hydrated.entries.map((entry) =>
-    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds, normalizeNotes(entry.notes), entry.placementWorkplane));
+    editorHistoryEntry(withoutReferencePoints(repairDuplicateGroupedObjectIds(entry.shapes)), entry.selectedIds, normalizeNotes(entry.notes), entry.placementWorkplane, entry.at));
   const builder = new SkfArchiveBuilder();
   const stateShapes = exportEntries.map((entry) => entry.shapes);
   await builder.addSources(input.assets, referencedSourceAssetIds(stateShapes));
@@ -854,6 +854,7 @@ export async function exportSkfProject(input: SkfProjectExportInput) {
       stateId,
       selectedObjectIds: [...entry.selectedIds],
       ...(entry.placementWorkplane ? { workplane: entry.placementWorkplane } : {}),
+      ...(typeof entry.at === "number" && Number.isFinite(entry.at) ? { recordedAt: new Date(entry.at).toISOString() } : {}),
     });
   }
 
@@ -967,6 +968,13 @@ function objectRecord(value: unknown, label: string): Record<string, unknown> {
 function stringValue(value: unknown, label: string) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string`);
   return value;
+}
+
+/** Die Zeit eines Standes aus dem Paket; was sich nicht lesen laesst, bleibt ohne Zeit. */
+function historyRecordedAt(value: string | undefined): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function stringArray(value: unknown, label: string) {
@@ -1429,6 +1437,9 @@ async function validateDocumentAndAssets(raw: unknown, files: ArchiveFiles) {
     // Die Arbeitsebene eines Standes ist Beiwerk: was sich davon nicht lesen
     // laesst, wird zur Hauptebene statt das Paket abzulehnen.
     if (entry.workplane !== undefined) objectRecord(entry.workplane, `history.entries[${index}].workplane`);
+    if (entry.recordedAt !== undefined && typeof entry.recordedAt !== "string") {
+      throw new Error(`history.entries[${index}].recordedAt must be a string`);
+    }
   });
   if (document.history.entries[document.history.index]?.stateId !== document.sceneStateId) throw new Error("Active scene and undo history index do not match");
   dropObjectsFromFeatures(document.features, droppedObjectIds);
@@ -1642,6 +1653,7 @@ async function restoreV1(document: SkfProjectDocumentV1, assetById: Map<string, 
     entry.selectedObjectIds,
     restoredNotes.get(entry.stateId) ?? [],
     entry.workplane,
+    historyRecordedAt(entry.recordedAt),
   ));
   const shapes = restoredStates.get(document.sceneStateId) ?? [];
   const notes = restoredNotes.get(document.sceneStateId) ?? [];
